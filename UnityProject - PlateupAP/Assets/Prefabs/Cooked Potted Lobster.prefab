@@ -1,0 +1,162 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &3976279870990941020
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 23726121845076122}
+  m_Layer: 0
+  m_Name: Cooked Potted Lobster
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &23726121845076122
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3976279870990941020}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_Children:
+  - {fileID: 920714152706504236}
+  - {fileID: 1283549320864332602}
+  m_Father: {fileID: 0}
+  m_RootOrder: 0
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1001 &3683744425447788407
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    m_TransformParent: {fileID: 23726121845076122}
+    m_Modifications:
+    - target: {fileID: 3788532248620999649, guid: 58d7e6186c2f28346afb4a748d52e4db, type: 3}
+      propertyPath: m_Name
+      value: Pot
+      objectReference: {fileID: 0}
+    - target: {fileID: 4600500331927501147, guid: 58d7e6186c2f28346afb4a748d52e4db, type: 3}
+      propertyPath: m_RootOrder
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 4600500331927501147, guid: 58d7e6186c2f28346afb4a748d52e4db, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 4600500331927501147, guid: 58d7e6186c2f28346afb4a748d52e4db, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 4600500331927501147, guid: 58d7e6186c2f28346afb4a748d52e4db, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 4600500331927501147, guid: 58d7e6186c2f28346afb4a748d52e4db, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 4600500331927501147, guid: 58d7e6186c2f28346afb4a748d52e4db, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: -0
+      objectReference: {fileID: 0}
+    - target: {fileID: 4600500331927501147, guid: 58d7e6186c2f28346afb4a748d52e4db, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: -0
+      objectReference: {fileID: 0}
+    - target: {fileID: 4600500331927501147, guid: 58d7e6186c2f28346afb4a748d52e4db, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: -0
+      objectReference: {fileID: 0}
+    - target: {fileID: 4600500331927501147, guid: 58d7e6186c2f28346afb4a748d52e4db, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 4600500331927501147, guid: 58d7e6186c2f28346afb4a748d52e4db, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 4600500331927501147, guid: 58d7e6186c2f28346afb4a748d52e4db, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 7161892318699479169, guid: 58d7e6186c2f28346afb4a748d52e4db, type: 3}
+      propertyPath: m_IsActive
+      value: 0
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: 58d7e6186c2f28346afb4a748d52e4db, type: 3}
+--- !u!4 &920714152706504236 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: 4600500331927501147, guid: 58d7e6186c2f28346afb4a748d52e4db, type: 3}
+  m_PrefabInstance: {fileID: 3683744425447788407}
+  m_PrefabAsset: {fileID: 0}
+--- !u!1001 &5187669170345002919
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    m_TransformParent: {fileID: 23726121845076122}
+    m_Modifications:
+    - target: {fileID: 1901091631236259180, guid: daaea534cbc9d9d42b57d8567520a3b5, type: 3}
+      propertyPath: m_Name
+      value: Cooked Lobster
+      objectReference: {fileID: 0}
+    - target: {fileID: 6209998592865156253, guid: daaea534cbc9d9d42b57d8567520a3b5, type: 3}
+      propertyPath: m_RootOrder
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 6209998592865156253, guid: daaea534cbc9d9d42b57d8567520a3b5, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: -0.13
+      objectReference: {fileID: 0}
+    - target: {fileID: 6209998592865156253, guid: daaea534cbc9d9d42b57d8567520a3b5, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0.322
+      objectReference: {fileID: 0}
+    - target: {fileID: 6209998592865156253, guid: daaea534cbc9d9d42b57d8567520a3b5, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0.074
+      objectReference: {fileID: 0}
+    - target: {fileID: 6209998592865156253, guid: daaea534cbc9d9d42b57d8567520a3b5, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 0.89239866
+      objectReference: {fileID: 0}
+    - target: {fileID: 6209998592865156253, guid: daaea534cbc9d9d42b57d8567520a3b5, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: -0.09904592
+      objectReference: {fileID: 0}
+    - target: {fileID: 6209998592865156253, guid: daaea534cbc9d9d42b57d8567520a3b5, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0.23911808
+      objectReference: {fileID: 0}
+    - target: {fileID: 6209998592865156253, guid: daaea534cbc9d9d42b57d8567520a3b5, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: -0.36964458
+      objectReference: {fileID: 0}
+    - target: {fileID: 6209998592865156253, guid: daaea534cbc9d9d42b57d8567520a3b5, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6209998592865156253, guid: daaea534cbc9d9d42b57d8567520a3b5, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 30
+      objectReference: {fileID: 0}
+    - target: {fileID: 6209998592865156253, guid: daaea534cbc9d9d42b57d8567520a3b5, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: -45
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: daaea534cbc9d9d42b57d8567520a3b5, type: 3}
+--- !u!4 &1283549320864332602 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: 6209998592865156253, guid: daaea534cbc9d9d42b57d8567520a3b5, type: 3}
+  m_PrefabInstance: {fileID: 5187669170345002919}
+  m_PrefabAsset: {fileID: 0}

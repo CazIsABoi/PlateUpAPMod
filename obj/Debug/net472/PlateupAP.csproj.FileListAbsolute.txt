@@ -245,3 +245,4 @@ C:\Users\cazpe\OneDrive\Desktop\My Mods\PlateupAP\bin\Debug\net472\KitchenLib-Wo
 C:\Users\cazpe\OneDrive\Desktop\My Mods\PlateupAP\bin\Debug\net472\KitchenLib-Workshop.xml
 C:\Users\cazpe\OneDrive\Desktop\My Mods\PlateupAP\bin\debug\net472\FrontDoorAppliances.dll
 C:\Users\cazpe\OneDrive\Desktop\My Mods\PlateupAP\bin\debug\net472\LateNightCosmetics.dll
+C:\Users\cazpe\OneDrive\Desktop\My Mods\PlateupAP\obj\debug\net472\PlateupAP.sourcelink.json

@@ -1,32 +1,28 @@
 using System;
 using System.Collections.Generic;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
-using Kitchen;
-using KitchenLib;
-using KitchenLib.Logging;
-using KitchenLib.Logging.Exceptions;
-using KitchenMods;
 using System.Linq;
 using System.Reflection;
 using UnityEngine;
-using KitchenLogger = KitchenLib.Logging.KitchenLogger;
+using Kitchen;
+using KitchenLib;
+using KitchenLib.Logging; // We'll fully qualify the logger below.
+using KitchenMods;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using Archipelago.MultiClient.Net;
-using Archipelago.MultiClient.Net.Localization;
 using Archipelago.MultiClient.Net.Models;
 using Archipelago.MultiClient.Net.Enums;
 using Archipelago.MultiClient.Net.Helpers;
 
 namespace PlateupAP
 {
-    // Custom converter class for JSON settings.
+    // Custom converter for JSON settings.
     public class SafeStringListConverter : JsonConverter<List<string>>
     {
         public override List<string> ReadJson(JsonReader reader, Type objectType, List<string> existingValue, bool hasExistingValue, JsonSerializer serializer)
         {
             var token = JToken.Load(reader);
             var list = new List<string>();
-
             if (token.Type == JTokenType.Array)
             {
                 foreach (var item in token)
@@ -45,7 +41,6 @@ namespace PlateupAP
             }
             return list;
         }
-
         public override void WriteJson(JsonWriter writer, List<string> value, JsonSerializer serializer)
         {
             serializer.Serialize(writer, value);
@@ -56,12 +51,9 @@ namespace PlateupAP
     public class ApplianceWrapper : MonoBehaviour
     {
         public CCreateAppliance Appliance;
-
         public void InitAppliance()
         {
-            // Instantiate and initialize your appliance logic.
             Appliance = new CCreateAppliance();
-            // Call any initialization on Appliance if necessary.
         }
     }
 
@@ -83,21 +75,22 @@ namespace PlateupAP
         public const string MOD_GAMEVERSION = ">=1.1.9";
 
         internal static AssetBundle Bundle = null;
-        internal static KitchenLogger Logger;
+        // Fully qualify the logger to avoid ambiguity.
+        internal static KitchenLib.Logging.KitchenLogger Logger;
 
         // Connection fields.
-        private ArchipelagoSession session; 
-        private string ip = "archipelago.gg";   
-        private int port = 65253;  
+        private ArchipelagoSession session;
+        private string ip = "archipelago.gg";
+        private int port = 65253;
         private string playerName = "Caz";
-        private string password = ""; // Optional – currently not used.
+        private string password = ""; // Optional.
 
         // Reconnection control.
         private bool connectionSuccessful = false;
         private float reconnectDelay = 10f;
         private float lastAttemptTime = -100f;
 
-        // (These fields are assigned but not yet used in additional logic.)
+        // Day cycle and other fields.
         private bool dayPhase;
         private bool prepPhase;
         private int lastDay = 0;
@@ -107,14 +100,14 @@ namespace PlateupAP
         private bool loggedPrepTransition = false;
         private bool itemsEventSubscribed = false;
 
-
-        public Mod() : base(MOD_GUID, MOD_NAME, MOD_AUTHOR, MOD_VERSION, MOD_GAMEVERSION, Assembly.GetExecutingAssembly()) { }
+        public Mod() : base(MOD_GUID, MOD_NAME, MOD_AUTHOR, MOD_VERSION, MOD_GAMEVERSION, Assembly.GetExecutingAssembly())
+        {
+        }
 
         protected override void OnInitialise()
         {
             Logger = InitLogger();
             Logger.LogWarning($"{MOD_GUID} v{MOD_VERSION} in use!");
-
             Newtonsoft.Json.JsonConvert.DefaultSettings = () => new Newtonsoft.Json.JsonSerializerSettings
             {
                 Converters = new List<JsonConverter> { new SafeStringListConverter() }
@@ -131,7 +124,6 @@ namespace PlateupAP
                     TryConnectToArchipelago();
                 }
             }
-
             if (connectionSuccessful && HasSingleton<SKitchenMarker>())
             {
                 UpdateDayCycle();
@@ -139,9 +131,8 @@ namespace PlateupAP
             }
         }
 
-        // Subscribe to the item received event only once.
-        private void checkReceivedItems() 
-        {  
+        private void checkReceivedItems()
+        {
             if (!itemsEventSubscribed)
             {
                 session.Items.ItemReceived += OnItemReceived;
@@ -149,89 +140,116 @@ namespace PlateupAP
             }
         }
 
-        // Event handler for received items.
-private void OnItemReceived(ReceivedItemsHelper helper)
-{
-    var receivedItem = helper.PeekItem();
-    if (receivedItem == null)
-    {
-        Logger.LogInfo("No received item available.");
-        helper.DequeueItem();
-        return;
-    }
+        // This callback now spawns a blueprint for recognized items.
+        private void OnItemReceived(ReceivedItemsHelper helper)
+        {
+            // Dequeue the item immediately.
+            helper.DequeueItem();
 
-    string itemName = receivedItem.Name(GlobalLocalisation.Default, Permissions.All);
-    if (string.IsNullOrEmpty(itemName))
-    {
-        Logger.LogInfo("Received item has no name.");
-        helper.DequeueItem();
-        return;
-    }
+            // Access the most recently received item from AllItemsReceived.
+            var networkItem = session.Items.AllItemsReceived.LastOrDefault();
+            if (networkItem == null)
+            {
+                Logger.LogInfo("No received item found in AllItemsReceived.");
+                return;
+            }
+            long itemId = networkItem.Item; // Assumes networkItem is of type NetworkItem.
+            string itemName = session.Items.GetItemName(itemId) ?? $"Item: {itemId}";
+            if (string.IsNullOrEmpty(itemName))
+            {
+                Logger.LogInfo("Received item has no name.");
+                return;
+            }
+            switch (itemName)
+            {
+                case "Hob":
+                case "Sink":
+                case "Counter":
+                case "Dining Table":
+                    SpawnBlueprintForItem(itemName);
+                    break;
+                default:
+                    Logger.LogInfo($"Received unknown item: {itemName}");
+                    break;
+            }
+        }
 
-    switch (itemName)
-    {
-        case "Hob":
-            SpawnHob();
-            break;
-        case "Sink":
-            SpawnSink();
-            break;
-        case "Counter":
-            SpawnCounter();
-            break;
-        case "Dining Table":
-            SpawnDiningTable();
-            break;
-        default:
-            Logger.LogInfo($"Received unknown item: {itemName}");
-            break;
-    }
-    helper.DequeueItem();
-}
-        // Spawn methods for each item.
+        // Blueprint spawning: load prefab, set blueprint price to 0, and spawn at player's location.
+        private void SpawnBlueprintForItem(string itemName)
+        {
+            GameObject blueprintPrefab = Bundle?.LoadAsset<GameObject>($"Blueprint_{itemName}");
+            if (blueprintPrefab == null)
+            {
+                Logger.LogError($"Could not load blueprint prefab for {itemName}.");
+                return;
+            }
+            GameObject blueprintInstance = GameObject.Instantiate(blueprintPrefab);
+            // Assuming a Blueprint component exists on the prefab.
+            var blueprintComponent = blueprintInstance.GetComponent<Blueprint>();
+            if (blueprintComponent != null)
+            {
+                blueprintComponent.Price = 0;
+            }
+            else
+            {
+                Logger.LogWarning($"No Blueprint component found on prefab for {itemName}.");
+            }
+            GameObject player = GetPlayerObject();
+            if (player == null)
+            {
+                Logger.LogError("Could not find player object.");
+                return;
+            }
+            blueprintInstance.transform.position = player.transform.position;
+            Logger.LogInfo($"Spawned a free blueprint for {itemName} on the player.");
+        }
+
+        private GameObject GetPlayerObject()
+        {
+            return GameObject.FindWithTag("Player");
+        }
+
+        // Fallback spawn methods (if needed).
         private void SpawnHob()
         {
             GameObject hobObject = new GameObject("Hob");
             var appliance = hobObject.AddComponent<ApplianceWrapper>();
             appliance.InitAppliance();
             var pos = hobObject.AddComponent<PositionWrapper>();
-            pos.SetPosition(new Vector3(0f, 0f, 0f)); // Adjust position as needed.
+            pos.SetPosition(new Vector3(0f, 0f, 0f));
             Logger.LogInfo("Spawned a Hob at position (0, 0, 0).");
         }
-
         private void SpawnSink()
         {
             GameObject sinkObject = new GameObject("Sink");
             var appliance = sinkObject.AddComponent<ApplianceWrapper>();
             appliance.InitAppliance();
             var pos = sinkObject.AddComponent<PositionWrapper>();
-            pos.SetPosition(new Vector3(10f, 0f, 5f)); // Adjust position as needed.
+            pos.SetPosition(new Vector3(10f, 0f, 5f));
             Logger.LogInfo("Spawned a Sink at position (10, 0, 5).");
         }
-
         private void SpawnCounter()
         {
             GameObject counterObject = new GameObject("Counter");
             var appliance = counterObject.AddComponent<ApplianceWrapper>();
             appliance.InitAppliance();
             var pos = counterObject.AddComponent<PositionWrapper>();
-            pos.SetPosition(new Vector3(20f, 0f, 5f)); // Adjust position as needed.
+            pos.SetPosition(new Vector3(20f, 0f, 5f));
             Logger.LogInfo("Spawned a Counter at position (20, 0, 5).");
         }
-
         private void SpawnDiningTable()
         {
             GameObject tableObject = new GameObject("Dining Table");
             var appliance = tableObject.AddComponent<ApplianceWrapper>();
             appliance.InitAppliance();
             var pos = tableObject.AddComponent<PositionWrapper>();
-            pos.SetPosition(new Vector3(30f, 0f, 5f)); // Adjust position as needed.
+            pos.SetPosition(new Vector3(30f, 0f, 5f));
             Logger.LogInfo("Spawned a Dining Table at position (30, 0, 5).");
         }
 
         private void UpdateDayCycle()
         {
-            if (connectionSuccessful && session != null) 
+            if (connectionSuccessful && session != null)
             {
                 bool isDayStart = HasSingleton<SIsDayFirstUpdate>();
                 bool isPrepStart = HasSingleton<SIsNightFirstUpdate>();
@@ -247,7 +265,6 @@ private void OnItemReceived(ReceivedItemsHelper helper)
                         loggedDayTransition = false;
                     }
                 }
-
                 if (isDayStart)
                 {
                     lastDay++;
@@ -287,16 +304,13 @@ private void OnItemReceived(ReceivedItemsHelper helper)
                     Logger.LogError("Failed to create session. Session is null.");
                     return;
                 }
-
                 session.Socket.ErrorReceived += Socket_ErrorReceived;
                 session.Socket.SocketOpened += Socket_SocketOpened;
                 session.Socket.SocketClosed += Socket_SocketClosed;
-
                 if (!string.IsNullOrEmpty(password))
                 {
                     Logger.LogWarning("Password provided, but password support is not implemented. Proceeding without using the password.");
                 }
-
                 var result = session.TryConnectAndLogin("plateup", playerName, ItemsHandlingFlags.AllItems);
                 if (result is LoginSuccessful)
                 {
@@ -314,7 +328,6 @@ private void OnItemReceived(ReceivedItemsHelper helper)
             }
         }
 
-        // Socket event handlers.
         private void Socket_ErrorReceived(Exception e, string message)
         {
             Logger.LogInfo($"Socket Error: {message}");

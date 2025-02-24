@@ -5,20 +5,23 @@ using System.Reflection;
 using UnityEngine;
 using Kitchen;
 using KitchenLib;
-using KitchenLib.Logging; 
+using KitchenLib.Logging;
+using KitchenLib.Utils;
+using KitchenLib.References;
 using KitchenMods;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
-using KitchenData; 
+using KitchenData;
 using Archipelago.MultiClient.Net;
 using Archipelago.MultiClient.Net.Models;
 using Archipelago.MultiClient.Net.Enums;
 using Archipelago.MultiClient.Net.Helpers;
 using KitchenDecorOnDemand;
 
+
 namespace PlateupAP
 {
-    // Custom converter for JSON settings.
+    // Custom JSON converter.
     public class SafeStringListConverter : JsonConverter<List<string>>
     {
         public override List<string> ReadJson(JsonReader reader, Type objectType, List<string> existingValue, bool hasExistingValue, JsonSerializer serializer)
@@ -48,7 +51,6 @@ namespace PlateupAP
             serializer.Serialize(writer, value);
         }
     }
-
     public class ApplianceWrapper : MonoBehaviour
     {
         public CCreateAppliance Appliance;
@@ -58,6 +60,7 @@ namespace PlateupAP
         }
     }
 
+    // Simple wrapper to set an object's position.
     public class PositionWrapper : MonoBehaviour
     {
         public void SetPosition(Vector3 pos)
@@ -81,9 +84,9 @@ namespace PlateupAP
         // Archipelago connection fields.
         private ArchipelagoSession session;
         private string ip = "archipelago.gg";
-        private int port = 52218;
+        private int port = 52033;
         private string playerName = "Caz";
-        private string password = ""; // Optional.
+        private string password = "";
 
         // Reconnection control.
         private bool connectionSuccessful = false;
@@ -100,13 +103,107 @@ namespace PlateupAP
         private bool loggedPrepTransition = false;
         private bool itemsEventSubscribed = false;
 
-        // Mapping from received item names to in-game GDO IDs (from KitchenData).
-        private readonly Dictionary<string, int> itemToGDO = new Dictionary<string, int>()
+    public static class InputSourceIdentifier
+    {
+        public static int Identifier = 0;
+    }
+
+        // Create a mapping from progression check ids to in-game GDO ids.
+         private readonly Dictionary<int, int> progressionToGDO = new Dictionary<int, int>()
         {
-            { "Hob", 1001 },
-            { "Sink", 1002 },
-            { "Counter", 1003 },
-            { "Dining Table", 1004 }
+            { 1001, ApplianceReferences.Hob },
+            { 10012, ApplianceReferences.HobSafe },
+            { 10013, ApplianceReferences.HobDanger },
+            { 10014, ApplianceReferences.HobStarting },
+            { 10015, ApplianceReferences.Oven },
+            { 10016, ApplianceReferences.Microwave },
+            { 10017, ApplianceReferences.GasLimiter },
+            { 10018, ApplianceReferences.GasSafetyOverride },
+            { 1002, ApplianceReferences.SinkNormal },
+            { 10022, ApplianceReferences.SinkPower },
+            { 10023, ApplianceReferences.SinkSoak },
+            { 10024, ApplianceReferences.SinkStarting },
+            { 10025, ApplianceReferences.DishWasher },
+            { 1003, ApplianceReferences.Countertop },
+            { 10032, ApplianceReferences.Workstation },
+            { 10033, ApplianceReferences.Freezer },
+            { 10034, ApplianceReferences.PrepStation },
+            { 10035, ApplianceReferences.FrozenPrepStation },
+            { 1004, ApplianceReferences.TableLarge },
+            { 10042, ApplianceReferences.TableBar },
+            { 10043, ApplianceReferences.TableBasicCloth },
+            { 10044, ApplianceReferences.TableCheapMetal },
+            { 10045, ApplianceReferences.TableFancyCloth },
+            { 10046, ApplianceReferences.CoffeeTable },
+            { 1005, ApplianceReferences.BinStarting },
+            { 10052, ApplianceReferences.Bin },
+            { 10053, ApplianceReferences.BinCompactor },
+            { 10054, ApplianceReferences.BinComposter },
+            { 10055, ApplianceReferences.BinExpanded },
+            { 10056, ApplianceReferences.FloorProtector },
+            { 1006, ApplianceReferences.RollingPinProvider },
+            { 10062, ApplianceReferences.SharpKnifeProvider },
+            { 10063, ApplianceReferences.ScrubbingBrushProvider },
+            { 1007, ApplianceReferences.BreadstickBox },
+            { 10072, ApplianceReferences.CandleBox },
+            { 10073, ApplianceReferences.NapkinBox },
+            { 10074, ApplianceReferences.SharpCutlery },
+            { 10075, ApplianceReferences.SpecialsMenuBox },
+            { 10076, ApplianceReferences.LeftoversBagStation },
+            { 10077, ApplianceReferences.SupplyCabinet },
+            { 10078, ApplianceReferences.HostStand },
+            { 10079, ApplianceReferences.FlowerPot },
+            { 1008, ApplianceReferences.MopBucket },
+            { 10082, ApplianceReferences.MopBucketLasting },
+            { 10083, ApplianceReferences.MopBucketFast },
+            { 10084, ApplianceReferences.RobotMop },
+            { 10085, ApplianceReferences.FloorBufferStation },
+            { 10086, ApplianceReferences.RobotBuffer },
+            { 10087, ApplianceReferences.DirtyPlateStack },
+            { 1009, ApplianceReferences.Belt },
+            { 10092, ApplianceReferences.Grabber },
+            { 10093, ApplianceReferences.GrabberSmart },
+            { 10094, ApplianceReferences.GrabberRotatable },
+            { 10095, ApplianceReferences.Combiner },
+            { 10096, ApplianceReferences.Portioner },
+            { 10097, ApplianceReferences.Mixer },
+            { 10098, ApplianceReferences.MixerPusher },
+            { 10099, ApplianceReferences.MixerHeated },
+            { 100992, ApplianceReferences.MixerRapid },
+            { 1011, ApplianceReferences.BlueprintCabinet },
+            { 10112, ApplianceReferences.BlueprintUpgradeDesk },
+            { 10113, ApplianceReferences.BlueprintOrderingDesk },
+            { 10114, ApplianceReferences.BlueprintDiscountDesk },
+            { 10115, ApplianceReferences.ClipboardStand },
+            { 10116, ApplianceReferences.BlueprintCopyDesk },
+            { 1012, ApplianceReferences.ShoeRackTrainers },
+            { 10122, ApplianceReferences.ShoeRackWellies },
+            { 10123, ApplianceReferences.ShoeRackWorkBoots },
+            { 1013, ApplianceReferences.BookingDesk },
+            { 10132, ApplianceReferences.FoodDisplayStand },
+            { 10133, ApplianceReferences.Dumbwaiter },
+            { 10134, ApplianceReferences.Teleporter },
+            { 10135, ApplianceReferences.FireExtinguisherHolder },
+            { 10136, ApplianceReferences.OrderingTerminal },
+            { 10137, ApplianceReferences.OrderingTerminalSpecialOffers },
+            { 1014, ApplianceReferences.PlateStackStarting },
+            { 10142, ApplianceReferences.PlateStack },
+            { 10143, ApplianceReferences.AutoPlater },
+            { 10144, ApplianceReferences.PotStack },
+            { 10145, ApplianceReferences.ServingBoardStack },
+            { 1015, ApplianceReferences.CoffeeMachine },
+            { 10152, ApplianceReferences.IceDispenser },
+            { 10153, ApplianceReferences.MilkDispenser },
+            { 10154, ApplianceReferences.WokStack },
+            { 10155, ApplianceReferences.SourceLasagneTray },
+            { 10156, ApplianceReferences.ProviderTacoTray },
+            { 10157, ApplianceReferences.ProviderMixingBowls },
+            { 10158, ApplianceReferences.SourceBigCakeTin },
+            { 10159, ApplianceReferences.SourceBrownieTray },
+            { 1016, ApplianceReferences.SourceCookieTray },
+            { 10162, ApplianceReferences.SourceCupcakeTray },
+            { 10163, ApplianceReferences.SourceDoughnutTray },
+            { 10164, ApplianceReferences.ExtraLife }
         };
 
         public Mod() : base(MOD_GUID, MOD_NAME, MOD_AUTHOR, MOD_VERSION, MOD_GAMEVERSION, Assembly.GetExecutingAssembly())
@@ -137,96 +234,98 @@ namespace PlateupAP
                 CheckReceivedItems();
             }
         }
-
-        // Subscribe to the received items event.
         private void CheckReceivedItems()
         {
             if (!itemsEventSubscribed)
             {
-                session.Items.ItemReceived += OnItemReceived;
+                session.Items.ItemReceived += new ReceivedItemsHelper.ItemReceivedHandler(OnItemReceived);
                 itemsEventSubscribed = true;
             }
         }
 
-        // When a check (item) is received via Archipelago, spawn a blueprint for that item.
         private void OnItemReceived(ReceivedItemsHelper helper)
         {
-            // Dequeue the new item immediately.
-            helper.DequeueItem();
+            // Dequeue the item info.
+            ItemInfo info = helper.DequeueItem();
 
-            // Get the most recent item from the AllItemsReceived collection.
-            var networkItem = session.Items.AllItemsReceived.LastOrDefault();
-            if (networkItem == null)
-            {
-                Logger.LogInfo("No received item found in AllItemsReceived.");
-                return;
-            }
+            // Use the numeric id from the progression check.
+            int checkId = (int)info.ItemId;
+            Logger.LogInfo("Received check id: " + checkId);
 
-            // Use dynamic to access the "Item" property.
-            long itemId = ((dynamic)networkItem).Item;
-            string itemName = session.Items.GetItemName(itemId) ?? $"Item: {itemId}";
-            if (string.IsNullOrEmpty(itemName))
+            if (progressionToGDO.TryGetValue(checkId, out int gdoId))
             {
-                Logger.LogInfo("Received item has no name.");
-                return;
-            }
+                // Default settings: spawn at door and blueprint mode.
+                SpawnPositionType positionType = SpawnPositionType.Door;
+                SpawnApplianceMode spawnApplianceMode = SpawnApplianceMode.Blueprint;
 
-            if (itemToGDO.TryGetValue(itemName, out int gdoID))
-            {
-                // Request a spawn via the PlateUpDecorOnDemand system.
-                // This spawns a blueprint at the player's location.
-                SpawnRequestSystem.Request<Appliance>(gdoID, SpawnPositionType.Player, 0, SpawnApplianceMode.Blueprint);
+                if (KitchenData.GameData.Main.TryGet<Appliance>(gdoId, out Appliance appliance))
+                {
+                    SpawnRequestSystem.Request<Appliance>(gdoId, positionType, InputSourceIdentifier.Identifier, spawnApplianceMode);
+                }
+                else if (KitchenData.GameData.Main.TryGet<Decor>(gdoId, out Decor decor))
+                {
+                    SpawnRequestSystem.Request<Decor>(gdoId, positionType);
+                }
+                else
+                {
+                    Logger.LogWarning("GDO id " + gdoId + " does not correspond to a known Appliance or Decor.");
+                }
             }
             else
             {
-                Logger.LogInfo($"Received unknown item: {itemName}");
+                Logger.LogWarning("No mapping found for check id: " + checkId);
             }
         }
 
-        // Update the day cycle.
+
+
+
+
+
+        // Day cycle update
         private void UpdateDayCycle()
         {
-            if (connectionSuccessful && session != null)
-            {
-                bool isDayStart = HasSingleton<SIsDayFirstUpdate>();
-                bool isPrepStart = HasSingleton<SIsNightFirstUpdate>();
 
-                if (isPrepStart)
-                {
-                    dayPhase = false;
-                    prepPhase = true;
-                    if (!loggedPrepTransition)
+                if (connectionSuccessful && session != null)
                     {
-                        Logger.LogInfo("It's time to prep for the next day!");
-                        loggedPrepTransition = true;
-                        loggedDayTransition = false;
-                    }
-                }
-                if (isDayStart)
-                {
-                    lastDay++;
-                    prepPhase = false;
-                    dayPhase = true;
-                    if (!loggedDayTransition)
-                    {
-                        Logger.LogInfo("Transitioning from night to day, advancing day count...");
-                        loggedDayTransition = true;
-                        loggedPrepTransition = false;
-                        if (lastDay < 15)
+                        bool isDayStart = HasSingleton<SIsDayFirstUpdate>();
+                        bool isPrepStart = HasSingleton<SIsNightFirstUpdate>();
+
+                        if (isPrepStart)
                         {
-                            session.Locations.CompleteLocationChecks(dayID + lastDay);
-                            int presentdayID = dayID + lastDay;
-                            Logger.LogInfo("Day Logged " + lastDay + " with ID " + presentdayID);
+                            dayPhase = false;
+                            prepPhase = true;
+                            if (!loggedPrepTransition)
+                            {
+                                Logger.LogInfo("It's time to prep for the next day!");
+                                loggedPrepTransition = true;
+                                loggedDayTransition = false;
+                            }
                         }
-                        else if (lastDay >= 16)
+                        if (isDayStart)
                         {
-                            Logger.LogInfo("You franchised!");
-                            timesFranchised++;
-                            lastDay = 0;
+                            lastDay++;
+                            prepPhase = false;
+                            dayPhase = true;
+                            if (!loggedDayTransition)
+                            {
+                                Logger.LogInfo("Transitioning from night to day, advancing day count...");
+                                loggedDayTransition = true;
+                                loggedPrepTransition = false;
+
+                                session.Locations.CompleteLocationChecks(dayID + lastDay);
+                                int presentdayID = dayID + lastDay;
+                                Logger.LogInfo("Day Logged " + lastDay + " with ID " + presentdayID);
+                        
+                                if (lastDay >= 16)
+                                {
+                                    Logger.LogInfo("You franchised!");
+                                    timesFranchised++;
+                                }
+                            }
                         }
                     }
-                }
-            }
+                
         }
 
         private void TryConnectToArchipelago()

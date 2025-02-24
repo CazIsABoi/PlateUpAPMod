@@ -23,6 +23,15 @@
   </ItemGroup>
 
   <ItemGroup>
+  <Reference Include="KitchenLib-Workshop">
+    <HintPath>Libraries\KitchenLib-Workshop.dll</HintPath>
+  </Reference>
+</ItemGroup>
+
+
+
+
+  <ItemGroup>
     <Folder Condition="Exists('Changelogs')" Include="Changelogs\" />
     <Folder Condition="Exists('Changelogs\Github')" Include="Changelogs\Github" />
     <Folder Condition="Exists('Changelogs\Workshop')" Include="Changelogs\Workshop" />

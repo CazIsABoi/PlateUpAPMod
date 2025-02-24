@@ -5,14 +5,16 @@ using System.Reflection;
 using UnityEngine;
 using Kitchen;
 using KitchenLib;
-using KitchenLib.Logging; // We'll fully qualify the logger below.
+using KitchenLib.Logging; 
 using KitchenMods;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using KitchenData; 
 using Archipelago.MultiClient.Net;
 using Archipelago.MultiClient.Net.Models;
 using Archipelago.MultiClient.Net.Enums;
 using Archipelago.MultiClient.Net.Helpers;
+using KitchenDecorOnDemand;
 
 namespace PlateupAP
 {
@@ -47,7 +49,6 @@ namespace PlateupAP
         }
     }
 
-    // Wrapper to allow adding appliance creation logic as a component.
     public class ApplianceWrapper : MonoBehaviour
     {
         public CCreateAppliance Appliance;
@@ -57,7 +58,6 @@ namespace PlateupAP
         }
     }
 
-    // Wrapper that sets a GameObject’s transform position.
     public class PositionWrapper : MonoBehaviour
     {
         public void SetPosition(Vector3 pos)
@@ -78,10 +78,10 @@ namespace PlateupAP
         // Fully qualify the logger to avoid ambiguity.
         internal static KitchenLib.Logging.KitchenLogger Logger;
 
-        // Connection fields.
+        // Archipelago connection fields.
         private ArchipelagoSession session;
         private string ip = "archipelago.gg";
-        private int port = 65253;
+        private int port = 52218;
         private string playerName = "Caz";
         private string password = ""; // Optional.
 
@@ -90,7 +90,7 @@ namespace PlateupAP
         private float reconnectDelay = 10f;
         private float lastAttemptTime = -100f;
 
-        // Day cycle and other fields.
+        // Day cycle fields.
         private bool dayPhase;
         private bool prepPhase;
         private int lastDay = 0;
@@ -100,6 +100,15 @@ namespace PlateupAP
         private bool loggedPrepTransition = false;
         private bool itemsEventSubscribed = false;
 
+        // Mapping from received item names to in-game GDO IDs (from KitchenData).
+        private readonly Dictionary<string, int> itemToGDO = new Dictionary<string, int>()
+        {
+            { "Hob", 1001 },
+            { "Sink", 1002 },
+            { "Counter", 1003 },
+            { "Dining Table", 1004 }
+        };
+
         public Mod() : base(MOD_GUID, MOD_NAME, MOD_AUTHOR, MOD_VERSION, MOD_GAMEVERSION, Assembly.GetExecutingAssembly())
         {
         }
@@ -108,10 +117,8 @@ namespace PlateupAP
         {
             Logger = InitLogger();
             Logger.LogWarning($"{MOD_GUID} v{MOD_VERSION} in use!");
-            Newtonsoft.Json.JsonConvert.DefaultSettings = () => new Newtonsoft.Json.JsonSerializerSettings
-            {
-                Converters = new List<JsonConverter> { new SafeStringListConverter() }
-            };
+            Newtonsoft.Json.JsonConvert.DefaultSettings = () =>
+                new Newtonsoft.Json.JsonSerializerSettings { Converters = new List<JsonConverter> { new SafeStringListConverter() } };
         }
 
         protected override void OnUpdate()
@@ -127,11 +134,12 @@ namespace PlateupAP
             if (connectionSuccessful && HasSingleton<SKitchenMarker>())
             {
                 UpdateDayCycle();
-                checkReceivedItems();
+                CheckReceivedItems();
             }
         }
 
-        private void checkReceivedItems()
+        // Subscribe to the received items event.
+        private void CheckReceivedItems()
         {
             if (!itemsEventSubscribed)
             {
@@ -140,113 +148,42 @@ namespace PlateupAP
             }
         }
 
-        // This callback now spawns a blueprint for recognized items.
+        // When a check (item) is received via Archipelago, spawn a blueprint for that item.
         private void OnItemReceived(ReceivedItemsHelper helper)
         {
-            // Dequeue the item immediately.
+            // Dequeue the new item immediately.
             helper.DequeueItem();
 
-            // Access the most recently received item from AllItemsReceived.
+            // Get the most recent item from the AllItemsReceived collection.
             var networkItem = session.Items.AllItemsReceived.LastOrDefault();
             if (networkItem == null)
             {
                 Logger.LogInfo("No received item found in AllItemsReceived.");
                 return;
             }
-            long itemId = networkItem.Item; // Assumes networkItem is of type NetworkItem.
+
+            // Use dynamic to access the "Item" property.
+            long itemId = ((dynamic)networkItem).Item;
             string itemName = session.Items.GetItemName(itemId) ?? $"Item: {itemId}";
             if (string.IsNullOrEmpty(itemName))
             {
                 Logger.LogInfo("Received item has no name.");
                 return;
             }
-            switch (itemName)
-            {
-                case "Hob":
-                case "Sink":
-                case "Counter":
-                case "Dining Table":
-                    SpawnBlueprintForItem(itemName);
-                    break;
-                default:
-                    Logger.LogInfo($"Received unknown item: {itemName}");
-                    break;
-            }
-        }
 
-        // Blueprint spawning: load prefab, set blueprint price to 0, and spawn at player's location.
-        private void SpawnBlueprintForItem(string itemName)
-        {
-            GameObject blueprintPrefab = Bundle?.LoadAsset<GameObject>($"Blueprint_{itemName}");
-            if (blueprintPrefab == null)
+            if (itemToGDO.TryGetValue(itemName, out int gdoID))
             {
-                Logger.LogError($"Could not load blueprint prefab for {itemName}.");
-                return;
-            }
-            GameObject blueprintInstance = GameObject.Instantiate(blueprintPrefab);
-            // Assuming a Blueprint component exists on the prefab.
-            var blueprintComponent = blueprintInstance.GetComponent<Blueprint>();
-            if (blueprintComponent != null)
-            {
-                blueprintComponent.Price = 0;
+                // Request a spawn via the PlateUpDecorOnDemand system.
+                // This spawns a blueprint at the player's location.
+                SpawnRequestSystem.Request<Appliance>(gdoID, SpawnPositionType.Player, 0, SpawnApplianceMode.Blueprint);
             }
             else
             {
-                Logger.LogWarning($"No Blueprint component found on prefab for {itemName}.");
+                Logger.LogInfo($"Received unknown item: {itemName}");
             }
-            GameObject player = GetPlayerObject();
-            if (player == null)
-            {
-                Logger.LogError("Could not find player object.");
-                return;
-            }
-            blueprintInstance.transform.position = player.transform.position;
-            Logger.LogInfo($"Spawned a free blueprint for {itemName} on the player.");
         }
 
-        private GameObject GetPlayerObject()
-        {
-            return GameObject.FindWithTag("Player");
-        }
-
-        // Fallback spawn methods (if needed).
-        private void SpawnHob()
-        {
-            GameObject hobObject = new GameObject("Hob");
-            var appliance = hobObject.AddComponent<ApplianceWrapper>();
-            appliance.InitAppliance();
-            var pos = hobObject.AddComponent<PositionWrapper>();
-            pos.SetPosition(new Vector3(0f, 0f, 0f));
-            Logger.LogInfo("Spawned a Hob at position (0, 0, 0).");
-        }
-        private void SpawnSink()
-        {
-            GameObject sinkObject = new GameObject("Sink");
-            var appliance = sinkObject.AddComponent<ApplianceWrapper>();
-            appliance.InitAppliance();
-            var pos = sinkObject.AddComponent<PositionWrapper>();
-            pos.SetPosition(new Vector3(10f, 0f, 5f));
-            Logger.LogInfo("Spawned a Sink at position (10, 0, 5).");
-        }
-        private void SpawnCounter()
-        {
-            GameObject counterObject = new GameObject("Counter");
-            var appliance = counterObject.AddComponent<ApplianceWrapper>();
-            appliance.InitAppliance();
-            var pos = counterObject.AddComponent<PositionWrapper>();
-            pos.SetPosition(new Vector3(20f, 0f, 5f));
-            Logger.LogInfo("Spawned a Counter at position (20, 0, 5).");
-        }
-        private void SpawnDiningTable()
-        {
-            GameObject tableObject = new GameObject("Dining Table");
-            var appliance = tableObject.AddComponent<ApplianceWrapper>();
-            appliance.InitAppliance();
-            var pos = tableObject.AddComponent<PositionWrapper>();
-            pos.SetPosition(new Vector3(30f, 0f, 5f));
-            Logger.LogInfo("Spawned a Dining Table at position (30, 0, 5).");
-        }
-
+        // Update the day cycle.
         private void UpdateDayCycle()
         {
             if (connectionSuccessful && session != null)
@@ -342,12 +279,10 @@ namespace PlateupAP
                 Logger.LogInfo("    No stacktrace provided");
             }
         }
-
         private void Socket_SocketOpened()
         {
             Logger.LogInfo($"Socket opened to: {session.Socket.Uri}");
         }
-
         private void Socket_SocketClosed(string reason)
         {
             Logger.LogInfo($"Socket closed: {reason}");

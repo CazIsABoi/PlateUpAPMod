@@ -4,6 +4,7 @@
     <AssemblyName>$(MSBuildProjectName)</AssemblyName>
     <AssetBundlePath>UnityProject - PlateupAP\content\mod.assets</AssetBundlePath>
     <LangVersion>8.0</LangVersion>
+	 <PlatformTarget>x64</PlatformTarget>
   </PropertyGroup>
 
   <ItemGroup>
@@ -16,8 +17,8 @@
     <Compile Remove="UnityProject - PlateupAP\**" />
     <None Remove="UnityProject - PlateupAP\**" />
   </ItemGroup>
-	
-  <ItemGroup>
+
+	<ItemGroup>
     <Folder Condition="Exists('Changelogs')" Include="Changelogs\" />
     <Folder Condition="Exists('Changelogs\Github')" Include="Changelogs\Github" />
     <Folder Condition="Exists('Changelogs\Workshop')" Include="Changelogs\Workshop" />

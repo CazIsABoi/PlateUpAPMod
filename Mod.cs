@@ -1,9 +1,10 @@
 ﻿using System;
 using System.IO;
 using System.Collections.Generic;
-using System.Linq;
 using System.Reflection;
+using System.Threading.Tasks;
 using UnityEngine;
+using HarmonyLib;
 using Kitchen;
 using KitchenLib;
 using KitchenLib.Logging;
@@ -11,7 +12,6 @@ using KitchenLib.Utils;
 using KitchenLib.References;
 using KitchenMods;
 using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
 using KitchenData;
 using Archipelago.MultiClient.Net;
 using Archipelago.MultiClient.Net.Models;
@@ -24,35 +24,27 @@ using PreferenceSystem.Menus;
 
 namespace PlateupAP
 {
-    // Custom JSON converter.
-    public class SafeStringListConverter : JsonConverter<List<string>>
+    [HarmonyPatch(typeof(Archipelago.MultiClient.Net.Converters.ArchipelagoPacketConverter))]
+    [HarmonyPatch("ReadJson")]
+    public class Patch_ArchipelagoPacketConverter_ReadJson
     {
-        public override List<string> ReadJson(JsonReader reader, Type objectType, List<string> existingValue, bool hasExistingValue, JsonSerializer serializer)
+        // Postfix runs after the original method.
+        static void Postfix(object __result)
         {
-            var token = JToken.Load(reader);
-            var list = new List<string>();
-            if (token.Type == JTokenType.Array)
+            // If the deserialized result is a List<string>, remove any entries equal to "Disabled"
+            if (__result is List<string> stringList)
             {
-                foreach (var item in token)
-                {
-                    string str = item.ToString();
-                    if (str == "Disabled")
-                        continue;
-                    list.Add(str);
-                }
+                stringList.RemoveAll(s => s == "Disabled");
             }
-            else if (token.Type == JTokenType.String)
-            {
-                string str = token.ToString();
-                if (str != "Disabled")
-                    list.Add(str);
-            }
-            return list;
         }
-        public override void WriteJson(JsonWriter writer, List<string> value, JsonSerializer serializer)
-        {
-            serializer.Serialize(writer, value);
-        }
+    }
+
+    public class ArchipelagoConfig
+    {
+        public string address { get; set; }
+        public int port { get; set; }
+        public string playername { get; set; }
+        public string password { get; set; }
     }
 
     public class ApplianceWrapper : MonoBehaviour
@@ -73,14 +65,6 @@ namespace PlateupAP
         }
     }
 
-    public class ArchipelagoConfig
-    {
-        public string address { get; set; }
-        public string port { get; set; }
-        public string playername { get; set; }
-        public string password { get; set; }
-    }
-
     public class Mod : BaseMod, IModSystem
     {
         public const string MOD_GUID = "com.caz.plateupap";
@@ -92,27 +76,20 @@ namespace PlateupAP
         internal static AssetBundle Bundle = null;
         internal static KitchenLib.Logging.KitchenLogger Logger;
 
-        // Archipelago connection fields.
-        private ArchipelagoSession session;
-        private string ip = "archipelago.gg";
-        private int port;
-        private string playerName;
-        private string password;
-        private string configFilePath;
+        // Connection details are now loaded only via the JSON config.
+        private string ip = "";
+        private int port = 0;
+        private string playerName = "";
+        private string password = "";
 
-        // Reconnection control.
+        private ArchipelagoSession session;
         private bool connectionSuccessful = false;
-        private float reconnectDelay = 10f;
-        private float lastAttemptTime = -100f;
 
         // Day cycle fields.
-        private bool dayPhase;
         private bool prepPhase;
         private int lastDay = 0;
         private int dayID = 100000;
         private int timesFranchised = 1;
-        private bool loggedDayTransition = false;
-        private bool loggedPrepTransition = false;
         private bool itemsEventSubscribed = false;
 
         public static class InputSourceIdentifier
@@ -229,174 +206,73 @@ namespace PlateupAP
 
         protected override void OnPostActivate(KitchenMods.Mod mod)
         {
-            // Initialize the PreferenceSystemManager.
             PrefManager = new PreferenceSystemManager(MOD_GUID, MOD_NAME);
-
-            // Set up the config file path in a user-writable folder (persistentDataPath).
-            SetupConfigFilePath();
-
-            // Build the in-game menu.
             PrefManager
-                .AddLabel("Archipelago Connection")
-                .AddButton("Create Config File", _ => CreateConfigFileButton(), 0, 1f, 0.2f)
-                .AddButton("Connect", _ => OnConnectPressed(), 0, 1f, 0.2f);
+                .AddLabel("Archipelago Configuration")
+                .AddInfo("Create or load configuration for the Archipelago connection")
+                .AddButton("Create Config", (int _) =>
+                {
+                    string folder = Path.Combine(Application.persistentDataPath, "PlateUpAPConfig");
+                    if (!Directory.Exists(folder))
+                        Directory.CreateDirectory(folder);
 
-            // Register the menu to appear in the main menu.
+                    string path = Path.Combine(folder, "archipelago_config.json");
+                    ArchipelagoConfig defaultConfig = new ArchipelagoConfig
+                    {
+                        address = "",
+                        port = 0,
+                        playername = "",
+                        password = ""
+                    };
+                    string json = JsonConvert.SerializeObject(defaultConfig, Formatting.Indented);
+                    File.WriteAllText(path, json);
+                    Debug.Log("Created config file at: " + path);
+                })
+                .AddButton("Connect", (int _) =>
+                {
+                    string folder = Path.Combine(Application.persistentDataPath, "PlateUpAPConfig");
+                    string path = Path.Combine(folder, "archipelago_config.json");
+                    if (!File.Exists(path))
+                    {
+                        Debug.LogError("Config file not found at: " + path);
+                        return;
+                    }
+                    string json = File.ReadAllText(path);
+                    ArchipelagoConfig config = JsonConvert.DeserializeObject<ArchipelagoConfig>(json);
+                    if (string.IsNullOrEmpty(config.address))
+                    {
+                        Debug.LogError("Config file does not contain a valid address.");
+                        return;
+                    }
+                    UpdateArchipelagoConfig(config);
+                });
+
             PrefManager.RegisterMenu(PreferenceSystemManager.MenuType.MainMenu);
-        }
-
-        private void SetupConfigFilePath()
-        {
-            // Ensure Logger is initialized.
-            if (Logger == null)
-            {
-                Logger = InitLogger();
-            }
-
-            // Use Unity's persistentDataPath which is writable and user-specific.
-            string configFolder = Application.persistentDataPath;
-            // Create a subfolder "PlateUpAPConfig" within the persistent data folder.
-            configFolder = Path.Combine(configFolder, "PlateUpAPConfig");
-            if (!Directory.Exists(configFolder))
-            {
-                Directory.CreateDirectory(configFolder);
-                Logger.LogInfo("Created config folder: " + configFolder);
-            }
-            else
-            {
-                Logger.LogInfo("Config folder already exists: " + configFolder);
-            }
-            // Set the config file path.
-            configFilePath = Path.Combine(configFolder, "archipelago_config.json");
-            Logger.LogInfo("Config file path set to: " + configFilePath);
-        }
-
-
-        private void EnsureConfigFileExists()
-        {
-            if (!File.Exists(configFilePath))
-            {
-                ArchipelagoConfig defaultConfig = new ArchipelagoConfig
-                {
-                    address = "archipelago.gg", // default address now set
-                    port = "",
-                    playername = "",
-                    password = ""
-                };
-
-                JsonSerializerSettings localSettings = new JsonSerializerSettings
-                {
-                    Formatting = Formatting.Indented,
-                    Converters = new List<JsonConverter>() // no converters
-                };
-
-                string json;
-                using (StringWriter sw = new StringWriter())
-                {
-                    JsonSerializer serializer = JsonSerializer.Create(localSettings);
-                    serializer.Serialize(sw, defaultConfig);
-                    json = sw.ToString();
-                }
-                File.WriteAllText(configFilePath, json);
-                Logger.LogInfo("Created configuration file at: " + configFilePath);
-            }
-            else
-            {
-                Logger.LogInfo("Configuration file already exists at: " + configFilePath);
-            }
-        }
-
-
-
-        private void CreateConfigFileButton()
-        {
-            try
-            {
-                EnsureConfigFileExists();
-                Logger.LogInfo("Create Config File button pressed. Config file is located at: " + configFilePath);
-            }
-            catch (Exception ex)
-            {
-                Logger.LogError("Failed to create config file: " + ex);
-            }
-        }
-
-        private ArchipelagoConfig LoadConfig()
-        {
-            EnsureConfigFileExists();
-            string json = File.ReadAllText(configFilePath);
-            Logger.LogInfo("Raw config JSON: " + json);
-
-            ArchipelagoConfig config;
-            using (StringReader sr = new StringReader(json))
-            {
-                JsonSerializer serializer = new JsonSerializer();
-                // Ensure no converters from global defaults interfere.
-                serializer.Converters.Clear();
-                config = (ArchipelagoConfig)serializer.Deserialize(sr, typeof(ArchipelagoConfig));
-            }
-
-            Logger.LogInfo("Successfully loaded configuration.");
-            return config;
-        }
-
-
-
-        private void OnConnectPressed()
-        {
-            Logger.LogInfo("Connect button pressed.");
-            try
-            {
-                ArchipelagoConfig config = LoadConfig();
-                Logger.LogInfo("Config loaded. Fields:");
-                Logger.LogInfo("  address: " + config.address);
-                Logger.LogInfo("  port: " + config.port);
-                Logger.LogInfo("  playername: " + config.playername);
-                Logger.LogInfo("  password: " + config.password);
-
-                string ipAddress = string.IsNullOrWhiteSpace(config.address) ? "archipelago.gg" : config.address;
-                string portStr = config.port;
-                string player = config.playername;
-                string pwd = config.password;
-
-                if (string.IsNullOrWhiteSpace(portStr) || !int.TryParse(portStr, out int portNumber))
-                {
-                    Logger.LogError("Port is not set or invalid in the configuration file. Please update the file at: " + configFilePath);
-                    return;
-                }
-
-                ip = ipAddress;
-                port = portNumber;
-                playerName = player;
-                password = pwd;
-
-                Logger.LogInfo("Attempting connection with settings:");
-                Logger.LogInfo("  Address: " + ip);
-                Logger.LogInfo("  Port: " + port);
-                Logger.LogInfo("  Player Name: " + playerName);
-
-                TryConnectToArchipelago();
-            }
-            catch (Exception ex)
-            {
-                Logger.LogError("Exception in OnConnectPressed: " + ex);
-            }
+            PrefManager.RegisterMenu(PreferenceSystemManager.MenuType.PauseMenu);
         }
 
         protected override void OnInitialise()
         {
             Logger = InitLogger();
             Logger.LogWarning($"{MOD_GUID} v{MOD_VERSION} in use!");
+            var harmony = new Harmony("com.caz.plateupap.patch");
+            harmony.PatchAll(Assembly.GetExecutingAssembly());
+            JsonConvert.DefaultSettings = null;
+        }
 
-            JsonConvert.DefaultSettings = () => new JsonSerializerSettings
-            {
-                Converters = new List<JsonConverter> { new SafeStringListConverter() }
-            };
+        public void UpdateArchipelagoConfig(ArchipelagoConfig config)
+        {
+            ip = config.address;
+            port = config.port;
+            playerName = config.playername;
+            password = config.password;
+            Logger.LogInfo("Archipelago configuration updated from config file.");
+            TryConnectToArchipelago();
         }
 
         protected override void OnUpdate()
         {
-            if (connectionSuccessful && HasSingleton<SKitchenMarker>())
+            if (HasSingleton<SKitchenMarker>())
             {
                 UpdateDayCycle();
                 CheckReceivedItems();
@@ -405,6 +281,11 @@ namespace PlateupAP
 
         private void CheckReceivedItems()
         {
+            if (session == null || session.Items == null)
+            {
+                Logger.LogError("Session items not yet initialized.");
+                return;
+            }
             if (!itemsEventSubscribed)
             {
                 session.Items.ItemReceived += new ReceivedItemsHelper.ItemReceivedHandler(OnItemReceived);
@@ -465,7 +346,6 @@ namespace PlateupAP
                 if (isPrepPhase)
                 {
                     prepPhase = true;
-                    dayPhase = false;
                     Logger.LogInfo("It's time to prep for the next day!");
                     while (spawnQueue.Count > 0)
                     {
@@ -477,7 +357,6 @@ namespace PlateupAP
                 {
                     lastDay++;
                     prepPhase = false;
-                    dayPhase = true;
                     Logger.LogInfo("Transitioning from night to day, advancing day count...");
                     session.Locations.CompleteLocationChecks(dayID + lastDay);
                     int presentdayID = dayID + lastDay;
@@ -488,14 +367,9 @@ namespace PlateupAP
                     Logger.LogInfo("You franchised!");
                     timesFranchised++;
                     dayID = 100000 * timesFranchised;
-
                     session.Locations.CompleteLocationChecks(dayID);
-
                     lastDay = 0;
-                    franchiseScreen = false;
                 }
-                
-            
                 else if (loseScreen)
                 {
                     Logger.LogInfo("You Lost the Run!");
@@ -505,11 +379,10 @@ namespace PlateupAP
             }
         }
 
-
-        private void TryConnectToArchipelago()
+        private async void TryConnectToArchipelago()
         {
             Logger.LogInfo("Attempting connection to Archipelago...");
-            string connectionUrl = $"wss://{ip}:{port}/";
+            string connectionUrl = $"ws://{ip}:{port}/";
             session = ArchipelagoSessionFactory.CreateSession(connectionUrl);
             if (session == null)
             {
@@ -529,10 +402,31 @@ namespace PlateupAP
             {
                 connectionSuccessful = true;
                 Logger.LogInfo($"Successfully connected to Archipelago as slot '{playerName}'.");
+                await Task.Delay(3000);
+                TrySubscribeItems();
             }
             else if (result is LoginFailure failure)
             {
                 Logger.LogError($"Connection failed: {string.Join(", ", failure.Errors)}");
+            }
+        }
+
+        private async void TrySubscribeItems()
+        {
+            if (session != null && session.Items != null)
+            {
+                if (!itemsEventSubscribed)
+                {
+                    session.Items.ItemReceived += new ReceivedItemsHelper.ItemReceivedHandler(OnItemReceived);
+                    itemsEventSubscribed = true;
+                    Logger.LogInfo("Subscribed to session.Items.ItemReceived.");
+                }
+            }
+            else
+            {
+                Logger.LogInfo("Items not initialized yet; retrying in 1 second.");
+                await Task.Delay(1000);
+                TrySubscribeItems();
             }
         }
 
@@ -550,10 +444,12 @@ namespace PlateupAP
                 Logger.LogInfo("    No stacktrace provided");
             }
         }
+
         private void Socket_SocketOpened()
         {
             Logger.LogInfo("Socket opened to: " + session.Socket.Uri);
         }
+
         private void Socket_SocketClosed(string reason)
         {
             Logger.LogInfo("Socket closed: " + reason);

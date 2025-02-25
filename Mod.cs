@@ -21,6 +21,7 @@ using KitchenDecorOnDemand;
 using PreferenceSystem;
 using PreferenceSystem.Event;
 using PreferenceSystem.Menus;
+using PlateupAP;
 
 namespace PlateupAP
 {
@@ -28,10 +29,8 @@ namespace PlateupAP
     [HarmonyPatch("ReadJson")]
     public class Patch_ArchipelagoPacketConverter_ReadJson
     {
-        // Postfix runs after the original method.
         static void Postfix(object __result)
         {
-            // If the deserialized result is a List<string>, remove any entries equal to "Disabled"
             if (__result is List<string> stringList)
             {
                 stringList.RemoveAll(s => s == "Disabled");
@@ -56,7 +55,6 @@ namespace PlateupAP
         }
     }
 
-    // Simple wrapper to set an object's position.
     public class PositionWrapper : MonoBehaviour
     {
         public void SetPosition(Vector3 pos)
@@ -69,35 +67,30 @@ namespace PlateupAP
     {
         public const string MOD_GUID = "com.caz.plateupap";
         public const string MOD_NAME = "PlateupAP";
-        public const string MOD_VERSION = "0.1.4";
+        public const string MOD_VERSION = "0.1.5";
         public const string MOD_AUTHOR = "Caz";
         public const string MOD_GAMEVERSION = ">=1.1.9";
 
         internal static AssetBundle Bundle = null;
         internal static KitchenLib.Logging.KitchenLogger Logger;
 
-        // Connection details are now loaded only via the JSON config.
-        private string ip = "";
-        private int port = 0;
-        private string playerName = "";
-        private string password = "";
+        public static Mod Instance { get; private set; }
 
-        private ArchipelagoSession session;
-        private bool connectionSuccessful = false;
+        private static ArchipelagoSession session => ArchipelagoConnectionManager.Session;
 
-        // Day cycle fields.
-        private bool prepPhase;
-        private int lastDay = 0;
-        private int dayID = 100000;
-        private int timesFranchised = 1;
-        private bool itemsEventSubscribed = false;
+        // Static day cycle and spawn state.
+        private static bool prepPhase;
+        private static int lastDay = 0;
+        private static int dayID = 100000;
+        private static int timesFranchised = 1;
+        private static bool itemsEventSubscribed = false;
+        private static Queue<ItemInfo> spawnQueue = new Queue<ItemInfo>();
 
         public static class InputSourceIdentifier
         {
             public static int Identifier = 0;
         }
 
-        // Mapping from progression check ids to in-game GDO ids.
         private readonly Dictionary<int, int> progressionToGDO = new Dictionary<int, int>()
         {
             { 1001, ApplianceReferences.Hob },
@@ -195,11 +188,11 @@ namespace PlateupAP
             { 10164, ApplianceReferences.ExtraLife }
         };
 
-        // Queue to store received items until prep phase.
-        private Queue<ItemInfo> spawnQueue = new Queue<ItemInfo>();
-
         public Mod() : base(MOD_GUID, MOD_NAME, MOD_AUTHOR, MOD_VERSION, MOD_GAMEVERSION, Assembly.GetExecutingAssembly())
         {
+            Instance = this;
+            Logger = InitLogger();
+            Logger.LogWarning("Created instance");
         }
 
         static PreferenceSystemManager PrefManager;
@@ -262,17 +255,21 @@ namespace PlateupAP
 
         public void UpdateArchipelagoConfig(ArchipelagoConfig config)
         {
-            ip = config.address;
-            port = config.port;
-            playerName = config.playername;
-            password = config.password;
-            Logger.LogInfo("Archipelago configuration updated from config file.");
-            TryConnectToArchipelago();
+            // Use our static connection manager.
+            ArchipelagoConnectionManager.TryConnect(config.address, config.port, config.playername, config.password);
         }
 
         protected override void OnUpdate()
         {
-            if (HasSingleton<SKitchenMarker>())
+            bool hasKitchen = HasSingleton<SKitchenMarker>();
+            bool isPrepPhase = HasSingleton<SIsNightTime>();
+            bool isDayStart = HasSingleton<SIsDayFirstUpdate>();
+
+            // Use the connection state from ArchipelagoConnectionManager
+            if (!ArchipelagoConnectionManager.ConnectionSuccessful)
+                return;
+
+            if (hasKitchen)
             {
                 UpdateDayCycle();
                 CheckReceivedItems();
@@ -336,22 +333,19 @@ namespace PlateupAP
 
         private void UpdateDayCycle()
         {
-            if (connectionSuccessful && session != null)
+            if (session != null)
             {
                 bool isDayStart = HasSingleton<SIsDayFirstUpdate>();
                 bool isPrepPhase = HasSingleton<SIsNightTime>();
                 bool franchiseScreen = HasSingleton<SFranchiseBuilderMarker>();
                 bool loseScreen = HasSingleton<SPostgameFirstFrameMarker>();
 
-                if (isPrepPhase)
+                prepPhase = true;
+                Logger.LogInfo("It's time to prep for the next day!");
+                while (spawnQueue.Count > 0)
                 {
-                    prepPhase = true;
-                    Logger.LogInfo("It's time to prep for the next day!");
-                    while (spawnQueue.Count > 0)
-                    {
-                        ItemInfo queuedInfo = spawnQueue.Dequeue();
-                        ProcessSpawn(queuedInfo);
-                    }
+                    ItemInfo queuedInfo = spawnQueue.Dequeue();
+                    ProcessSpawn(queuedInfo);
                 }
                 if (isDayStart)
                 {
@@ -379,80 +373,26 @@ namespace PlateupAP
             }
         }
 
-        private async void TryConnectToArchipelago()
+        private void TrySubscribeItemsSync()
         {
-            Logger.LogInfo("Attempting connection to Archipelago...");
-            string connectionUrl = $"ws://{ip}:{port}/";
-            session = ArchipelagoSessionFactory.CreateSession(connectionUrl);
             if (session == null)
             {
-                Logger.LogError("Failed to create session. Session is null.");
+                Logger.LogError("Session is null, cannot subscribe to items.");
                 return;
             }
-            session.Socket.ErrorReceived += Socket_ErrorReceived;
-            session.Socket.SocketOpened += Socket_SocketOpened;
-            session.Socket.SocketClosed += Socket_SocketClosed;
-            if (!string.IsNullOrEmpty(password))
-            {
-                Logger.LogWarning("Password provided, but password support is not implemented. Proceeding without using the password.");
-            }
-            var result = session.TryConnectAndLogin("plateup", playerName, ItemsHandlingFlags.AllItems);
 
-            if (result is LoginSuccessful)
+            while (session.Items == null)
             {
-                connectionSuccessful = true;
-                Logger.LogInfo($"Successfully connected to Archipelago as slot '{playerName}'.");
-                await Task.Delay(3000);
-                TrySubscribeItems();
+                Logger.LogInfo("Waiting for session items to initialize...");
+                System.Threading.Thread.Sleep(1000);
             }
-            else if (result is LoginFailure failure)
-            {
-                Logger.LogError($"Connection failed: {string.Join(", ", failure.Errors)}");
-            }
-        }
 
-        private async void TrySubscribeItems()
-        {
-            if (session != null && session.Items != null)
+            if (!itemsEventSubscribed)
             {
-                if (!itemsEventSubscribed)
-                {
-                    session.Items.ItemReceived += new ReceivedItemsHelper.ItemReceivedHandler(OnItemReceived);
-                    itemsEventSubscribed = true;
-                    Logger.LogInfo("Subscribed to session.Items.ItemReceived.");
-                }
+                session.Items.ItemReceived += new ReceivedItemsHelper.ItemReceivedHandler(OnItemReceived);
+                itemsEventSubscribed = true;
+                Logger.LogInfo("Subscribed to session.Items.ItemReceived.");
             }
-            else
-            {
-                Logger.LogInfo("Items not initialized yet; retrying in 1 second.");
-                await Task.Delay(1000);
-                TrySubscribeItems();
-            }
-        }
-
-        private void Socket_ErrorReceived(Exception e, string message)
-        {
-            Logger.LogInfo("Socket Error: " + message);
-            Logger.LogInfo("Socket Exception: " + e.Message);
-            if (e.StackTrace != null)
-            {
-                foreach (var line in e.StackTrace.Split('\n'))
-                    Logger.LogInfo("    " + line);
-            }
-            else
-            {
-                Logger.LogInfo("    No stacktrace provided");
-            }
-        }
-
-        private void Socket_SocketOpened()
-        {
-            Logger.LogInfo("Socket opened to: " + session.Socket.Uri);
-        }
-
-        private void Socket_SocketClosed(string reason)
-        {
-            Logger.LogInfo("Socket closed: " + reason);
         }
     }
 }

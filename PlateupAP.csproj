@@ -4,7 +4,6 @@
     <AssemblyName>$(MSBuildProjectName)</AssemblyName>
     <AssetBundlePath>UnityProject - PlateupAP\content\mod.assets</AssetBundlePath>
     <LangVersion>8.0</LangVersion>
-	 <PlatformTarget>x64</PlatformTarget>
   </PropertyGroup>
 
   <ItemGroup>

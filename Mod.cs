@@ -4,6 +4,8 @@ using System.Collections.Generic;
 using System.Reflection;
 using System.Threading.Tasks;
 using UnityEngine;
+using Unity.Entities;
+using Unity.Collections;
 using HarmonyLib;
 using Kitchen;
 using KitchenLib;
@@ -67,7 +69,7 @@ namespace PlateupAP
     {
         public const string MOD_GUID = "com.caz.plateupap";
         public const string MOD_NAME = "PlateupAP";
-        public const string MOD_VERSION = "0.1.5";
+        public const string MOD_VERSION = "0.1.4";
         public const string MOD_AUTHOR = "Caz";
         public const string MOD_GAMEVERSION = ">=1.1.9";
 
@@ -79,18 +81,24 @@ namespace PlateupAP
         private static ArchipelagoSession session => ArchipelagoConnectionManager.Session;
 
         // Static day cycle and spawn state.
-        private static bool prepPhase;
         private static int lastDay = 0;
         private static int dayID = 100000;
+        private static int stars = 0;
         private static int timesFranchised = 1;
         private static bool itemsEventSubscribed = false;
         private static Queue<ItemInfo> spawnQueue = new Queue<ItemInfo>();
+
+        // Flag to prevent repeated logging during a cycle.
+        private static bool loggedCardThisCycle = false;
+        private static bool prepLogDone = false;
+        private static bool sessionNotInitLogged = false;
 
         public static class InputSourceIdentifier
         {
             public static int Identifier = 0;
         }
 
+        // Appliance Dictionary
         private readonly Dictionary<int, int> progressionToGDO = new Dictionary<int, int>()
         {
             { 1001, ApplianceReferences.Hob },
@@ -261,28 +269,41 @@ namespace PlateupAP
 
         protected override void OnUpdate()
         {
-            bool hasKitchen = HasSingleton<SKitchenMarker>();
-            bool isPrepPhase = HasSingleton<SIsNightTime>();
-            bool isDayStart = HasSingleton<SIsDayFirstUpdate>();
-
-            // Use the connection state from ArchipelagoConnectionManager
-            if (!ArchipelagoConnectionManager.ConnectionSuccessful)
+            // Only proceed if the player is in the kitchen.
+            if (!HasSingleton<SKitchenMarker>())
                 return;
 
-            if (hasKitchen)
+            UpdateDayCycle();
+            CheckReceivedItems();
+
+            // Retrieve the current card IDs from CardReadingSystem.
+            var cardIDs = CardReadingSystem.CurrentCardIDs;
+            if (cardIDs.Count > 0)
             {
-                UpdateDayCycle();
-                CheckReceivedItems();
+                // Log each card id.
+                foreach (var id in cardIDs)
+                {
+                    Logger.LogInfo($"Found card id: {id}");
+                }
             }
         }
 
+
+        // Spawning Items
         private void CheckReceivedItems()
         {
             if (session == null || session.Items == null)
             {
-                Logger.LogError("Session items not yet initialized.");
+                if (!sessionNotInitLogged)
+                {
+                    Logger.LogError("Session items not yet initialized.");
+                    sessionNotInitLogged = true;
+                }
                 return;
             }
+            // Reset the flag when session items become available.
+            sessionNotInitLogged = false;
+
             if (!itemsEventSubscribed)
             {
                 session.Items.ItemReceived += new ReceivedItemsHelper.ItemReceivedHandler(OnItemReceived);
@@ -295,8 +316,8 @@ namespace PlateupAP
             ItemInfo info = helper.DequeueItem();
             int checkId = (int)info.ItemId;
             Logger.LogInfo("Received check id: " + checkId);
-
-            if (!prepPhase)
+            bool currentlyPrep = HasSingleton<SIsNightTime>();
+            if (!currentlyPrep)
             {
                 Logger.LogInfo("Not in prep phase, queueing check id: " + checkId);
                 spawnQueue.Enqueue(info);
@@ -331,6 +352,7 @@ namespace PlateupAP
             }
         }
 
+        // Checks and Day Cycle
         private void UpdateDayCycle()
         {
             if (session != null)
@@ -340,21 +362,54 @@ namespace PlateupAP
                 bool franchiseScreen = HasSingleton<SFranchiseBuilderMarker>();
                 bool loseScreen = HasSingleton<SPostgameFirstFrameMarker>();
 
-                prepPhase = true;
-                Logger.LogInfo("It's time to prep for the next day!");
-                while (spawnQueue.Count > 0)
+                // Log the prep-phase message only once.
+                if (isPrepPhase && !prepLogDone)
                 {
-                    ItemInfo queuedInfo = spawnQueue.Dequeue();
-                    ProcessSpawn(queuedInfo);
+                    Logger.LogInfo("It's time to prep for the next day!");
+                    prepLogDone = true;
+                }
+
+                if (isPrepPhase)
+                {
+                    while (spawnQueue.Count > 0)
+                    {
+                        ItemInfo queuedInfo = spawnQueue.Dequeue();
+                        ProcessSpawn(queuedInfo);
+                    }
                 }
                 if (isDayStart)
                 {
                     lastDay++;
-                    prepPhase = false;
                     Logger.LogInfo("Transitioning from night to day, advancing day count...");
                     session.Locations.CompleteLocationChecks(dayID + lastDay);
                     int presentdayID = dayID + lastDay;
                     Logger.LogInfo("Day Logged " + lastDay + " with ID " + presentdayID);
+                    // Reset logging flags for new cycle.
+                    prepLogDone = false;
+                    loggedCardThisCycle = false;
+                    if (lastDay % 5 == 0)
+                    {
+                        stars++;
+                        switch(stars)
+                        {
+                            case 1:
+                                session.Locations.CompleteLocationChecks(presentdayID * 10 + 1);
+                                break;
+                            case 2:
+                                session.Locations.CompleteLocationChecks(presentdayID * 10 + 1);
+                                break;
+                            case 3:
+                                session.Locations.CompleteLocationChecks(presentdayID * 10 + 1);
+                                break;
+                            case 4:
+                                session.Locations.CompleteLocationChecks(presentdayID * 10 + 1);
+                                break;
+                            case 5:
+                                session.Locations.CompleteLocationChecks(presentdayID * 10 + 1);
+                                stars = 0;
+                                break;
+                        }
+                    }
                 }
                 if (franchiseScreen)
                 {
@@ -363,12 +418,16 @@ namespace PlateupAP
                     dayID = 100000 * timesFranchised;
                     session.Locations.CompleteLocationChecks(dayID);
                     lastDay = 0;
+                    prepLogDone = false;
+                    loggedCardThisCycle = false;
                 }
                 else if (loseScreen)
                 {
                     Logger.LogInfo("You Lost the Run!");
                     lastDay = 0;
                     session.Locations.CompleteLocationChecks(dayID);
+                    prepLogDone = false;
+                    loggedCardThisCycle = false;
                 }
             }
         }

@@ -7,8 +7,8 @@
       "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:Mod.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\cazpe\\OneDrive\\Desktop\\My Mods\\PlateupAP\\Libraries\\PlateUpDecorOnDemand\\Main.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
-      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:Libraries\\PlateUpDecorOnDemand\\Main.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\cazpe\\OneDrive\\Desktop\\My Mods\\PlateupAP\\PlateupAP.csproj||{FA3CD31E-987B-443A-9B81-186104E8DAC1}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:PlateupAP.csproj||{FA3CD31E-987B-443A-9B81-186104E8DAC1}"
     }
   ],
   "DocumentGroupContainers": [
@@ -23,14 +23,15 @@
             {
               "$type": "Document",
               "DocumentIndex": 1,
-              "Title": "Main.cs",
-              "DocumentMoniker": "C:\\Users\\cazpe\\OneDrive\\Desktop\\My Mods\\PlateupAP\\Libraries\\PlateUpDecorOnDemand\\Main.cs",
-              "RelativeDocumentMoniker": "Libraries\\PlateUpDecorOnDemand\\Main.cs",
-              "ToolTip": "C:\\Users\\cazpe\\OneDrive\\Desktop\\My Mods\\PlateupAP\\Libraries\\PlateUpDecorOnDemand\\Main.cs",
-              "RelativeToolTip": "Libraries\\PlateUpDecorOnDemand\\Main.cs",
-              "ViewState": "AgIAAEYAAAAAAAAAAAAcwHYAAAAAAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2025-02-24T20:24:31.749Z"
+              "Title": "PlateupAP.csproj",
+              "DocumentMoniker": "C:\\Users\\cazpe\\OneDrive\\Desktop\\My Mods\\PlateupAP\\PlateupAP.csproj",
+              "RelativeDocumentMoniker": "PlateupAP.csproj",
+              "ToolTip": "C:\\Users\\cazpe\\OneDrive\\Desktop\\My Mods\\PlateupAP\\PlateupAP.csproj",
+              "RelativeToolTip": "PlateupAP.csproj",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAABIAAAABAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000758|",
+              "WhenOpened": "2025-02-24T21:05:19.715Z",
+              "EditorCaption": ""
             },
             {
               "$type": "Document",
@@ -40,7 +41,7 @@
               "RelativeDocumentMoniker": "Mod.cs",
               "ToolTip": "C:\\Users\\cazpe\\OneDrive\\Desktop\\My Mods\\PlateupAP\\Mod.cs",
               "RelativeToolTip": "Mod.cs",
-              "ViewState": "AgIAAKsAAAAAAAAAAAAvwM0AAAAAAAAAAAAAAA==",
+              "ViewState": "AgIAAD4AAAAAAAAAAAAkwFgAAAAgAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
               "WhenOpened": "2025-02-24T17:25:37.43Z",
               "EditorCaption": ""

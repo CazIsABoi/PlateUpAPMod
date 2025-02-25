@@ -11,26 +11,12 @@
     <PackageReference Include="Archipelago.MultiClient.Net" Version="6.6.0" />
   </ItemGroup>
   
-  <ItemGroup>
-    <Reference Include="PreferenceSystem-Workshop">
-      <HintPath>Libraries\PreferenceSystem-Workshop.dll</HintPath>
-    </Reference>
-  </ItemGroup>
 
   <ItemGroup>
     <Compile Remove="UnityProject - PlateupAP\**" />
     <None Remove="UnityProject - PlateupAP\**" />
   </ItemGroup>
-
-  <ItemGroup>
-  <Reference Include="KitchenLib-Workshop">
-    <HintPath>Libraries\KitchenLib-Workshop.dll</HintPath>
-  </Reference>
-</ItemGroup>
-
-
-
-
+	
   <ItemGroup>
     <Folder Condition="Exists('Changelogs')" Include="Changelogs\" />
     <Folder Condition="Exists('Changelogs\Github')" Include="Changelogs\Github" />

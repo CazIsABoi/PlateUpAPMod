@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -17,7 +17,6 @@ using Archipelago.MultiClient.Net.Models;
 using Archipelago.MultiClient.Net.Enums;
 using Archipelago.MultiClient.Net.Helpers;
 using KitchenDecorOnDemand;
-
 
 namespace PlateupAP
 {
@@ -73,18 +72,17 @@ namespace PlateupAP
     {
         public const string MOD_GUID = "com.caz.plateupap";
         public const string MOD_NAME = "PlateupAP";
-        public const string MOD_VERSION = "0.1.0";
+        public const string MOD_VERSION = "0.1.4";
         public const string MOD_AUTHOR = "Caz";
         public const string MOD_GAMEVERSION = ">=1.1.9";
 
         internal static AssetBundle Bundle = null;
-        // Fully qualify the logger to avoid ambiguity.
         internal static KitchenLib.Logging.KitchenLogger Logger;
 
         // Archipelago connection fields.
         private ArchipelagoSession session;
         private string ip = "archipelago.gg";
-        private int port = 52033;
+        private int port = 56545;
         private string playerName = "Caz";
         private string password = "";
 
@@ -97,19 +95,19 @@ namespace PlateupAP
         private bool dayPhase;
         private bool prepPhase;
         private int lastDay = 0;
-        private const int dayID = 100000;
-        private int timesFranchised = 0;
+        private int dayID = 100000;
+        private int timesFranchised = 1;
         private bool loggedDayTransition = false;
         private bool loggedPrepTransition = false;
         private bool itemsEventSubscribed = false;
 
-    public static class InputSourceIdentifier
-    {
-        public static int Identifier = 0;
-    }
+        public static class InputSourceIdentifier
+        {
+            public static int Identifier = 0;
+        }
 
         // Create a mapping from progression check ids to in-game GDO ids.
-         private readonly Dictionary<int, int> progressionToGDO = new Dictionary<int, int>()
+        private readonly Dictionary<int, int> progressionToGDO = new Dictionary<int, int>()
         {
             { 1001, ApplianceReferences.Hob },
             { 10012, ApplianceReferences.HobSafe },
@@ -206,6 +204,9 @@ namespace PlateupAP
             { 10164, ApplianceReferences.ExtraLife }
         };
 
+        // Queue to store received items until prep phase.
+        private Queue<ItemInfo> spawnQueue = new Queue<ItemInfo>();
+
         public Mod() : base(MOD_GUID, MOD_NAME, MOD_AUTHOR, MOD_VERSION, MOD_GAMEVERSION, Assembly.GetExecutingAssembly())
         {
         }
@@ -247,17 +248,27 @@ namespace PlateupAP
         {
             // Dequeue the item info.
             ItemInfo info = helper.DequeueItem();
-
-            // Use the numeric id from the progression check.
             int checkId = (int)info.ItemId;
             Logger.LogInfo("Received check id: " + checkId);
 
+            // Instead of spawning immediately, check if we're in prep phase.
+            if (!prepPhase)
+            {
+                Logger.LogInfo("Not in prep phase, queueing check id: " + checkId);
+                spawnQueue.Enqueue(info);
+                return;
+            }
+            // If in prep phase, spawn immediately.
+            ProcessSpawn(info);
+        }
+
+        private void ProcessSpawn(ItemInfo info)
+        {
+            int checkId = (int)info.ItemId;
             if (progressionToGDO.TryGetValue(checkId, out int gdoId))
             {
-                // Default settings: spawn at door and blueprint mode.
                 SpawnPositionType positionType = SpawnPositionType.Door;
                 SpawnApplianceMode spawnApplianceMode = SpawnApplianceMode.Blueprint;
-
                 if (KitchenData.GameData.Main.TryGet<Appliance>(gdoId, out Appliance appliance))
                 {
                     SpawnRequestSystem.Request<Appliance>(gdoId, positionType, InputSourceIdentifier.Identifier, spawnApplianceMode);
@@ -277,56 +288,56 @@ namespace PlateupAP
             }
         }
 
-
-
-
-
-
-        // Day cycle update
         private void UpdateDayCycle()
         {
+            if (connectionSuccessful && session != null)
+            {
+                bool isDayStart = HasSingleton<SIsDayFirstUpdate>();
 
-                if (connectionSuccessful && session != null)
+                bool isPrepPhase = HasSingleton<SIsNightTime>();
+                bool franchiseScreen = HasSingleton<SFranchiseBuilderMarker>();
+                bool loseScreen = HasSingleton<SPostgameFirstFrameMarker>();
+
+                if (isPrepPhase)
+                {
+                    prepPhase = true;
+                    dayPhase = false;
+                    Logger.LogInfo("It's time to prep for the next day!");
+                    // Process any queued spawn requests until the queue is empty.
+                    while (spawnQueue.Count > 0)
                     {
-                        bool isDayStart = HasSingleton<SIsDayFirstUpdate>();
-                        bool isPrepStart = HasSingleton<SIsNightFirstUpdate>();
-
-                        if (isPrepStart)
-                        {
-                            dayPhase = false;
-                            prepPhase = true;
-                            if (!loggedPrepTransition)
-                            {
-                                Logger.LogInfo("It's time to prep for the next day!");
-                                loggedPrepTransition = true;
-                                loggedDayTransition = false;
-                            }
-                        }
-                        if (isDayStart)
-                        {
-                            lastDay++;
-                            prepPhase = false;
-                            dayPhase = true;
-                            if (!loggedDayTransition)
-                            {
-                                Logger.LogInfo("Transitioning from night to day, advancing day count...");
-                                loggedDayTransition = true;
-                                loggedPrepTransition = false;
-
-                                session.Locations.CompleteLocationChecks(dayID + lastDay);
-                                int presentdayID = dayID + lastDay;
-                                Logger.LogInfo("Day Logged " + lastDay + " with ID " + presentdayID);
-                        
-                                if (lastDay >= 16)
-                                {
-                                    Logger.LogInfo("You franchised!");
-                                    timesFranchised++;
-                                }
-                            }
-                        }
+                        ItemInfo queuedInfo = spawnQueue.Dequeue();
+                        ProcessSpawn(queuedInfo);
                     }
-                
+                }
+                if (isDayStart)
+                {
+                    lastDay++;
+                    prepPhase = false;
+                    dayPhase = true;
+                    Logger.LogInfo("Transitioning from night to day, advancing day count...");
+                    session.Locations.CompleteLocationChecks(dayID + lastDay);
+                    int presentdayID = dayID + lastDay;
+                    Logger.LogInfo("Day Logged " + lastDay + " with ID " + presentdayID);
+                }
+                if (franchiseScreen)
+                {
+                    Logger.LogInfo("You franchised!");
+                    timesFranchised++;
+                    dayID = 100000 * timesFranchised;
+                    session.Locations.CompleteLocationChecks(dayID);
+                    lastDay = 0;
+                    franchiseScreen = false;
+                }
+                else if (loseScreen)
+                {
+                    Logger.LogInfo("You Lost the Run!");
+                    lastDay = 0;
+                    session.Locations.CompleteLocationChecks(dayID);
+                }
+            }
         }
+
 
         private void TryConnectToArchipelago()
         {

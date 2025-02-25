@@ -499,11 +499,6 @@ namespace PlateupAP
 
         private void TryConnectToArchipelago()
         {
-            // Save the current global settings.
-            var previousSettings = JsonConvert.DefaultSettings;
-            // Temporarily disable global settings so Archipelago can use its own converters.
-            JsonConvert.DefaultSettings = () => null;
-
             Logger.LogInfo("Attempting connection to Archipelago...");
             string connectionUrl = $"wss://{ip}:{port}";
             session = ArchipelagoSessionFactory.CreateSession(connectionUrl);
@@ -519,7 +514,7 @@ namespace PlateupAP
             {
                 Logger.LogWarning("Password provided, but password support is not implemented. Proceeding without using the password.");
             }
-            var result = session.TryConnectAndLogin("plateup", playerName, ItemsHandlingFlags.AllItems);
+            var result = session.TryConnectAndLogin("plateup", playerName, ItemsHandlingFlags.AllItems, new System.Version(0, 5, 1));
             if (result is LoginSuccessful)
             {
                 connectionSuccessful = true;

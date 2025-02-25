@@ -387,6 +387,11 @@ namespace PlateupAP
         {
             Logger = InitLogger();
             Logger.LogWarning($"{MOD_GUID} v{MOD_VERSION} in use!");
+
+            JsonConvert.DefaultSettings = () => new JsonSerializerSettings
+            {
+                Converters = new List<JsonConverter> { new SafeStringListConverter() }
+            };
         }
 
         protected override void OnUpdate()
@@ -483,10 +488,14 @@ namespace PlateupAP
                     Logger.LogInfo("You franchised!");
                     timesFranchised++;
                     dayID = 100000 * timesFranchised;
+
                     session.Locations.CompleteLocationChecks(dayID);
+
                     lastDay = 0;
                     franchiseScreen = false;
                 }
+                
+            
                 else if (loseScreen)
                 {
                     Logger.LogInfo("You Lost the Run!");
@@ -500,7 +509,7 @@ namespace PlateupAP
         private void TryConnectToArchipelago()
         {
             Logger.LogInfo("Attempting connection to Archipelago...");
-            string connectionUrl = $"wss://{ip}:{port}";
+            string connectionUrl = $"wss://{ip}:{port}/";
             session = ArchipelagoSessionFactory.CreateSession(connectionUrl);
             if (session == null)
             {
@@ -514,7 +523,8 @@ namespace PlateupAP
             {
                 Logger.LogWarning("Password provided, but password support is not implemented. Proceeding without using the password.");
             }
-            var result = session.TryConnectAndLogin("plateup", playerName, ItemsHandlingFlags.AllItems, new System.Version(0, 5, 1));
+            var result = session.TryConnectAndLogin("plateup", playerName, ItemsHandlingFlags.AllItems);
+
             if (result is LoginSuccessful)
             {
                 connectionSuccessful = true;

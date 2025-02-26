@@ -69,12 +69,13 @@ namespace PlateupAP
     {
         public const string MOD_GUID = "com.caz.plateupap";
         public const string MOD_NAME = "PlateupAP";
-        public const string MOD_VERSION = "0.1.4";
+        public const string MOD_VERSION = "0.1.4.2";
         public const string MOD_AUTHOR = "Caz";
         public const string MOD_GAMEVERSION = ">=1.1.9";
 
         internal static AssetBundle Bundle = null;
         internal static KitchenLib.Logging.KitchenLogger Logger;
+        private EntityQuery playersWithItems;
 
         public static Mod Instance { get; private set; }
 
@@ -82,9 +83,19 @@ namespace PlateupAP
 
         // Static day cycle and spawn state.
         private static int lastDay = 0;
-        private static int dayID = 100000;
-        private static int stars = 0;
-        private static int timesFranchised = 1;
+        private int dayID = 100000;
+        private int stars = 0;
+        private int timesFranchised = 1;
+        private int DishId;
+        private bool firstCycleCompleted = false;
+        private bool previousWasDay = false;
+        bool inLobby = true;
+        bool loseScreen = false;
+        bool franchiseScreen = false;
+        bool lost = false;
+        bool franchised = false;
+        private bool dayTransitionProcessed = false;
+
         private static bool itemsEventSubscribed = false;
         private static Queue<ItemInfo> spawnQueue = new Queue<ItemInfo>();
 
@@ -114,6 +125,7 @@ namespace PlateupAP
             { 10023, ApplianceReferences.SinkSoak },
             { 10024, ApplianceReferences.SinkStarting },
             { 10025, ApplianceReferences.DishWasher },
+            { 10026, ApplianceReferences.SinkLarge },
             { 1003, ApplianceReferences.Countertop },
             { 10032, ApplianceReferences.Workstation },
             { 10033, ApplianceReferences.Freezer },
@@ -196,6 +208,26 @@ namespace PlateupAP
             { 10164, ApplianceReferences.ExtraLife }
         };
 
+        private readonly Dictionary<int, string> dishDictionary = new Dictionary<int, string>()
+        {           
+            { DishReferences.SaladBase, "Salad Base" },
+            { DishReferences.SteakBase, "Steak" },
+            { DishReferences.BurgerBase, "Burger" },
+            { DishReferences.CoffeeBaseDessert, "Coffee" },
+            { DishReferences.PizzaBase, "Pizza" },
+            { DishReferences.Dumplings, "Dumplings" },
+            { DishReferences.TurkeyBase, "Turkey" },
+            { DishReferences.PieBase, "Pie" },
+            { DishReferences.Cakes, "Cakes" },
+            { DishReferences.SpaghettiBolognese, "Spaghetti" },
+            { DishReferences.FishBase, "Fish" },
+            { DishReferences.TacosBase, "Tacos" },
+            { DishReferences.HotdogBase, "Hot Dogs" },
+            { DishReferences.BreakfastBase, "Breakfast" },
+            { DishReferences.StirFryBase, "Stir Fry" },
+        };
+
+
         public Mod() : base(MOD_GUID, MOD_NAME, MOD_AUTHOR, MOD_VERSION, MOD_GAMEVERSION, Assembly.GetExecutingAssembly())
         {
             Instance = this;
@@ -220,7 +252,7 @@ namespace PlateupAP
                     string path = Path.Combine(folder, "archipelago_config.json");
                     ArchipelagoConfig defaultConfig = new ArchipelagoConfig
                     {
-                        address = "",
+                        address = "archipelago.gg",
                         port = 0,
                         playername = "",
                         password = ""
@@ -259,6 +291,8 @@ namespace PlateupAP
             var harmony = new Harmony("com.caz.plateupap.patch");
             harmony.PatchAll(Assembly.GetExecutingAssembly());
             JsonConvert.DefaultSettings = null;
+            Mod.Logger.LogInfo("DishCardReadingSystem initialised.");
+            playersWithItems = GetEntityQuery(new QueryHelper().All(typeof(CPlayer), typeof(CItemHolder)));
         }
 
         public void UpdateArchipelagoConfig(ArchipelagoConfig config)
@@ -266,28 +300,65 @@ namespace PlateupAP
             // Use our static connection manager.
             ArchipelagoConnectionManager.TryConnect(config.address, config.port, config.playername, config.password);
         }
-
         protected override void OnUpdate()
         {
-            // Only proceed if the player is in the kitchen.
-            if (!HasSingleton<SKitchenMarker>())
-                return;
-
-            UpdateDayCycle();
-            CheckReceivedItems();
-
-            // Retrieve the current card IDs from CardReadingSystem.
-            var cardIDs = CardReadingSystem.CurrentCardIDs;
-            if (cardIDs.Count > 0)
+            franchiseScreen = HasSingleton<SFranchiseBuilderMarker>();
+            loseScreen = HasSingleton<SPostgameFirstFrameMarker>();
+            inLobby = HasSingleton<SFranchiseMarker>();
+            if(HasSingleton<SKitchenMarker>())
             {
-                // Log each card id.
-                foreach (var id in cardIDs)
+                UpdateDayCycle();
+                CheckReceivedItems();
+            }
+
+            if (inLobby)
+            {
+                firstCycleCompleted = false;
+                previousWasDay = false;
+                franchised = false;
+                lost = false;
+            }
+
+            // --- Dish Card Reading Logic ---
+            if (!loggedCardThisCycle)
+            {
+                // Create the query for player entities with CPlayer and CItemHolder.
+                EntityQuery playersWithItems = GetEntityQuery(new QueryHelper().All(typeof(CPlayer), typeof(CItemHolder)));
+                using var playerEntities = playersWithItems.ToEntityArray(Allocator.Temp);
+
+                for (int i = 0; i < playerEntities.Length; i++)
                 {
-                    Logger.LogInfo($"Found card id: {id}");
+                    Entity player = playerEntities[i];
+                    CItemHolder holder = EntityManager.GetComponentData<CItemHolder>(player);
+                    if (holder.HeldItem != Entity.Null)
+                    {
+                        Entity heldItem = holder.HeldItem;
+                        if (EntityManager.HasComponent<CDishChoice>(heldItem))
+                        {
+                            CDishChoice dishChoice = EntityManager.GetComponentData<CDishChoice>(heldItem);
+                            int dishID = dishChoice.Dish;
+                            DishId = dishID; // Save the dish id for later use.
+
+                            // Retrieve the Dish game data object.
+                            Dish dishData = (Dish)GDOUtils.GetExistingGDO(dishID);
+                            Logger.LogInfo($"The selected dish is: {dishData.Name}");
+
+                            if (dishDictionary.TryGetValue(dishID, out string dishName))
+                            {
+                                Logger.LogInfo($"The selected dish (via dictionary) is: {dishName}");
+                            }
+                            else
+                            {
+                                Logger.LogInfo($"Dish with ID {dishID} not found in dictionary; using game data: {dishData.Name}");
+                            }
+                            loggedCardThisCycle = true;
+                            break;
+                        }
+
+                    }
                 }
             }
         }
-
 
         // Spawning Items
         private void CheckReceivedItems()
@@ -316,6 +387,8 @@ namespace PlateupAP
             ItemInfo info = helper.DequeueItem();
             int checkId = (int)info.ItemId;
             Logger.LogInfo("Received check id: " + checkId);
+
+            // Use SIsNightTime for item processing so items are sent throughout the prep phase.
             bool currentlyPrep = HasSingleton<SIsNightTime>();
             if (!currentlyPrep)
             {
@@ -325,6 +398,7 @@ namespace PlateupAP
             }
             ProcessSpawn(info);
         }
+
 
         private void ProcessSpawn(ItemInfo info)
         {
@@ -355,82 +429,116 @@ namespace PlateupAP
         // Checks and Day Cycle
         private void UpdateDayCycle()
         {
-            if (session != null)
+            if (session == null)
+                return;
+
+            // Do not process day cycle updates while in the lobby.
+            if (inLobby)
+                return;
+
+            // Retrieve current state markers.
+            bool isDayStart = HasSingleton<SIsDayFirstUpdate>();        // Occurs on the first frame of a day.
+            bool isPrepTime = HasSingleton<SIsNightTime>();               // Active throughout the prep phase.
+            bool isPrepFirstUpdate = HasSingleton<SIsNightFirstUpdate>();   // Active only on the first frame of prep.
+
+            // Arm the cycle on the first day.
+            if (!firstCycleCompleted && isDayStart)
             {
-                bool isDayStart = HasSingleton<SIsDayFirstUpdate>();
-                bool isPrepPhase = HasSingleton<SIsNightTime>();
-                bool franchiseScreen = HasSingleton<SFranchiseBuilderMarker>();
-                bool loseScreen = HasSingleton<SPostgameFirstFrameMarker>();
+                firstCycleCompleted = true;
+                dayTransitionProcessed = false; // Ready for the upcoming transition.
+                Logger.LogInfo("First day cycle completed; day cycle updates are now armed.");
+            }
 
-                // Log the prep-phase message only once.
-                if (isPrepPhase && !prepLogDone)
+            // Flush any queued items if we're in prep (using the SIsNightTime marker).
+            if (isPrepTime)
+            {
+                while (spawnQueue.Count > 0)
                 {
-                    Logger.LogInfo("It's time to prep for the next day!");
-                    prepLogDone = true;
-                }
-
-                if (isPrepPhase)
-                {
-                    while (spawnQueue.Count > 0)
-                    {
-                        ItemInfo queuedInfo = spawnQueue.Dequeue();
-                        ProcessSpawn(queuedInfo);
-                    }
-                }
-                if (isDayStart)
-                {
-                    lastDay++;
-                    Logger.LogInfo("Transitioning from night to day, advancing day count...");
-                    session.Locations.CompleteLocationChecks(dayID + lastDay);
-                    int presentdayID = dayID + lastDay;
-                    Logger.LogInfo("Day Logged " + lastDay + " with ID " + presentdayID);
-                    // Reset logging flags for new cycle.
-                    prepLogDone = false;
-                    loggedCardThisCycle = false;
-                    if (lastDay % 5 == 0)
-                    {
-                        stars++;
-                        switch(stars)
-                        {
-                            case 1:
-                                session.Locations.CompleteLocationChecks(presentdayID * 10 + 1);
-                                break;
-                            case 2:
-                                session.Locations.CompleteLocationChecks(presentdayID * 10 + 1);
-                                break;
-                            case 3:
-                                session.Locations.CompleteLocationChecks(presentdayID * 10 + 1);
-                                break;
-                            case 4:
-                                session.Locations.CompleteLocationChecks(presentdayID * 10 + 1);
-                                break;
-                            case 5:
-                                session.Locations.CompleteLocationChecks(presentdayID * 10 + 1);
-                                stars = 0;
-                                break;
-                        }
-                    }
-                }
-                if (franchiseScreen)
-                {
-                    Logger.LogInfo("You franchised!");
-                    timesFranchised++;
-                    dayID = 100000 * timesFranchised;
-                    session.Locations.CompleteLocationChecks(dayID);
-                    lastDay = 0;
-                    prepLogDone = false;
-                    loggedCardThisCycle = false;
-                }
-                else if (loseScreen)
-                {
-                    Logger.LogInfo("You Lost the Run!");
-                    lastDay = 0;
-                    session.Locations.CompleteLocationChecks(dayID);
-                    prepLogDone = false;
-                    loggedCardThisCycle = false;
+                    ItemInfo queuedInfo = spawnQueue.Dequeue();
+                    ProcessSpawn(queuedInfo);
                 }
             }
+
+            // Process the day-to-night transition only on the first frame of prep.
+            if (firstCycleCompleted && isPrepFirstUpdate && !dayTransitionProcessed)
+            {
+                lastDay++;
+                Logger.LogInfo("Transitioning from day to night, advancing day count to: " + lastDay);
+                session.Locations.CompleteLocationChecks(dayID + lastDay);
+                int presentdayID = dayID + lastDay;
+                Logger.LogInfo("Day Logged " + lastDay + " with ID " + presentdayID);
+                prepLogDone = false;
+                loggedCardThisCycle = false;
+                Logger.LogInfo($"Current saved dish id is: {DishId}");
+
+                // Award stars every three days.
+                if (lastDay % 3 == 0)
+                {
+                    stars++;
+                    switch (stars)
+                    {
+                        case 1:
+                            session.Locations.CompleteLocationChecks(presentdayID * 10 + 1);
+                            Logger.LogInfo("Star 1 gotten, Logged " + presentdayID);
+                            break;
+                        case 2:
+                            session.Locations.CompleteLocationChecks(presentdayID * 10 + 1);
+                            Logger.LogInfo("Star 2 gotten, Logged " + presentdayID);
+                            break;
+                        case 3:
+                            session.Locations.CompleteLocationChecks(presentdayID * 10 + 1);
+                            Logger.LogInfo("Star 3 gotten, Logged " + presentdayID);
+                            break;
+                        case 4:
+                            session.Locations.CompleteLocationChecks(presentdayID * 10 + 1);
+                            Logger.LogInfo("Star 4 gotten, Logged " + presentdayID);
+                            break;
+                        case 5:
+                            session.Locations.CompleteLocationChecks(presentdayID * 10 + 1);
+                            Logger.LogInfo("Star 5 gotten, Logged " + presentdayID + " Resetting star counter");
+                            stars = 0;
+                            break;
+                    }
+                }
+                // Mark that this transition has been processed.
+                dayTransitionProcessed = true;
+            }
+            else if (!isPrepFirstUpdate)
+            {
+                // Once we leave the first frame of prep, reset the flag for the next cycle.
+                dayTransitionProcessed = false;
+            }
+
+            // Handle special cases for franchise or run loss.
+            if (franchiseScreen && !franchised)
+            {
+                Logger.LogInfo("You franchised!");
+                timesFranchised++;
+                dayID = 100000 * timesFranchised;
+                session.Locations.CompleteLocationChecks(dayID);
+                lastDay = 0;
+                prepLogDone = false;
+                loggedCardThisCycle = false;
+                firstCycleCompleted = false;
+                dayTransitionProcessed = false;
+                franchised = true;
+            }
+            else if (loseScreen && !lost)
+            {
+                Logger.LogInfo("You Lost the Run!");
+                lastDay = 0;
+                session.Locations.CompleteLocationChecks(100000);
+                prepLogDone = false;
+                loggedCardThisCycle = false;
+                firstCycleCompleted = false;
+                dayTransitionProcessed = false;
+                lost = true;
+            }
         }
+
+
+
+
 
         private void TrySubscribeItemsSync()
         {

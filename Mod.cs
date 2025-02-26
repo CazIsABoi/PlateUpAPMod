@@ -297,13 +297,13 @@ namespace PlateupAP
 
         public void UpdateArchipelagoConfig(ArchipelagoConfig config)
         {
-            // Use our static connection manager.
+            // Use static connection manager.
             ArchipelagoConnectionManager.TryConnect(config.address, config.port, config.playername, config.password);
         }
         protected override void OnUpdate()
         {
             franchiseScreen = HasSingleton<SFranchiseBuilderMarker>();
-            loseScreen = HasSingleton<SPostgameFirstFrameMarker>();
+            loseScreen = HasSingleton<SGameOver>();
             inLobby = HasSingleton<SFranchiseMarker>();
             if(HasSingleton<SKitchenMarker>())
             {
@@ -311,13 +311,45 @@ namespace PlateupAP
                 CheckReceivedItems();
             }
 
-            if (inLobby)
+            if (session == null || session.Locations == null)
+            {
+                return;
+            }
+
+            if (franchiseScreen && !franchised)
+            {
+                Logger.LogInfo("You franchised!");
+                timesFranchised++;
+                dayID = 100000 * timesFranchised;
+                session.Locations.CompleteLocationChecks(dayID);
+                lastDay = 0;
+                prepLogDone = false;
+                loggedCardThisCycle = false;
+                firstCycleCompleted = false;
+                dayTransitionProcessed = false;
+                franchised = true;
+            }
+
+            else if (loseScreen && !lost)
+            {
+                Logger.LogInfo("You Lost the Run!");
+                lastDay = 0;
+                session.Locations.CompleteLocationChecks(100000);
+                prepLogDone = false;
+                loggedCardThisCycle = false;
+                firstCycleCompleted = false;
+                dayTransitionProcessed = false;
+                lost = true;
+            }
+
+            else if (inLobby)
             {
                 firstCycleCompleted = false;
                 previousWasDay = false;
                 franchised = false;
                 lost = false;
             }
+
 
             // --- Dish Card Reading Logic ---
             if (!loggedCardThisCycle)
@@ -472,7 +504,7 @@ namespace PlateupAP
                 Logger.LogInfo($"Current saved dish id is: {DishId}");
 
                 // Award stars every three days.
-                if (lastDay % 3 == 0)
+                if (lastDay % 3 == 0 && lastDay < 15)
                 {
                     stars++;
                     switch (stars)
@@ -507,32 +539,6 @@ namespace PlateupAP
             {
                 // Once we leave the first frame of prep, reset the flag for the next cycle.
                 dayTransitionProcessed = false;
-            }
-
-            // Handle special cases for franchise or run loss.
-            if (franchiseScreen && !franchised)
-            {
-                Logger.LogInfo("You franchised!");
-                timesFranchised++;
-                dayID = 100000 * timesFranchised;
-                session.Locations.CompleteLocationChecks(dayID);
-                lastDay = 0;
-                prepLogDone = false;
-                loggedCardThisCycle = false;
-                firstCycleCompleted = false;
-                dayTransitionProcessed = false;
-                franchised = true;
-            }
-            else if (loseScreen && !lost)
-            {
-                Logger.LogInfo("You Lost the Run!");
-                lastDay = 0;
-                session.Locations.CompleteLocationChecks(100000);
-                prepLogDone = false;
-                loggedCardThisCycle = false;
-                firstCycleCompleted = false;
-                dayTransitionProcessed = false;
-                lost = true;
             }
         }
 

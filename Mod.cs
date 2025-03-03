@@ -342,7 +342,6 @@ namespace KitchenPlateupAP
                         Logger.LogError($"[PlateupAP] Error parsing selected_dishes JSON: {ex.Message}");
                     }
                 }
-
             }
         }
 
@@ -358,8 +357,6 @@ namespace KitchenPlateupAP
             Logger.LogInfo($"Sending message: {message}");
             session.Socket.SendPacket(new SayPacket { Text = message });
         }
-
-
 
         static PreferenceSystemManager PrefManager;
 
@@ -438,12 +435,12 @@ namespace KitchenPlateupAP
         {
             if (ArchipelagoConnectionManager.ConnectionSuccessful)
             {
-                RetrieveSlotData(); // Fetch the data
+                RetrieveSlotData(); // Fetch slot data
 
                 if (!dishesMessageSent && selectedDishes.Count > 0)
                 {
-                    SendSelectedDishesMessage(); // Send the message
-                    dishesMessageSent = true;    // Ensure it doesn’t send again
+                    SendSelectedDishesMessage();
+                    dishesMessageSent = true;
                     Logger.LogInfo("Selected dishes message sent successfully.");
                 }
                 else if (selectedDishes.Count == 0)
@@ -456,8 +453,6 @@ namespace KitchenPlateupAP
                 }
             }
         }
-
-
 
 
         protected override void OnUpdate()
@@ -498,6 +493,7 @@ namespace KitchenPlateupAP
                 HandleGameReset();
                 session.Locations.CompleteLocationChecks(100000);
                 lost = true;
+
             }
 
             else if (inLobby && !itemsQueuedThisLobby)
@@ -524,7 +520,6 @@ namespace KitchenPlateupAP
 
                 itemsQueuedThisLobby = true; // Prevent multiple calls
             }
-
 
             // --- Dish Card Reading Logic ---
 
@@ -676,8 +671,20 @@ namespace KitchenPlateupAP
             }
         }
 
-
-
+        private void ResetToLastStar()
+        {
+            if (stars > 0)
+            {
+                stars--;
+                lastDay -= 3; // Roll back 3 days per star
+                Logger.LogInfo($"[DeathLink] Rolling back to last awarded star. New day: {lastDay}, Stars: {stars}");
+            }
+            else
+            {
+                Logger.LogInfo("[DeathLink] No stars to roll back to. Resetting entire run.");
+                HandleGameReset();
+            }
+        }
 
         private void QueueItemsFromReceivedPool(int count)
             {

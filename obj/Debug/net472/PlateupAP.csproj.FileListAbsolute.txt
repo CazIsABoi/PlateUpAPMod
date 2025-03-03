@@ -244,3 +244,4 @@ C:\Users\cazpe\OneDrive\Desktop\My Mods\PlateupAP\bin\Debug\net472\KitchenLib-Wo
 C:\Users\cazpe\OneDrive\Desktop\My Mods\PlateupAP\obj\Debug\net472\PlateupAP.csproj.Up2Date
 C:\Users\cazpe\OneDrive\Desktop\My Mods\PlateupAP\obj\Debug\net472\PlateupAP.dll
 C:\Users\cazpe\OneDrive\Desktop\My Mods\PlateupAP\obj\Debug\net472\PlateupAP.pdb
+C:\Users\cazpe\OneDrive\Desktop\My Mods\PlateupAP\bin\Debug\net472\ECSExplorer-Workshop.dll

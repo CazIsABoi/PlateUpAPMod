@@ -1,11 +1,15 @@
 using System;
+using System.IO;
+using System.Collections.Generic;
+using System.Reflection;
+using System.Threading.Tasks;
 using Archipelago.MultiClient.Net;
 using Archipelago.MultiClient.Net.Models;
 using Archipelago.MultiClient.Net.Enums;
 using Archipelago.MultiClient.Net.Helpers;
 using KitchenLib.Logging;
 
-namespace PlateupAP
+namespace KitchenPlateupAP
 {
     public static class ArchipelagoConnectionManager
     {
@@ -15,6 +19,8 @@ namespace PlateupAP
         public static ArchipelagoSession Session { get; private set; }
         public static bool ConnectionSuccessful { get; private set; }
         public static bool IsConnecting { get; private set; }
+        public static Dictionary<string, object> SlotData;
+        public static int SlotIndex;
 
         public static void TryConnect(string ip, int port, string playerName, string password)
         {
@@ -73,12 +79,18 @@ namespace PlateupAP
                 IsConnecting = false;
                 return;
             }
-
             // Successfully connected
             var loginSuccess = (LoginSuccessful)result;
             ConnectionSuccessful = true;
             Logger.LogInfo($"Successfully connected to Archipelago as slot '{playerName}'.");
+
             IsConnecting = false;
+            SlotIndex = loginSuccess.Slot;      // numeric ID
+            SlotData = loginSuccess.SlotData;   // your fill_slot_data dictionary
+
+            // Trigger slot data retrieval immediately upon successful connection
+            Mod.Instance.OnSuccessfulConnect();
+
         }
 
         // Static event handler for socket errors.

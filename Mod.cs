@@ -21,6 +21,7 @@ using Archipelago.MultiClient.Net.Models;
 using Archipelago.MultiClient.Net.Enums;
 using Archipelago.MultiClient.Net.Helpers;
 using Archipelago.MultiClient.Net.Packets;
+using Archipelago.MultiClient.Net.BounceFeatures.DeathLink;
 using KitchenDecorOnDemand;
 using PreferenceSystem;
 using PreferenceSystem.Event;
@@ -33,6 +34,7 @@ namespace KitchenPlateupAP
     [HarmonyPatch("ReadJson")]
     public class Patch_ArchipelagoPacketConverter_ReadJson
     {
+
         static void Postfix(object __result)
         {
             if (__result is List<string> stringList)
@@ -97,7 +99,7 @@ namespace KitchenPlateupAP
     {
         public const string MOD_GUID = "com.caz.plateupap";
         public const string MOD_NAME = "PlateupAP";
-        public const string MOD_VERSION = "0.1.5";
+        public const string MOD_VERSION = "0.1.6";
         public const string MOD_AUTHOR = "Caz";
         public const string MOD_GAMEVERSION = ">=1.1.9";
 
@@ -109,11 +111,14 @@ namespace KitchenPlateupAP
         public static Mod Instance { get; private set; }
 
         private static ArchipelagoSession session => ArchipelagoConnectionManager.Session;
+        private Archipelago.MultiClient.Net.BounceFeatures.DeathLink.DeathLinkService deathLinkService;
+        private int deathLinkBehavior = 0; // Default to "Reset Run"
         private static int chosenGoal = 1;  // default to "Franchise Twice" if missing
         private static List<string> selectedDishes = new List<string>();
         object rawGoal = null;
         private static bool dishesMessageSent = false;
         private bool itemsQueuedThisLobby = false;
+        int itemsKeptPerRun = 5;
 
         // Static day cycle and spawn state.
         private static int lastDay = 0;
@@ -129,7 +134,6 @@ namespace KitchenPlateupAP
         bool lost = false;
         bool franchised = false;
         private bool dayTransitionProcessed = false;
-
 
         private static bool itemsEventSubscribed = false;
         private static Queue<ItemInfo> spawnQueue = new Queue<ItemInfo>();
@@ -255,9 +259,56 @@ namespace KitchenPlateupAP
             { 10164, ApplianceReferences.ExtraLife }
         };
 
+        public readonly Dictionary<int, int> customerCardDictionary = new Dictionary<int, int>()
+        {
+            { 1, UnlockCardReferences.Affordable },
+            { 2, UnlockCardReferences.AllYouCanEat },
+            { 3, UnlockCardReferences.AllYouCanEatIncrease },
+            { 4, UnlockCardReferences.ChangeOrdersAfterOrdering },
+            { 5, UnlockCardReferences.Couples },
+            { 6, UnlockCardReferences.ClosingTime },
+            { 7, UnlockCardReferences.CustomerBursts },
+            { 8, UnlockCardReferences.CustomersEatSlowly },
+            { 9, UnlockCardReferences.CustomersRequireWalking },
+            { 10, UnlockCardReferences.DinnerRush },
+            { 11, UnlockCardReferences.DoubleDates },
+            { 12, UnlockCardReferences.FirstDates },
+            { 13, UnlockCardReferences.FlexibleDining },
+            { 14, UnlockCardReferences.HiddenOrders },
+            { 15, UnlockCardReferences.HiddenPatience },
+            { 16, UnlockCardReferences.HiddenProcesses },
+            { 17, UnlockCardReferences.IndividualDining },
+            { 18, UnlockCardReferences.InstantOrders },
+            { 19, UnlockCardReferences.LargeGroups },
+            { 20, UnlockCardReferences.LessMoney },
+            { 21, UnlockCardReferences.LosePatienceInView },
+            { 22, UnlockCardReferences.LunchRush },
+            { 23, UnlockCardReferences.MediumGroups },
+            { 24, UnlockCardReferences.MessesSlowCustomers },
+            { 25, UnlockCardReferences.MessRangeIncrease },
+            { 26, UnlockCardReferences.MessyCustomers },
+            { 27, UnlockCardReferences.MoreCustomers },
+            { 28, UnlockCardReferences.MoreCustomers2 },
+            { 29, UnlockCardReferences.MorningRush },
+            { 30, UnlockCardReferences.PatienceDecrease },
+            { 31, UnlockCardReferences.PickyEaters },
+            { 32, UnlockCardReferences.QuickerBurning },
+            { 33, UnlockCardReferences.SlowProcesses },
+            { 34, UnlockCardReferences.TippingCulture },
+        };
+
+        //Trap Dictionary
+        private readonly Dictionary<int, string> trapDictionary = new Dictionary<int, string>()
+        {
+            { 20000, "EVERYTHING IS ON FIRE" },
+            { 20001, "Super Slow" },
+            { 20002, "Random Customer Card" }
+        };
+
+
         private readonly Dictionary<int, string> dishDictionary = new Dictionary<int, string>()
         {           
-            { DishReferences.SaladBase, "Salad Base" },
+            { DishReferences.SaladBase, "Salad" },
             { DishReferences.SteakBase, "Steak" },
             { DishReferences.BurgerBase, "Burger" },
             { DishReferences.CoffeeBaseDessert, "Coffee" },
@@ -340,6 +391,32 @@ namespace KitchenPlateupAP
                     catch (JsonReaderException ex)
                     {
                         Logger.LogError($"[PlateupAP] Error parsing selected_dishes JSON: {ex.Message}");
+                    }
+
+                    // Check if DeathLink is enabled
+                    if (slotData.TryGetValue("death_link", out object rawDeathLink))
+                    {
+                        bool deathLinkEnabled = Convert.ToBoolean(rawDeathLink);
+                        Logger.LogInfo($"[PlateupAP] DeathLink enabled: {deathLinkEnabled}");
+
+                        if (deathLinkEnabled)
+                        {
+                            EnableDeathLink(); // Call function to activate DeathLink
+                        }
+                    }
+
+                    // Retrieve DeathLink behavior setting
+                    if (slotData.TryGetValue("death_link_behavior", out object rawBehavior))
+                    {
+                        deathLinkBehavior = Convert.ToInt32(rawBehavior);
+                        Logger.LogInfo($"[PlateupAP] DeathLink Behavior Set To: {deathLinkBehavior}");
+                    }
+
+                    // Retrieve Items Kept setting
+                    if (slotData.TryGetValue("items_kept", out object rawItemsKept))
+                    {
+                        itemsKeptPerRun = Convert.ToInt32(rawItemsKept);
+                        Logger.LogInfo($"[PlateupAP] Items Kept Per Run: {itemsKeptPerRun}");
                     }
                 }
             }
@@ -454,6 +531,81 @@ namespace KitchenPlateupAP
             }
         }
 
+        private void EnableDeathLink()
+        {
+            if (session == null)
+            {
+                Logger.LogError("Cannot enable DeathLink, session is null.");
+                return;
+            }
+
+            if (deathLinkService == null) // Prevent duplicate instances
+            {
+                deathLinkService = session.CreateDeathLinkService();
+                deathLinkService.EnableDeathLink();
+                deathLinkService.OnDeathLinkReceived += HandleDeathLinkEvent;
+
+                Logger.LogInfo("[PlateupAP] DeathLink service enabled and event listener registered.");
+            }
+        }
+
+        private void HandleDeathLinkEvent(DeathLink deathLink)
+        {
+            Logger.LogWarning($"[PlateupAP] DeathLink received! Cause: {deathLink.Source}");
+
+            if (deathLinkBehavior == 0) // Full Reset
+            {
+                Logger.LogWarning("[PlateupAP] Player chose to fully reset the run due to DeathLink.");
+                Entity entity = base.EntityManager.CreateEntity(typeof(SGameOver), typeof(CGamePauseBlock));
+                Set(entity, new SGameOver
+                {
+                    Reason = LossReason.Patience
+                });
+            }
+            else if (deathLinkBehavior == 1) // Reset to Last Star
+            {
+                Logger.LogWarning("[PlateupAP] Player chose to reset to the last earned star due to DeathLink.");
+                ResetToLastStar();
+            }
+        }
+
+        private void SendDeathLink()
+        {
+            if (deathLinkService != null)
+            {
+                string playerName = session.Players.GetPlayerAlias(session.ConnectionInfo.Slot);
+
+                var deathLink = new DeathLink(playerName, "Player died in PlateUp!");
+                deathLinkService.SendDeathLink(deathLink);
+
+                Logger.LogInfo($"[PlateupAP] DeathLink event sent by player {playerName}.");
+            }
+        }
+
+        private void ResetToLastStar()
+        {
+            if (stars > 0)
+            {
+                // Determine how many days to roll back (0, 1, or 2)
+                int rollbackDays = lastDay % 3;
+
+                // Get the current game day and apply the rollback
+                var day = GetOrDefault<SDay>();
+                day.Day -= rollbackDays;
+                Set(day);
+
+                Logger.LogInfo($"[PlateupAP] Resetting to last earned star. Rolled back {rollbackDays} days. New active day: {day.Day}, lastDay remains: {lastDay}");
+            }
+            else
+            {
+                Logger.LogInfo("[PlateupAP] No stars earned, resetting fully instead.");
+                Entity entity = base.EntityManager.CreateEntity(typeof(SGameOver), typeof(CGamePauseBlock));
+                Set(entity, new SGameOver
+                {
+                    Reason = LossReason.Patience
+                });
+            }
+        }
 
         protected override void OnUpdate()
         {
@@ -475,14 +627,17 @@ namespace KitchenPlateupAP
             {
                 Logger.LogInfo("You franchised!");
                 HandleGameReset();
+                lastDay = 0;
                 timesFranchised++;
                 dayID = 100000 * timesFranchised;
                 session.Locations.CompleteLocationChecks(dayID);
                 franchised = true;
 
-                Logger.LogInfo($"User has franchised {timesFranchised} time(s). Checking vs chosenGoal={chosenGoal}...");
-                if (timesFranchised >= (chosenGoal + 1))
+                Logger.LogInfo($"User has franchised {timesFranchised - 1} times. Goal is {chosenGoal + 1} franchises...");
+
+                if ((timesFranchised - 1) == (chosenGoal + 1))
                 {
+                    Logger.LogInfo("Franchise goal reached! Sending goal complete.");
                     SendGoalComplete();
                 }
             }
@@ -491,8 +646,14 @@ namespace KitchenPlateupAP
             {
                 Logger.LogInfo("You Lost the Run!");
                 HandleGameReset();
+                lastDay = 0;
                 session.Locations.CompleteLocationChecks(100000);
                 lost = true;
+
+                if (deathLinkService != null)
+                {
+                    SendDeathLink();
+                }
 
             }
 
@@ -507,10 +668,10 @@ namespace KitchenPlateupAP
 
                 Logger.LogInfo("[Lobby] Entered lobby. Preparing to queue items for next run...");
 
-                // Only queue if we haven't already done so in this lobby session
+                // Ensure we only queue items once per lobby session
                 if (spawnQueue.Count == 0)
                 {
-                    QueueItemsFromReceivedPool(5);
+                    QueueItemsFromReceivedPool(itemsKeptPerRun);
                     Logger.LogInfo($"[Lobby] {spawnQueue.Count} items queued for next run.");
                 }
                 else
@@ -520,6 +681,7 @@ namespace KitchenPlateupAP
 
                 itemsQueuedThisLobby = true; // Prevent multiple calls
             }
+
 
             // --- Dish Card Reading Logic ---
 
@@ -591,13 +753,23 @@ namespace KitchenPlateupAP
             }
         }
 
-        private static List<int> receivedItemPool = new List<int>(); // Store received item IDs
+        private static List<int> receivedItemPool = new List<int>();
 
         private void OnItemReceived(ReceivedItemsHelper helper)
         {
             ItemInfo info = helper.DequeueItem();
             int checkId = (int)info.ItemId;
             Logger.LogInfo($"[OnItemReceived] Received check ID: {checkId}");
+
+            // Check if the received item is a trap
+            if (trapDictionary.ContainsKey(checkId))
+            {
+                Logger.LogWarning($"[OnItemReceived] Received TRAP: {trapDictionary[checkId]}!");
+
+                // Apply trap effects
+                ApplyTrapEffect(checkId);
+                return; // Skip queueing the trap item
+            }
 
             // Store item in the pool (excluding speed upgrades)
             if (!speedUpgradeMapping.ContainsKey(checkId))
@@ -610,7 +782,6 @@ namespace KitchenPlateupAP
                 Logger.LogInfo($"[OnItemReceived] Item ID {checkId} is a speed upgrade and was not stored.");
             }
 
-            // Process items normally
             // Always queue item first
             Logger.LogInfo($"[OnItemReceived] Queuing item ID: {checkId}");
 
@@ -621,16 +792,14 @@ namespace KitchenPlateupAP
                 Logger.LogInfo($"[OnItemReceived] Currently in prep phase, queueing item ID: {checkId} for immediate spawn.");
                 spawnQueue.Enqueue(info);  // Instead of direct spawn, queue it so UpdateDayCycle handles it
             }
-
             else
             {
                 // If not in prep phase, queue it for the next run
                 spawnQueue.Enqueue(info);
                 Logger.LogInfo($"[OnItemReceived] Item ID {checkId} is queued for the next run.");
             }
-
-
         }
+
 
         private ItemInfo CreateItemInfoForQueue(int itemId)
         {
@@ -651,39 +820,20 @@ namespace KitchenPlateupAP
 
         private void HandleGameReset()
         {
-            lastDay = 0;
-            prepLogDone = false;
-            loggedCardThisCycle = false;
+            Logger.LogInfo("[PlateupAP] Handling game reset...");
+
+            // Reset necessary state variables
             firstCycleCompleted = false;
-            dayTransitionProcessed = false;
+            previousWasDay = false;
+            franchised = false;
+            lost = false;
+            lastDay = 0;
+            stars = 0;
+            itemsQueuedThisLobby = false;
             itemsSpawnedThisRun = false;
+            spawnQueue.Clear();
 
-            Logger.LogInfo("[HandleGameReset] Reset complete. Selecting 5 random received items from inventory.");
-            QueueItemsFromReceivedPool(5);
-
-            if (spawnQueue.Count > 0)
-            {
-                Logger.LogInfo($"[HandleGameReset] {spawnQueue.Count} items successfully queued for next run.");
-            }
-            else
-            {
-                Logger.LogWarning("[HandleGameReset] No items were queued! Check received items pool.");
-            }
-        }
-
-        private void ResetToLastStar()
-        {
-            if (stars > 0)
-            {
-                stars--;
-                lastDay -= 3; // Roll back 3 days per star
-                Logger.LogInfo($"[DeathLink] Rolling back to last awarded star. New day: {lastDay}, Stars: {stars}");
-            }
-            else
-            {
-                Logger.LogInfo("[DeathLink] No stars to roll back to. Resetting entire run.");
-                HandleGameReset();
-            }
+            Logger.LogInfo("[PlateupAP] Game reset complete. Ready for a new run.");
         }
 
         private void QueueItemsFromReceivedPool(int count)
@@ -731,8 +881,6 @@ namespace KitchenPlateupAP
                 Logger.LogInfo($"[QueueItemsFromReceivedPool] {selectedItems.Count} items added to spawn queue.");
             }
 
-
-
         private void QueueItemsForNextRun(int count)
         {
             if (receivedItemPool.Count == 0)
@@ -762,9 +910,6 @@ namespace KitchenPlateupAP
                 spawnQueue.Enqueue(CreateItemInfoForQueue(itemId));
             }
         }
-
-
-
 
         private void ProcessSpawn(ItemInfo info)
         {
@@ -801,6 +946,63 @@ namespace KitchenPlateupAP
             }
         }
 
+        //Traps
+        private void ApplyTrapEffect(int trapId)
+        {
+            switch (trapId)
+            {
+                case 20000: // EVERYTHING IS ON FIRE
+                    Logger.LogWarning("[Trap] EVERYTHING IS ON FIRE activated! Igniting appliances...");
+                    IgniteAllAppliances();
+                    break;
+
+                case 20001: // Super Slow
+                    Logger.LogWarning("[Trap] Super Slow activated! Reducing player speed...");
+                    ApplySlowEffect();
+                    break;
+
+                default:
+                    Logger.LogWarning($"[Trap] Unknown trap ID {trapId} received.");
+                    break;
+            }
+        }
+
+        private void IgniteAllAppliances()
+        {
+            Logger.LogWarning("[Trap] Igniting all appliances...");
+
+            EntityQuery applianceQuery = GetEntityQuery(new QueryHelper()
+                .All(typeof(CAppliance))
+                .None(typeof(CFire), typeof(CIsOnFire), typeof(CFireImmune)));
+
+            using (var appliances = applianceQuery.ToEntityArray(Allocator.TempJob))
+            {
+                int count = appliances.Length;
+                for (int i = 0; i < count; i++)
+                {
+                    EntityManager.AddComponent<CIsOnFire>(appliances[i]);
+                }
+            }
+        }
+
+        private void ApplySlowEffect()
+        {
+            Logger.LogWarning("[Trap] Applying slow effect to players...");
+
+            EntityQuery playerQuery = GetEntityQuery(ComponentType.ReadWrite<CPlayer>());
+            using (var playerEntities = playerQuery.ToEntityArray(Allocator.TempJob))
+            {
+                int count = playerEntities.Length;
+                for (int i = 0; i < count; i++)
+                {
+                    Entity player = playerEntities[i];
+                    CPlayer playerData = EntityManager.GetComponentData<CPlayer>(player);
+                    playerData.Speed *= 0.5f; // Reduce speed by 50%
+                    EntityManager.SetComponentData(player, playerData);
+                    Logger.LogInfo($"[Trap] Player {i} speed reduced.");
+                }
+            }
+        }
 
         // Checks and Day Cycle
         private void UpdateDayCycle()

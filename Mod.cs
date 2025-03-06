@@ -49,7 +49,6 @@ namespace KitchenPlateupAP
     {
         static void Postfix(DeterminePlayerSpeed __instance)
         {
-            // Only apply the multiplier if the SIsDayTime marker exists.
             if (!__instance.HasSingleton<SIsDayTime>())
                 return;
 
@@ -61,13 +60,17 @@ namespace KitchenPlateupAP
                 {
                     Entity playerEntity = playerEntities[i];
                     CPlayer player = em.GetComponentData<CPlayer>(playerEntity);
-                    // Multiply the player's speed by your mod multiplier.
-                    player.Speed *= Mod.movementSpeedMod;
+
+                    // Modify player speed to ensure traps work
+                    float slowMultiplier = Mod.Instance.GetPlayerSpeedMultiplier(playerEntity);
+                    player.Speed *= Mod.movementSpeedMod * slowMultiplier;
+
                     em.SetComponentData(playerEntity, player);
                 }
             }
         }
     }
+
 
 
     public class ArchipelagoConfig
@@ -551,6 +554,12 @@ namespace KitchenPlateupAP
 
         private void HandleDeathLinkEvent(DeathLink deathLink)
         {
+            if (session == null || session.Socket == null)
+            {
+                Logger.LogError("[PlateupAP] DeathLink received, but session or socket is null. Cannot process.");
+                return;
+            }
+
             Logger.LogWarning($"[PlateupAP] DeathLink received! Cause: {deathLink.Source}");
 
             if (deathLinkBehavior == 0) // Full Reset
@@ -565,9 +574,17 @@ namespace KitchenPlateupAP
             else if (deathLinkBehavior == 1) // Reset to Last Star
             {
                 Logger.LogWarning("[PlateupAP] Player chose to reset to the last earned star due to DeathLink.");
+
+                // Debugging logs before calling ResetToLastStar()
+                if (!HasSingleton<SDay>())
+                {
+                    Logger.LogError("[PlateupAP] ERROR: SDay singleton not found before ResetToLastStar(). ECS may not be initialized.");
+                }
+
                 ResetToLastStar();
             }
         }
+
 
         private void SendDeathLink()
         {
@@ -584,21 +601,34 @@ namespace KitchenPlateupAP
 
         private void ResetToLastStar()
         {
-            if (stars > 0)
-            {
-                // Determine how many days to roll back (0, 1, or 2)
-                int rollbackDays = lastDay % 3;
+            Logger.LogInfo("[PlateupAP] Attempting to reset to last star...");
 
-                // Get the current game day and apply the rollback
-                var day = GetOrDefault<SDay>();
-                day.Day -= rollbackDays;
+            var day = GetOrDefault<SDay>();
+
+            Logger.LogInfo($"[PlateupAP] Current day: {day.Day}, Stars: {stars}");
+
+            if (stars > 0 && day.Day > 1)
+            {
+                // Find the last earned star (last multiple of 3)
+                int rollbackDays = day.Day % 3;
+                int newDay = day.Day - rollbackDays;
+
+                if (newDay < 1)
+                {
+                    Logger.LogWarning($"[PlateupAP] Calculated rollback resulted in invalid day {newDay}, setting to 1.");
+                    newDay = 1;
+                }
+
+                Logger.LogInfo($"[PlateupAP] Rolling back to last star: {newDay}");
+                day.Day = newDay;
                 Set(day);
 
-                Logger.LogInfo($"[PlateupAP] Resetting to last earned star. Rolled back {rollbackDays} days. New active day: {day.Day}, lastDay remains: {lastDay}");
+                Logger.LogInfo($"[PlateupAP] Reset to last earned star. New day: {day.Day}, Previous day: {lastDay}");
+                lastDay = newDay;
             }
             else
             {
-                Logger.LogInfo("[PlateupAP] No stars earned, resetting fully instead.");
+                Logger.LogWarning("[PlateupAP] No stars earned or already at day 1, resetting fully instead.");
                 Entity entity = base.EntityManager.CreateEntity(typeof(SGameOver), typeof(CGamePauseBlock));
                 Set(entity, new SGameOver
                 {
@@ -606,6 +636,20 @@ namespace KitchenPlateupAP
                 });
             }
         }
+
+
+
+        private Dictionary<Entity, float> slowEffectMultipliers = new Dictionary<Entity, float>();
+
+        public float GetPlayerSpeedMultiplier(Entity player)
+        {
+            if (slowEffectMultipliers.ContainsKey(player))
+            {
+                return slowEffectMultipliers[player];
+            }
+            return 1.0f; // Default to normal speed
+        }
+
 
         protected override void OnUpdate()
         {
@@ -985,6 +1029,9 @@ namespace KitchenPlateupAP
             }
         }
 
+        private Dictionary<Entity, float> originalSpeeds = new Dictionary<Entity, float>(); // Store original speeds
+        private HashSet<Entity> activeSlowEffects = new HashSet<Entity>(); // Track active slow effects
+
         private void ApplySlowEffect()
         {
             Logger.LogWarning("[Trap] Applying slow effect to players...");
@@ -996,13 +1043,37 @@ namespace KitchenPlateupAP
                 for (int i = 0; i < count; i++)
                 {
                     Entity player = playerEntities[i];
-                    CPlayer playerData = EntityManager.GetComponentData<CPlayer>(player);
-                    playerData.Speed *= 0.5f; // Reduce speed by 50%
-                    EntityManager.SetComponentData(player, playerData);
-                    Logger.LogInfo($"[Trap] Player {i} speed reduced.");
+
+                    // Set a slow effect multiplier (25% of normal speed)
+                    if (!slowEffectMultipliers.ContainsKey(player))
+                    {
+                        slowEffectMultipliers[player] = 0.25f;
+                        Logger.LogInfo($"[Trap] Player {i} speed reduced.");
+                    }
+
+                    // Schedule speed restoration after 30 seconds
+                    RestoreSpeedAfterDelay(player, 15);
                 }
             }
         }
+
+
+
+
+
+        private async void RestoreSpeedAfterDelay(Entity player, int delaySeconds)
+        {
+            await Task.Delay(delaySeconds * 1000);
+
+            if (slowEffectMultipliers.ContainsKey(player))
+            {
+                slowEffectMultipliers.Remove(player);
+                Logger.LogInfo($"[Trap] Player speed restored after {delaySeconds} seconds.");
+            }
+        }
+
+
+
 
         // Checks and Day Cycle
         private void UpdateDayCycle()

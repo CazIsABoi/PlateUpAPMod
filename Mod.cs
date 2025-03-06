@@ -712,10 +712,9 @@ namespace KitchenPlateupAP
 
                 Logger.LogInfo("[Lobby] Entered lobby. Preparing to queue items for next run...");
 
-                // Ensure we only queue items once per lobby session
                 if (spawnQueue.Count == 0)
                 {
-                    QueueItemsFromReceivedPool(itemsKeptPerRun);
+                    QueueItemsFromReceivedPool(itemsKeptPerRun); 
                     Logger.LogInfo($"[Lobby] {spawnQueue.Count} items queued for next run.");
                 }
                 else
@@ -726,9 +725,7 @@ namespace KitchenPlateupAP
                 itemsQueuedThisLobby = true; // Prevent multiple calls
             }
 
-
             // --- Dish Card Reading Logic ---
-
             // Create the query for player entities with CPlayer and CItemHolder.
             EntityQuery playersWithItems = GetEntityQuery(new QueryHelper().All(typeof(CPlayer), typeof(CItemHolder)));
                 using var playerEntities = playersWithItems.ToEntityArray(Allocator.Temp);
@@ -865,8 +862,6 @@ namespace KitchenPlateupAP
         private void HandleGameReset()
         {
             Logger.LogInfo("[PlateupAP] Handling game reset...");
-
-            // Reset necessary state variables
             firstCycleCompleted = false;
             previousWasDay = false;
             franchised = false;
@@ -875,7 +870,9 @@ namespace KitchenPlateupAP
             stars = 0;
             itemsQueuedThisLobby = false;
             itemsSpawnedThisRun = false;
+
             spawnQueue.Clear();
+            Logger.LogInfo("[PlateupAP] Cleared expired items from spawn queue.");
 
             Logger.LogInfo("[PlateupAP] Game reset complete. Ready for a new run.");
         }
@@ -959,10 +956,17 @@ namespace KitchenPlateupAP
         {
             int checkId = (int)info.ItemId;
 
-            // Check if this check is a speed upgrade.
+            if (!receivedItemPool.Contains(checkId))
+            {
+                Logger.LogWarning($"[Spawn] Skipping expired item ID: {checkId}");
+                return;
+            }
+
+            Logger.LogInfo($"[Spawn] Processing item ID: {checkId}");
+
+            // Handle speed upgrades
             if (speedUpgradeMapping.ContainsKey(checkId))
             {
-                // Increment the tier progressively regardless of which id was received.
                 if (movementSpeedTier < speedTiers.Length - 1)
                 {
                     movementSpeedTier++;
@@ -972,11 +976,12 @@ namespace KitchenPlateupAP
                 return;
             }
 
-            // Otherwise, process the check normally (spawn objects, etc.)
+            // Handle regular item spawning
             if (progressionToGDO.TryGetValue(checkId, out int gdoId))
             {
                 SpawnPositionType positionType = SpawnPositionType.Door;
                 SpawnApplianceMode spawnApplianceMode = SpawnApplianceMode.Blueprint;
+
                 if (KitchenData.GameData.Main.TryGet<Appliance>(gdoId, out Appliance appliance))
                     SpawnRequestSystem.Request<Appliance>(gdoId, positionType, InputSourceIdentifier.Identifier, spawnApplianceMode);
                 else if (KitchenData.GameData.Main.TryGet<Decor>(gdoId, out Decor decor))
@@ -1154,31 +1159,38 @@ namespace KitchenPlateupAP
                         }
                     }
 
-
                     // Award stars every three days.
-                    if (lastDay % 3 == 0 && lastDay < 15)
+                    if (lastDay % 3 == 0 && lastDay <= 15) 
                     {
                         stars++;
-                        int starCheckID = (dayID + lastDay) * 10 + 1; // Correct calculation
+                        int starCheckID = (dayID + lastDay) * 10 + 1;
 
                         Logger.LogInfo($"[Star Check] Awarding Star {stars} with ID: {starCheckID}");
                         session.Locations.CompleteLocationChecks(starCheckID);
 
+                        // Special handling for 4th and 5th stars to ensure they're sent in franchises
+                        if (stars == 4)
+                        {
+                            int star4CheckID = (dayID + 12) * 10 + 1;
+                            Logger.LogInfo($"[Star Check] Sending missing Star 4 check with ID: {star4CheckID}");
+                            session.Locations.CompleteLocationChecks(star4CheckID);
+                        }
                         if (stars == 5)
                         {
+                            int star5CheckID = (dayID + 15) * 10 + 1;
+                            Logger.LogInfo($"[Star Check] Sending missing Star 5 check with ID: {star5CheckID}");
+                            session.Locations.CompleteLocationChecks(star5CheckID);
+
                             Logger.LogInfo("[Star Check] Star 5 achieved. Resetting star counter.");
                             stars = 0; // Reset after reaching 5 stars
                         }
                     }
                 }
 
-
-                // Mark that this transition has been processed.
                 dayTransitionProcessed = true;
             }
             else if (!isPrepFirstUpdate)
             {
-                // Once we leave the first frame of prep, reset the flag for the next cycle.
                 dayTransitionProcessed = false;
             }
         }
@@ -1197,7 +1209,6 @@ namespace KitchenPlateupAP
                     EntityManager.SetComponentData(playerEntity, player);
                 }
             }
-            // (Add similar logic for interaction and cooking if you have corresponding components.)
         }
 
 

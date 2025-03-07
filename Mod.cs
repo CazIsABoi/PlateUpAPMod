@@ -30,49 +30,6 @@ using KitchenPlateupAP;
 
 namespace KitchenPlateupAP
 {
-    [HarmonyPatch(typeof(Archipelago.MultiClient.Net.Converters.ArchipelagoPacketConverter))]
-    [HarmonyPatch("ReadJson")]
-    public class Patch_ArchipelagoPacketConverter_ReadJson
-    {
-
-        static void Postfix(object __result)
-        {
-            if (__result is List<string> stringList)
-            {
-                stringList.RemoveAll(s => s == "Disabled");
-            }
-        }
-    }
-    //Player Speed Patch
-    [HarmonyPatch(typeof(DeterminePlayerSpeed), "OnUpdate")]
-    public static class Patch_DeterminePlayerSpeed_OnUpdate
-    {
-        static void Postfix(DeterminePlayerSpeed __instance)
-        {
-            if (!__instance.HasSingleton<SIsDayTime>())
-                return;
-
-            EntityQuery query = __instance.EntityManager.CreateEntityQuery(ComponentType.ReadWrite<CPlayer>());
-            using (var playerEntities = query.ToEntityArray(Allocator.Temp))
-            {
-                var em = __instance.EntityManager;
-                for (int i = 0; i < playerEntities.Length; i++)
-                {
-                    Entity playerEntity = playerEntities[i];
-                    CPlayer player = em.GetComponentData<CPlayer>(playerEntity);
-
-                    // Modify player speed to ensure traps work
-                    float slowMultiplier = Mod.Instance.GetPlayerSpeedMultiplier(playerEntity);
-                    player.Speed *= Mod.movementSpeedMod * slowMultiplier;
-
-                    em.SetComponentData(playerEntity, player);
-                }
-            }
-        }
-    }
-
-
-
     public class ArchipelagoConfig
     {
         public string address { get; set; }
@@ -81,28 +38,11 @@ namespace KitchenPlateupAP
         public string password { get; set; }
     }
 
-    public class ApplianceWrapper : MonoBehaviour
-    {
-        public CCreateAppliance Appliance;
-        public void InitAppliance()
-        {
-            Appliance = new CCreateAppliance();
-        }
-    }
-
-    public class PositionWrapper : MonoBehaviour
-    {
-        public void SetPosition(Vector3 pos)
-        {
-            transform.position = pos;
-        }
-    }
-
     public class Mod : BaseMod, IModSystem
     {
         public const string MOD_GUID = "com.caz.plateupap";
         public const string MOD_NAME = "PlateupAP";
-        public const string MOD_VERSION = "0.1.6";
+        public const string MOD_VERSION = "0.1.6.4";
         public const string MOD_AUTHOR = "Caz";
         public const string MOD_GAMEVERSION = ">=1.1.9";
 
@@ -122,6 +62,7 @@ namespace KitchenPlateupAP
         private static bool dishesMessageSent = false;
         private bool itemsQueuedThisLobby = false;
         int itemsKeptPerRun = 5;
+        public static int RandomTrapCardCount = 0;
 
         // Static day cycle and spawn state.
         private static int lastDay = 0;
@@ -162,197 +103,6 @@ namespace KitchenPlateupAP
         {
             public static int Identifier = 0;
         }
-
-        // Appliance Dictionary
-        private readonly Dictionary<int, int> progressionToGDO = new Dictionary<int, int>()
-        {
-            { 1001, ApplianceReferences.Hob },
-            { 10012, ApplianceReferences.HobSafe },
-            { 10013, ApplianceReferences.HobDanger },
-            { 10014, ApplianceReferences.HobStarting },
-            { 10015, ApplianceReferences.Oven },
-            { 10016, ApplianceReferences.Microwave },
-            { 10017, ApplianceReferences.GasLimiter },
-            { 10018, ApplianceReferences.GasSafetyOverride },
-            { 1002, ApplianceReferences.SinkNormal },
-            { 10022, ApplianceReferences.SinkPower },
-            { 10023, ApplianceReferences.SinkSoak },
-            { 10024, ApplianceReferences.SinkStarting },
-            { 10025, ApplianceReferences.DishWasher },
-            { 10026, ApplianceReferences.SinkLarge },
-            { 1003, ApplianceReferences.Countertop },
-            { 10032, ApplianceReferences.Workstation },
-            { 10033, ApplianceReferences.Freezer },
-            { 10034, ApplianceReferences.PrepStation },
-            { 10035, ApplianceReferences.FrozenPrepStation },
-            { 1004, ApplianceReferences.TableLarge },
-            { 10042, ApplianceReferences.TableBar },
-            { 10043, ApplianceReferences.TableBasicCloth },
-            { 10044, ApplianceReferences.TableCheapMetal },
-            { 10045, ApplianceReferences.TableFancyCloth },
-            { 10046, ApplianceReferences.CoffeeTable },
-            { 1005, ApplianceReferences.BinStarting },
-            { 10052, ApplianceReferences.Bin },
-            { 10053, ApplianceReferences.BinCompactor },
-            { 10054, ApplianceReferences.BinComposter },
-            { 10055, ApplianceReferences.BinExpanded },
-            { 10056, ApplianceReferences.FloorProtector },
-            { 1006, ApplianceReferences.RollingPinProvider },
-            { 10062, ApplianceReferences.SharpKnifeProvider },
-            { 10063, ApplianceReferences.ScrubbingBrushProvider },
-            { 1007, ApplianceReferences.BreadstickBox },
-            { 10072, ApplianceReferences.CandleBox },
-            { 10073, ApplianceReferences.NapkinBox },
-            { 10074, ApplianceReferences.SharpCutlery },
-            { 10075, ApplianceReferences.SpecialsMenuBox },
-            { 10076, ApplianceReferences.LeftoversBagStation },
-            { 10077, ApplianceReferences.SupplyCabinet },
-            { 10078, ApplianceReferences.HostStand },
-            { 10079, ApplianceReferences.FlowerPot },
-            { 1008, ApplianceReferences.MopBucket },
-            { 10082, ApplianceReferences.MopBucketLasting },
-            { 10083, ApplianceReferences.MopBucketFast },
-            { 10084, ApplianceReferences.RobotMop },
-            { 10085, ApplianceReferences.FloorBufferStation },
-            { 10086, ApplianceReferences.RobotBuffer },
-            { 10087, ApplianceReferences.DirtyPlateStack },
-            { 1009, ApplianceReferences.Belt },
-            { 10092, ApplianceReferences.Grabber },
-            { 10093, ApplianceReferences.GrabberSmart },
-            { 10094, ApplianceReferences.GrabberRotatable },
-            { 10095, ApplianceReferences.Combiner },
-            { 10096, ApplianceReferences.Portioner },
-            { 10097, ApplianceReferences.Mixer },
-            { 10098, ApplianceReferences.MixerPusher },
-            { 10099, ApplianceReferences.MixerHeated },
-            { 100992, ApplianceReferences.MixerRapid },
-            { 1011, ApplianceReferences.BlueprintCabinet },
-            { 10112, ApplianceReferences.BlueprintUpgradeDesk },
-            { 10113, ApplianceReferences.BlueprintOrderingDesk },
-            { 10114, ApplianceReferences.BlueprintDiscountDesk },
-            { 10115, ApplianceReferences.ClipboardStand },
-            { 10116, ApplianceReferences.BlueprintCopyDesk },
-            { 1012, ApplianceReferences.ShoeRackTrainers },
-            { 10122, ApplianceReferences.ShoeRackWellies },
-            { 10123, ApplianceReferences.ShoeRackWorkBoots },
-            { 1013, ApplianceReferences.BookingDesk },
-            { 10132, ApplianceReferences.FoodDisplayStand },
-            { 10133, ApplianceReferences.Dumbwaiter },
-            { 10134, ApplianceReferences.Teleporter },
-            { 10135, ApplianceReferences.FireExtinguisherHolder },
-            { 10136, ApplianceReferences.OrderingTerminal },
-            { 10137, ApplianceReferences.OrderingTerminalSpecialOffers },
-            { 1014, ApplianceReferences.PlateStackStarting },
-            { 10142, ApplianceReferences.PlateStack },
-            { 10143, ApplianceReferences.AutoPlater },
-            { 10144, ApplianceReferences.PotStack },
-            { 10145, ApplianceReferences.ServingBoardStack },
-            { 1015, ApplianceReferences.CoffeeMachine },
-            { 10152, ApplianceReferences.IceDispenser },
-            { 10153, ApplianceReferences.MilkDispenser },
-            { 10154, ApplianceReferences.WokStack },
-            { 10155, ApplianceReferences.SourceLasagneTray },
-            { 10156, ApplianceReferences.ProviderTacoTray },
-            { 10157, ApplianceReferences.ProviderMixingBowls },
-            { 10158, ApplianceReferences.SourceBigCakeTin },
-            { 10159, ApplianceReferences.SourceBrownieTray },
-            { 1016, ApplianceReferences.SourceCookieTray },
-            { 10162, ApplianceReferences.SourceCupcakeTray },
-            { 10163, ApplianceReferences.SourceDoughnutTray },
-            { 10164, ApplianceReferences.ExtraLife }
-        };
-
-        public readonly Dictionary<int, int> customerCardDictionary = new Dictionary<int, int>()
-        {
-            { 1, UnlockCardReferences.Affordable },
-            { 2, UnlockCardReferences.AllYouCanEat },
-            { 3, UnlockCardReferences.AllYouCanEatIncrease },
-            { 4, UnlockCardReferences.ChangeOrdersAfterOrdering },
-            { 5, UnlockCardReferences.Couples },
-            { 6, UnlockCardReferences.ClosingTime },
-            { 7, UnlockCardReferences.CustomerBursts },
-            { 8, UnlockCardReferences.CustomersEatSlowly },
-            { 9, UnlockCardReferences.CustomersRequireWalking },
-            { 10, UnlockCardReferences.DinnerRush },
-            { 11, UnlockCardReferences.DoubleDates },
-            { 12, UnlockCardReferences.FirstDates },
-            { 13, UnlockCardReferences.FlexibleDining },
-            { 14, UnlockCardReferences.HiddenOrders },
-            { 15, UnlockCardReferences.HiddenPatience },
-            { 16, UnlockCardReferences.HiddenProcesses },
-            { 17, UnlockCardReferences.IndividualDining },
-            { 18, UnlockCardReferences.InstantOrders },
-            { 19, UnlockCardReferences.LargeGroups },
-            { 20, UnlockCardReferences.LessMoney },
-            { 21, UnlockCardReferences.LosePatienceInView },
-            { 22, UnlockCardReferences.LunchRush },
-            { 23, UnlockCardReferences.MediumGroups },
-            { 24, UnlockCardReferences.MessesSlowCustomers },
-            { 25, UnlockCardReferences.MessRangeIncrease },
-            { 26, UnlockCardReferences.MessyCustomers },
-            { 27, UnlockCardReferences.MoreCustomers },
-            { 28, UnlockCardReferences.MoreCustomers2 },
-            { 29, UnlockCardReferences.MorningRush },
-            { 30, UnlockCardReferences.PatienceDecrease },
-            { 31, UnlockCardReferences.PickyEaters },
-            { 32, UnlockCardReferences.QuickerBurning },
-            { 33, UnlockCardReferences.SlowProcesses },
-            { 34, UnlockCardReferences.TippingCulture },
-        };
-
-        //Trap Dictionary
-        private readonly Dictionary<int, string> trapDictionary = new Dictionary<int, string>()
-        {
-            { 20000, "EVERYTHING IS ON FIRE" },
-            { 20001, "Super Slow" },
-            { 20002, "Random Customer Card" }
-        };
-
-
-        private readonly Dictionary<int, string> dishDictionary = new Dictionary<int, string>()
-        {           
-            { DishReferences.SaladBase, "Salad" },
-            { DishReferences.SteakBase, "Steak" },
-            { DishReferences.BurgerBase, "Burger" },
-            { DishReferences.CoffeeBaseDessert, "Coffee" },
-            { DishReferences.PizzaBase, "Pizza" },
-            { DishReferences.Dumplings, "Dumplings" },
-            { DishReferences.TurkeyBase, "Turkey" },
-            { DishReferences.PieBase, "Pie" },
-            { DishReferences.Cakes, "Cakes" },
-            { DishReferences.SpaghettiBolognese, "Spaghetti" },
-            { DishReferences.FishBase, "Fish" },
-            { DishReferences.TacosBase, "Tacos" },
-            { DishReferences.HotdogBase, "Hot Dogs" },
-            { DishReferences.BreakfastBase, "Breakfast" },
-            { DishReferences.StirFryBase, "Stir Fry" },
-        };
-
-        //ID comparison
-        private readonly Dictionary<string, int> dish_id_lookup = new Dictionary<string, int>
-        {
-            { "Salad", 101 },
-            { "Steak", 102 },
-            { "Burger", 103 },
-            { "Coffee", 104 },
-            { "Pizza", 105 },
-            { "Dumplings", 106 },
-            { "Turkey", 107 },
-            { "Pie", 108 },
-            { "Cakes", 109 },
-            { "Spaghetti", 110 },
-            { "Fish", 111 },
-            { "Tacos", 112 },
-            { "Hot Dogs", 113 },
-            { "Breakfast", 114 },
-            { "Stir Fry", 115 }
-        };
-
-        private static readonly Dictionary<int, string> speedUpgradeMapping = new Dictionary<int, string>()
-        {
-            { 10, "Speed Upgrade Player" },
-        };
-
 
         public Mod() : base(MOD_GUID, MOD_NAME, MOD_AUTHOR, MOD_VERSION, MOD_GAMEVERSION, Assembly.GetExecutingAssembly())
         {
@@ -510,7 +260,6 @@ namespace KitchenPlateupAP
             ArchipelagoConnectionManager.TryConnect(config.address, config.port, config.playername, config.password);
         }
 
-
         public void OnSuccessfulConnect()
         {
             if (ArchipelagoConnectionManager.ConnectionSuccessful)
@@ -585,7 +334,6 @@ namespace KitchenPlateupAP
             }
         }
 
-
         private void SendDeathLink()
         {
             if (deathLinkService != null)
@@ -636,8 +384,6 @@ namespace KitchenPlateupAP
                 });
             }
         }
-
-
 
         private Dictionary<Entity, float> slowEffectMultipliers = new Dictionary<Entity, float>();
 
@@ -722,7 +468,7 @@ namespace KitchenPlateupAP
                     Logger.LogInfo("[Lobby] Items are already queued. Skipping queueing.");
                 }
 
-                itemsQueuedThisLobby = true; // Prevent multiple calls
+                itemsQueuedThisLobby = true;
             }
 
             // --- Dish Card Reading Logic ---
@@ -753,7 +499,7 @@ namespace KitchenPlateupAP
                                 Dish dishData = (Dish)GDOUtils.GetExistingGDO(DishId);
                                 Logger.LogInfo($"New selected dish in HQ: {dishData.Name}");
 
-                                if (dishDictionary.TryGetValue(DishId, out string dishName) && !loggedCardThisCycle)
+                                if (ProgressionMapping.dishDictionary.TryGetValue(DishId, out string dishName) && !loggedCardThisCycle)
                                 {
                                     Logger.LogInfo($"Updated dish (via dictionary): {dishName}");
                                     loggedCardThisCycle = true;
@@ -764,7 +510,6 @@ namespace KitchenPlateupAP
                                     loggedCardThisCycle = true;
                                 }
                             }
-
                             break;
                         }
                     }
@@ -803,9 +548,9 @@ namespace KitchenPlateupAP
             Logger.LogInfo($"[OnItemReceived] Received check ID: {checkId}");
 
             // Check if the received item is a trap
-            if (trapDictionary.ContainsKey(checkId))
+            if (ProgressionMapping.trapDictionary.ContainsKey(checkId))
             {
-                Logger.LogWarning($"[OnItemReceived] Received TRAP: {trapDictionary[checkId]}!");
+                Logger.LogWarning($"[OnItemReceived] Received TRAP: {ProgressionMapping.trapDictionary[checkId]}!");
 
                 // Apply trap effects
                 ApplyTrapEffect(checkId);
@@ -813,7 +558,7 @@ namespace KitchenPlateupAP
             }
 
             // Store item in the pool (excluding speed upgrades)
-            if (!speedUpgradeMapping.ContainsKey(checkId))
+            if (!ProgressionMapping.speedUpgradeMapping.ContainsKey(checkId))
             {
                 receivedItemPool.Add(checkId);
                 Logger.LogInfo($"[OnItemReceived] Item ID {checkId} added to receivedItemPool.");
@@ -840,7 +585,6 @@ namespace KitchenPlateupAP
                 Logger.LogInfo($"[OnItemReceived] Item ID {checkId} is queued for the next run.");
             }
         }
-
 
         private ItemInfo CreateItemInfoForQueue(int itemId)
         {
@@ -885,6 +629,8 @@ namespace KitchenPlateupAP
                     return;
                 }
 
+                HashSet<int> trapIDs = new HashSet<int>(ProgressionMapping.trapDictionary.Keys);
+
                 // Log all received items from Archipelago
                 Logger.LogInfo($"[QueueItemsFromReceivedPool] Total received items count: {session.Items.AllItemsReceived.Count}");
 
@@ -896,16 +642,19 @@ namespace KitchenPlateupAP
 
                 // Get all received items and use itemID directly
                 var receivedItems = session.Items.AllItemsReceived
-                    .Select(item => (int)item.ItemId) // Use itemID directly
-                    .Where(id => !speedUpgradeMapping.ContainsKey(id)) // Exclude speed upgrades
+                    .Select(item => (int)item.ItemId)
+                    .Where(id =>
+                        !ProgressionMapping.speedUpgradeMapping.ContainsKey(id) // not a speed upgrade
+                     && !trapIDs.Contains(id)               // not a trap
+                    )
                     .ToList();
 
-                // Log filtered items
-                Logger.LogInfo($"[QueueItemsFromReceivedPool] Non-speed item count: {receivedItems.Count}");
+            // Log filtered items
+            Logger.LogInfo($"[QueueItemsFromReceivedPool] Non-speed item count: {receivedItems.Count}");
 
                 if (receivedItems.Count == 0)
                 {
-                    Logger.LogWarning("[QueueItemsFromReceivedPool] No valid non-speed items available to queue for next run.");
+                    Logger.LogWarning("[QueueItemsFromReceivedPool] No valid non-speed, non-trap items available to queue for next run.");
                     return;
                 }
 
@@ -931,7 +680,7 @@ namespace KitchenPlateupAP
             }
 
             // Filter out speed upgrades
-            var validItems = receivedItemPool.Where(id => !speedUpgradeMapping.ContainsKey(id)).ToList();
+            var validItems = receivedItemPool.Where(id => !ProgressionMapping.speedUpgradeMapping.ContainsKey(id)).ToList();
 
             if (validItems.Count == 0)
             {
@@ -965,19 +714,19 @@ namespace KitchenPlateupAP
             Logger.LogInfo($"[Spawn] Processing item ID: {checkId}");
 
             // Handle speed upgrades
-            if (speedUpgradeMapping.ContainsKey(checkId))
+            if (ProgressionMapping.speedUpgradeMapping.ContainsKey(checkId))
             {
                 if (movementSpeedTier < speedTiers.Length - 1)
                 {
                     movementSpeedTier++;
                     movementSpeedMod = speedTiers[movementSpeedTier];
-                    Logger.LogInfo($"{speedUpgradeMapping[checkId]} applied. Movement speed now at tier {movementSpeedTier} (multiplier = {movementSpeedMod}).");
+                    Logger.LogInfo($"{ProgressionMapping.speedUpgradeMapping[checkId]} applied. Movement speed now at tier {movementSpeedTier} (multiplier = {movementSpeedMod}).");
                 }
                 return;
             }
 
             // Handle regular item spawning
-            if (progressionToGDO.TryGetValue(checkId, out int gdoId))
+            if (ProgressionMapping.progressionToGDO.TryGetValue(checkId, out int gdoId))
             {
                 SpawnPositionType positionType = SpawnPositionType.Door;
                 SpawnApplianceMode spawnApplianceMode = SpawnApplianceMode.Blueprint;
@@ -1010,6 +759,24 @@ namespace KitchenPlateupAP
                     ApplySlowEffect();
                     break;
 
+                case 20002: // Random Customer Card
+                    Logger.LogWarning("[Trap] Random Customer Card triggered! Incrementing our card count...");
+                    RandomTrapCardCount++;
+                    Logger.LogInfo($"We’ve now received this RandomCard trap {RandomTrapCardCount} time(s).");
+
+                    // If we are already in the kitchen scene, spawn one card *right now*:
+                    if (HasSingleton<SKitchenMarker>())
+                    {
+                        Logger.LogInfo("[Trap] We are in the Kitchen, so spawning a random card immediately...");
+                        SpawnRandomCustomerCard();
+                    }
+                    else
+                    {
+                        Logger.LogInfo("[Trap] Not in Kitchen yet, so no immediate card spawn. We'll spawn later.");
+                    }
+                    break;
+
+
                 default:
                     Logger.LogWarning($"[Trap] Unknown trap ID {trapId} received.");
                     break;
@@ -1034,8 +801,8 @@ namespace KitchenPlateupAP
             }
         }
 
-        private Dictionary<Entity, float> originalSpeeds = new Dictionary<Entity, float>(); // Store original speeds
-        private HashSet<Entity> activeSlowEffects = new HashSet<Entity>(); // Track active slow effects
+        private Dictionary<Entity, float> originalSpeeds = new Dictionary<Entity, float>(); 
+        private HashSet<Entity> activeSlowEffects = new HashSet<Entity>(); 
 
         private void ApplySlowEffect()
         {
@@ -1062,10 +829,6 @@ namespace KitchenPlateupAP
             }
         }
 
-
-
-
-
         private async void RestoreSpeedAfterDelay(Entity player, int delaySeconds)
         {
             await Task.Delay(delaySeconds * 1000);
@@ -1077,8 +840,40 @@ namespace KitchenPlateupAP
             }
         }
 
+        private void SpawnRandomCustomerCard()
+        {
+            if (!HasSingleton<SKitchenMarker>())
+            {
+                Logger.LogWarning("[Trap] Tried to spawn a random card, but we're not in the kitchen scene!");
+                return;
+            }
 
+            var dict = ProgressionMapping.customerCardDictionary;
+            if (dict.Count == 0)
+            {
+                Logger.LogWarning("[Trap] No customer cards available in the dictionary!");
+                return;
+            }
 
+            List<int> keys = new List<int>(dict.Keys);
+            int randomIndex = UnityEngine.Random.Range(0, keys.Count);
+            int randomKey = keys[randomIndex];
+            int unlockCardId = dict[randomKey];
+
+            Entity entity = EntityManager.CreateEntity();
+
+            EntityManager.AddComponentData(entity, new CProgressionOption
+            {
+                ID = unlockCardId,
+                FromFranchise = false
+            });
+
+            //EntityManager.AddComponent<CSkipShowingRecipe>(entity);
+
+            EntityManager.AddComponent<CProgressionOption.Selected>(entity);
+
+            Logger.LogInfo($"[Trap->RandomCard] Spawned random card key={randomKey}, unlockID={unlockCardId}");
+        }
 
         // Checks and Day Cycle
         private void UpdateDayCycle()
@@ -1140,9 +935,9 @@ namespace KitchenPlateupAP
                         string dishName = selectedDishes[i];
 
                         // Process check only for the currently selected dish
-                        if (dishDictionary.TryGetValue(DishId, out string selectedDishName))
+                        if (ProgressionMapping.dishDictionary.TryGetValue(DishId, out string selectedDishName))
                         {
-                            if (dish_id_lookup.TryGetValue(selectedDishName, out int activeDishID))
+                            if (ProgressionMapping.dish_id_lookup.TryGetValue(selectedDishName, out int activeDishID))
                             {
                                 int activeDishDayCheckID = (activeDishID * 1000) + lastDay;
                                 session.Locations.CompleteLocationChecks(activeDishDayCheckID);

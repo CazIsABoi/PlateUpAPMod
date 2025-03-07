@@ -2,8 +2,9 @@
   "ExpandedNodes": [
     "",
     "\\Libraries",
-    "\\Libraries\\PlateUpDecorOnDemand"
+    "\\Libraries\\PlateUpDecorOnDemand\\Patches",
+    "\\Patches"
   ],
-  "SelectedNode": "\\Mod.cs",
+  "SelectedNode": "\\Wrappers.cs",
   "PreviewInSolutionExplorer": false
 }

@@ -13,7 +13,6 @@ namespace KitchenPlateupAP
     public static class ArchipelagoConnectionManager
     {
         private static readonly KitchenLogger Logger = new KitchenLogger("ArchipelagoConnectionManager");
-
         public static ArchipelagoSession Session { get; private set; }
         public static bool ConnectionSuccessful { get; private set; }
         public static bool IsConnecting { get; private set; }
@@ -26,37 +25,56 @@ namespace KitchenPlateupAP
                 return;
 
             IsConnecting = true;
-            string connectionUrl = $"wss://{ip}:{port}/";
 
-            try
-            {
-                Session = ArchipelagoSessionFactory.CreateSession(connectionUrl);
-            }
-            catch (Exception ex)
-            {
-                Logger.LogError("Error creating session: " + ex.GetBaseException().Message);
-                IsConnecting = false;
-                return;
-            }
+            string[] protocols = { "wss://", "ws://" }; 
+            string connectionUrl = "";
 
-            Session.Socket.ErrorReceived += OnSocketError;
-            Session.Socket.SocketOpened += OnSocketOpened;
-            Session.Socket.SocketClosed += OnSocketClosed;
+            foreach (var protocol in protocols)
+            {
+                connectionUrl = $"{protocol}{ip}:{port}/";
+                Logger.LogInfo($"Attempting connection: {connectionUrl}");
 
-            LoginResult result;
-            try
-            {
-                result = Session.TryConnectAndLogin("plateup", playerName, ItemsHandlingFlags.AllItems);
-            }
-            catch (Exception e)
-            {
-                result = new LoginFailure(e.GetBaseException().Message);
-            }
+                try
+                {
+                    Session = ArchipelagoSessionFactory.CreateSession(connectionUrl);
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogError("Error creating session: " + ex.GetBaseException().Message);
+                    continue; // Try next protocol
+                }
 
-            if (!result.Successful)
-            {
+                Session.Socket.ErrorReceived += OnSocketError;
+                Session.Socket.SocketOpened += OnSocketOpened;
+                Session.Socket.SocketClosed += OnSocketClosed;
+
+                LoginResult result;
+                try
+                {
+                    result = Session.TryConnectAndLogin("plateup", playerName, ItemsHandlingFlags.AllItems);
+                }
+                catch (Exception e)
+                {
+                    result = new LoginFailure(e.GetBaseException().Message);
+                }
+
+                if (result.Successful)
+                {
+                    var loginSuccess = (LoginSuccessful)result;
+                    ConnectionSuccessful = true;
+                    Logger.LogInfo($"Successfully connected using {protocol} as slot '{playerName}'.");
+
+                    IsConnecting = false;
+                    SlotIndex = loginSuccess.Slot;
+                    SlotData = loginSuccess.SlotData;
+
+                    Mod.Instance.OnSuccessfulConnect();
+                    return;
+                }
+
+                // Log failure but continue to the next protocol
                 LoginFailure failure = (LoginFailure)result;
-                string errorMessage = $"Failed to connect to {ip}:{port} as {playerName}:";
+                string errorMessage = $"Failed to connect to {connectionUrl} as {playerName}:";
                 foreach (string error in failure.Errors)
                 {
                     errorMessage += $"\n    {error}";
@@ -66,19 +84,11 @@ namespace KitchenPlateupAP
                     errorMessage += $"\n    {error}";
                 }
                 Logger.LogError(errorMessage);
-                IsConnecting = false;
-                return;
+
             }
 
-            var loginSuccess = (LoginSuccessful)result;
-            ConnectionSuccessful = true;
-            Logger.LogInfo($"Successfully connected to Archipelago as slot '{playerName}'.");
-
             IsConnecting = false;
-            SlotIndex = loginSuccess.Slot;
-            SlotData = loginSuccess.SlotData;
-
-            Mod.Instance.OnSuccessfulConnect();
+            Logger.LogError("All connection attempts failed.");
         }
 
         private static void OnSocketError(Exception e, string message)

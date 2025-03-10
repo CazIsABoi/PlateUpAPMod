@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("PlateupAP")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+9b0bf5b36057b467cd6c38ebce62805f65103d33")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+36a7cbfbca85b0f5337413ca0862e057edf71c00")]
 [assembly: System.Reflection.AssemblyProductAttribute("PlateupAP")]
 [assembly: System.Reflection.AssemblyTitleAttribute("PlateupAP")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

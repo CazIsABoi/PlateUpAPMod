@@ -1,8 +1,13 @@
+using System;
+using System.Reflection;
 using System.Collections.Generic;
 using HarmonyLib;
 using Kitchen;
+using KitchenData;
 using Unity.Entities;
 using Unity.Collections;
+using KitchenPlateupAP;
+using UnityEngine;
 
 namespace KitchenPlateupAP
 {
@@ -40,6 +45,30 @@ namespace KitchenPlateupAP
                     player.Speed *= Mod.movementSpeedMod * slowMultiplier;
 
                     em.SetComponentData(playerEntity, player);
+                }
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(ApplyItemProcesses), "Run")]
+    public static class Patch_ApplyItemProcesses_Run
+    {
+        static void Prefix(ref float dt, Entity e, CItem item, EntityCommandBuffer ecb, ApplyItemProcesses __instance)
+        {
+            EntityManager em = __instance.EntityManager;
+
+            float applianceSpeedMod = Mod.applianceSpeedMod;
+
+            if (em.HasComponent<CItemUndergoingProcess>(e))
+            {
+                var itemProcess = em.GetComponentData<CItemUndergoingProcess>(e);
+
+                if (itemProcess.Appliance != default && em.HasComponent<CAppliance>(itemProcess.Appliance))
+                {
+                    float speedMultiplier = applianceSpeedMod;
+
+                    // Adjust process speed by modifying dt directly
+                    dt *= speedMultiplier;
                 }
             }
         }

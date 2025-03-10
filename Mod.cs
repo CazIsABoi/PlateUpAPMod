@@ -28,6 +28,7 @@ using PreferenceSystem.Event;
 using PreferenceSystem.Menus;
 using KitchenPlateupAP;
 
+
 namespace KitchenPlateupAP
 {
     public class ArchipelagoConfig
@@ -50,6 +51,7 @@ namespace KitchenPlateupAP
         internal static KitchenLib.Logging.KitchenLogger Logger;
         private EntityQuery playersWithItems;
         private EntityQuery playerSpeedQuery;
+        private EntityQuery applianceSpeedQuery;
 
         public static Mod Instance { get; private set; }
 
@@ -63,6 +65,7 @@ namespace KitchenPlateupAP
         private bool itemsQueuedThisLobby = false;
         int itemsKeptPerRun = 5;
         public static int RandomTrapCardCount = 0;
+        bool deathLinkResetToLastStarPending = false;
 
         // Static day cycle and spawn state.
         private static int lastDay = 0;
@@ -89,15 +92,17 @@ namespace KitchenPlateupAP
         private bool itemsSpawnedThisRun = false;
 
         //Modifying player values
-        private static readonly float[] speedTiers = new float[] { 0.5f, 0.75f, 1.0f, 1.1f, 1.15f };
+        private static readonly float[] speedTiers = new float[] { 0.5f, 0.6f, 0.8f, 1f, 1.15f };
         private static int movementSpeedTier = 0;
-        private static int interactionSpeedTier = 0;
-        private static int cookingSpeedTier = 0;
+
+        //Modifying Appliance Values
+        public static readonly float[] applianceSpeedTiers = { 0.75f, 0.80f, 0.9f, 1f, 1.1f };
+        public static int applianceSpeedTier = 0;
+
 
         // Set initial multipliers from the tiers:
         public static float movementSpeedMod = speedTiers[movementSpeedTier];
-        private static float interactionSpeedMod = speedTiers[interactionSpeedTier];
-        private static float cookingSpeedMod = speedTiers[cookingSpeedTier];
+        public static float applianceSpeedMod = applianceSpeedTiers[applianceSpeedTier];
 
         public static class InputSourceIdentifier
         {
@@ -252,6 +257,7 @@ namespace KitchenPlateupAP
             Mod.Logger.LogInfo("DishCardReadingSystem initialised.");
             playersWithItems = GetEntityQuery(new QueryHelper().All(typeof(CPlayer), typeof(CItemHolder)));
             playerSpeedQuery = GetEntityQuery(new QueryHelper().All(typeof(CPlayer)));
+            applianceSpeedQuery = GetEntityQuery(new QueryHelper().All(typeof(CApplianceSpeedModifier)));
         }
 
         public void UpdateArchipelagoConfig(ArchipelagoConfig config)
@@ -324,13 +330,7 @@ namespace KitchenPlateupAP
             {
                 Logger.LogWarning("[PlateupAP] Player chose to reset to the last earned star due to DeathLink.");
 
-                // Debugging logs before calling ResetToLastStar()
-                if (!HasSingleton<SDay>())
-                {
-                    Logger.LogError("[PlateupAP] ERROR: SDay singleton not found before ResetToLastStar(). ECS may not be initialized.");
-                }
-
-                ResetToLastStar();
+                deathLinkResetToLastStarPending = true;
             }
         }
 
@@ -471,6 +471,19 @@ namespace KitchenPlateupAP
                 itemsQueuedThisLobby = true;
             }
 
+            if (deathLinkResetToLastStarPending)
+            {
+                deathLinkResetToLastStarPending = false;
+                if (!HasSingleton<SDay>())
+                {
+                    Logger.LogError("[PlateupAP] SDay singleton not found. Cannot do star reset.");
+                }
+                else
+                {
+                    ResetToLastStar();
+                }
+            }
+
             // --- Dish Card Reading Logic ---
             // Create the query for player entities with CPlayer and CItemHolder.
             EntityQuery playersWithItems = GetEntityQuery(new QueryHelper().All(typeof(CPlayer), typeof(CItemHolder)));
@@ -515,6 +528,7 @@ namespace KitchenPlateupAP
                     }
                 }   
         ApplySpeedModifiers();
+        ApplyApplianceSpeedModifiers();
         }
 
         // Spawning Items
@@ -547,44 +561,64 @@ namespace KitchenPlateupAP
             int checkId = (int)info.ItemId;
             Logger.LogInfo($"[OnItemReceived] Received check ID: {checkId}");
 
-            // Check if the received item is a trap
+            // 1) Check if it's a TRAP
             if (ProgressionMapping.trapDictionary.ContainsKey(checkId))
             {
                 Logger.LogWarning($"[OnItemReceived] Received TRAP: {ProgressionMapping.trapDictionary[checkId]}!");
-
-                // Apply trap effects
                 ApplyTrapEffect(checkId);
-                return; // Skip queueing the trap item
+                return; // Do not add to pool or queue
             }
 
-            // Store item in the pool (excluding speed upgrades)
-            if (!ProgressionMapping.speedUpgradeMapping.ContainsKey(checkId))
+            // 2) Check if it's a SPEED UPGRADE (player or appliance) from the same dictionary
+            if (ProgressionMapping.speedUpgradeMapping.TryGetValue(checkId, out string upgradeName))
             {
-                receivedItemPool.Add(checkId);
-                Logger.LogInfo($"[OnItemReceived] Item ID {checkId} added to receivedItemPool.");
-            }
-            else
-            {
-                Logger.LogInfo($"[OnItemReceived] Item ID {checkId} is a speed upgrade and was not stored.");
+                // Example: 10 => "Speed Upgrade Player", 11 => "Speed Upgrade Appliance"
+                if (upgradeName == "Speed Upgrade Player")
+                {
+                    // INCREMENT player speed tier
+                    if (movementSpeedTier < speedTiers.Length - 1)
+                    {
+                        movementSpeedTier++;
+                        movementSpeedMod = speedTiers[movementSpeedTier];
+                        Logger.LogInfo($"[OnItemReceived] Player speed upgraded to tier {movementSpeedTier}. Multiplier = {movementSpeedMod}");
+                    }
+                    else
+                    {
+                        Logger.LogInfo("[OnItemReceived] Player speed already at max tier.");
+                    }
+
+                    Logger.LogInfo("[OnItemReceived] Skipping player speed item for next run.");
+                    return;
+                }
+                else if (upgradeName == "Speed Upgrade Appliance")
+                {
+                    Mod.Instance.IncreaseApplianceSpeedTier();
+                    Logger.LogInfo($"[OnItemReceived] Appliance speed item used (ID {checkId}). Skipping for next run.");
+                    return;
+                }
             }
 
-            // Always queue item first
+            // 3) If neither trap nor speed upgrade => store in pool and queue it
+            receivedItemPool.Add(checkId);
+            Logger.LogInfo($"[OnItemReceived] Item ID {checkId} added to receivedItemPool.");
+
             Logger.LogInfo($"[OnItemReceived] Queuing item ID: {checkId}");
 
-            // If currently in prep phase, spawn immediately
+            // If we are currently in PREP phase (night), spawn immediately
             bool currentlyPrep = HasSingleton<SIsNightTime>();
             if (currentlyPrep)
             {
-                Logger.LogInfo($"[OnItemReceived] Currently in prep phase, queueing item ID: {checkId} for immediate spawn.");
-                spawnQueue.Enqueue(info);  // Instead of direct spawn, queue it so UpdateDayCycle handles it
+                Logger.LogInfo($"[OnItemReceived] Currently in prep phase; queueing item ID: {checkId} for immediate spawn.");
+                spawnQueue.Enqueue(info);
             }
             else
             {
-                // If not in prep phase, queue it for the next run
+                // Otherwise, queue for the next run
                 spawnQueue.Enqueue(info);
                 Logger.LogInfo($"[OnItemReceived] Item ID {checkId} is queued for the next run.");
             }
         }
+
 
         private ItemInfo CreateItemInfoForQueue(int itemId)
         {
@@ -615,61 +649,59 @@ namespace KitchenPlateupAP
             itemsQueuedThisLobby = false;
             itemsSpawnedThisRun = false;
 
-            spawnQueue.Clear();
             Logger.LogInfo("[PlateupAP] Cleared expired items from spawn queue.");
 
             Logger.LogInfo("[PlateupAP] Game reset complete. Ready for a new run.");
         }
 
         private void QueueItemsFromReceivedPool(int count)
+        {
+            if (session == null || session.Items == null)
             {
-                if (session == null || session.Items == null)
-                {
-                    Logger.LogError("Session or session items are null. Cannot retrieve received items.");
-                    return;
-                }
-
-                HashSet<int> trapIDs = new HashSet<int>(ProgressionMapping.trapDictionary.Keys);
-
-                // Log all received items from Archipelago
-                Logger.LogInfo($"[QueueItemsFromReceivedPool] Total received items count: {session.Items.AllItemsReceived.Count}");
-
-                if (session.Items.AllItemsReceived.Count == 0)
-                {
-                    Logger.LogWarning("[QueueItemsFromReceivedPool] No items have been received in this session.");
-                    return;
-                }
-
-                // Get all received items and use itemID directly
-                var receivedItems = session.Items.AllItemsReceived
-                    .Select(item => (int)item.ItemId)
-                    .Where(id =>
-                        !ProgressionMapping.speedUpgradeMapping.ContainsKey(id) // not a speed upgrade
-                     && !trapIDs.Contains(id)               // not a trap
-                    )
-                    .ToList();
-
-            // Log filtered items
-            Logger.LogInfo($"[QueueItemsFromReceivedPool] Non-speed item count: {receivedItems.Count}");
-
-                if (receivedItems.Count == 0)
-                {
-                    Logger.LogWarning("[QueueItemsFromReceivedPool] No valid non-speed, non-trap items available to queue for next run.");
-                    return;
-                }
-
-                // Randomly select 'count' items (or all if less than count)
-                var random = new System.Random();
-                var selectedItems = receivedItems.OrderBy(_ => random.Next()).Take(count).ToList();
-
-                foreach (int itemId in selectedItems)
-                {
-                    Logger.LogInfo($"[QueueItemsFromReceivedPool] Queuing item ID {itemId} for next run.");
-                    spawnQueue.Enqueue(CreateItemInfoForQueue(itemId));
-                }
-
-                Logger.LogInfo($"[QueueItemsFromReceivedPool] {selectedItems.Count} items added to spawn queue.");
+                Logger.LogError("Session or session items are null. Cannot retrieve received items.");
+                return;
             }
+
+            HashSet<int> trapIDs = new HashSet<int>(ProgressionMapping.trapDictionary.Keys);
+
+            // Log all received items from Archipelago
+            Logger.LogInfo("[QueueItemsFromReceivedPool] Total received items count: " + session.Items.AllItemsReceived.Count);
+
+            if (session.Items.AllItemsReceived.Count == 0)
+            {
+                Logger.LogWarning("[QueueItemsFromReceivedPool] No items have been received in this session.");
+                return;
+            }
+
+            // Correctly use item.ItemId from ItemInfo
+            var receivedItems = session.Items.AllItemsReceived
+                .Select(item => (int)item.ItemId)
+                .Where(id =>
+                    !ProgressionMapping.speedUpgradeMapping.ContainsKey(id) &&
+                    !trapIDs.Contains(id)
+                )
+                .ToList();
+
+            Logger.LogInfo("[QueueItemsFromReceivedPool] Non-speed, non-trap item count: " + receivedItems.Count);
+
+            if (receivedItems.Count == 0)
+            {
+                Logger.LogWarning("[QueueItemsFromReceivedPool] No valid non-speed, non-trap items available to queue for next run.");
+                return;
+            }
+
+            var random = new System.Random();
+            var selectedItems = receivedItems.OrderBy(_ => random.Next()).Take(count).ToList();
+
+            foreach (int itemId in selectedItems)
+            {
+                Logger.LogInfo("[QueueItemsFromReceivedPool] Queuing item ID " + itemId + " for next run.");
+                spawnQueue.Enqueue(CreateItemInfoForQueue(itemId));
+            }
+
+            Logger.LogInfo("[QueueItemsFromReceivedPool] " + selectedItems.Count + " items added to spawn queue.");
+        }
+
 
         private void QueueItemsForNextRun(int count)
         {
@@ -705,22 +737,32 @@ namespace KitchenPlateupAP
         {
             int checkId = (int)info.ItemId;
 
-            if (!receivedItemPool.Contains(checkId))
+            // Check persistently with Archipelago if item is still valid
+            string itemName = session.Items.GetItemName(checkId);
+            if (string.IsNullOrEmpty(itemName))
             {
-                Logger.LogWarning($"[Spawn] Skipping expired item ID: {checkId}");
+                Logger.LogWarning("[Spawn] Skipping expired or invalid item ID: " + checkId);
                 return;
             }
 
-            Logger.LogInfo($"[Spawn] Processing item ID: {checkId}");
+            Logger.LogInfo("[Spawn] Processing item ID: " + checkId);
 
             // Handle speed upgrades
             if (ProgressionMapping.speedUpgradeMapping.ContainsKey(checkId))
             {
-                if (movementSpeedTier < speedTiers.Length - 1)
+                string upgradeType = ProgressionMapping.speedUpgradeMapping[checkId];
+
+                if (upgradeType == "Speed Upgrade Player" && movementSpeedTier < speedTiers.Length - 1)
                 {
                     movementSpeedTier++;
                     movementSpeedMod = speedTiers[movementSpeedTier];
-                    Logger.LogInfo($"{ProgressionMapping.speedUpgradeMapping[checkId]} applied. Movement speed now at tier {movementSpeedTier} (multiplier = {movementSpeedMod}).");
+                    Logger.LogInfo(upgradeType + " applied. Movement speed now at tier " + movementSpeedTier + " (multiplier = " + movementSpeedMod + ").");
+                }
+                else if (upgradeType == "Speed Upgrade Appliance" && applianceSpeedTier < applianceSpeedTiers.Length - 1)
+                {
+                    applianceSpeedTier++;
+                    applianceSpeedMod = applianceSpeedTiers[applianceSpeedTier];
+                    Logger.LogInfo(upgradeType + " applied. Appliance speed now at tier " + applianceSpeedTier + " (multiplier = " + applianceSpeedMod + ").");
                 }
                 return;
             }
@@ -1006,6 +1048,61 @@ namespace KitchenPlateupAP
             }
         }
 
+        private void ApplyApplianceSpeedModifiers()
+        {
+            if (!HasSingleton<SIsDayTime>())
+                return;
+
+            // Get all appliances
+            EntityQuery applianceQuery = GetEntityQuery(typeof(CAppliance));
+            using (var appliances = applianceQuery.ToEntityArray(Allocator.TempJob))
+            {
+                foreach (var applianceEntity in appliances)
+                {
+                    // Check if appliance already has a speed modifier, if not, add one
+                    if (!EntityManager.HasComponent<CApplianceSpeedModifier>(applianceEntity))
+                    {
+                        EntityManager.AddComponentData(applianceEntity, new CApplianceSpeedModifier
+                        {
+                            AffectsAllProcesses = true,
+                            Speed = applianceSpeedMod - 1f, // if speed tier is 1.5, you set 0.5 (50% faster)
+                            BadSpeed = 0f
+                        });
+                    }
+                    else
+                    {
+                        // Update existing modifier
+                        var speedMod = EntityManager.GetComponentData<CApplianceSpeedModifier>(applianceEntity);
+                        speedMod.Speed = applianceSpeedMod - 1f;
+                        EntityManager.SetComponentData(applianceEntity, speedMod);
+                    }
+                }
+            }
+        }
+
+        public void IncreaseApplianceSpeedTier()
+        {
+            if (applianceSpeedTier < applianceSpeedTiers.Length - 1)
+            {
+                applianceSpeedTier++;
+                applianceSpeedMod = applianceSpeedTiers[applianceSpeedTier];
+                Logger.LogInfo($"Appliance speed tier upgraded to {applianceSpeedTier}, multiplier set to {applianceSpeedMod}");
+            }
+            else
+            {
+                Logger.LogInfo("Appliance speed is already at maximum tier.");
+            }
+        }
+
+        public static Dictionary<int, float> originalApplianceSpeeds = new Dictionary<int, float>();
+
+        public static float GetSpeedMultiplier(Appliance appliance)
+        {
+            int tierIndex = Mathf.Clamp(applianceSpeedTier, 0, applianceSpeedTiers.Length - 1);
+            float multiplier = applianceSpeedTiers[tierIndex];
+
+            return Mathf.Clamp(multiplier, 0.1f, 2f);
+        }
 
         private void TrySubscribeItemsSync()
         {

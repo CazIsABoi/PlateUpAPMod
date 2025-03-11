@@ -43,7 +43,7 @@ namespace KitchenPlateupAP
     {
         public const string MOD_GUID = "com.caz.plateupap";
         public const string MOD_NAME = "PlateupAP";
-        public const string MOD_VERSION = "0.1.6.4";
+        public const string MOD_VERSION = "0.1.7";
         public const string MOD_AUTHOR = "Caz";
         public const string MOD_GAMEVERSION = ">=1.1.9";
 
@@ -96,7 +96,7 @@ namespace KitchenPlateupAP
         private static int movementSpeedTier = 0;
 
         //Modifying Appliance Values
-        public static readonly float[] applianceSpeedTiers = { 0.75f, 0.80f, 0.9f, 1f, 1.1f };
+        public static readonly float[] applianceSpeedTiers = { -0.4f, -0.25f, -0.15f, 0f, 0.2f };
         public static int applianceSpeedTier = 0;
 
 
@@ -197,6 +197,35 @@ namespace KitchenPlateupAP
 
         protected override void OnPostActivate(KitchenMods.Mod mod)
         {
+            try
+            {
+                if (World != null)
+                {
+                    World.GetOrCreateSystem<ApplyApplianceSpeedModifierSystem>().Enabled = true;
+                    Mod.Logger.LogInfo("ApplianceSpeedModifierSystem enabled.");
+                }
+                else
+                {
+                    Mod.Logger.LogError("World is null in OnPostActivate!");
+                }
+
+                // Ensure preference manager is initialized
+                if (PrefManager == null)
+                {
+                    PrefManager = new PreferenceSystemManager(MOD_GUID, MOD_NAME);
+                }
+
+                // Ensure session is not null before using it
+                if (ArchipelagoConnectionManager.ConnectionSuccessful)
+                {
+                    RetrieveSlotData();
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[PlateupAP] Error in OnPostActivate: {ex.Message}\n{ex.StackTrace}");
+            }
+
             PrefManager = new PreferenceSystemManager(MOD_GUID, MOD_NAME);
             PrefManager
                 .AddLabel("Archipelago Configuration")
@@ -572,7 +601,6 @@ namespace KitchenPlateupAP
             // 2) Check if it's a SPEED UPGRADE (player or appliance) from the same dictionary
             if (ProgressionMapping.speedUpgradeMapping.TryGetValue(checkId, out string upgradeName))
             {
-                // Example: 10 => "Speed Upgrade Player", 11 => "Speed Upgrade Appliance"
                 if (upgradeName == "Speed Upgrade Player")
                 {
                     // INCREMENT player speed tier
@@ -598,7 +626,6 @@ namespace KitchenPlateupAP
                 }
             }
 
-            // 3) If neither trap nor speed upgrade => store in pool and queue it
             receivedItemPool.Add(checkId);
             Logger.LogInfo($"[OnItemReceived] Item ID {checkId} added to receivedItemPool.");
 
@@ -1053,44 +1080,51 @@ namespace KitchenPlateupAP
             if (!HasSingleton<SIsDayTime>())
                 return;
 
-            // Get all appliances
-            EntityQuery applianceQuery = GetEntityQuery(typeof(CAppliance));
-            using (var appliances = applianceQuery.ToEntityArray(Allocator.TempJob))
+            float speedMultiplier = applianceSpeedMod;
+
+            // Get all appliances that process items
+            EntityQuery processingApplianceQuery = GetEntityQuery(ComponentType.ReadOnly<CItemUndergoingProcess>());
+            var processingAppliances = processingApplianceQuery.ToEntityArray(Allocator.TempJob);
+
+            var entityManager = EntityManager;
+            for (int i = 0; i < processingAppliances.Length; i++)
             {
-                foreach (var applianceEntity in appliances)
-                {
-                    // Check if appliance already has a speed modifier, if not, add one
-                    if (!EntityManager.HasComponent<CApplianceSpeedModifier>(applianceEntity))
-                    {
-                        EntityManager.AddComponentData(applianceEntity, new CApplianceSpeedModifier
-                        {
-                            AffectsAllProcesses = true,
-                            Speed = applianceSpeedMod - 1f, // if speed tier is 1.5, you set 0.5 (50% faster)
-                            BadSpeed = 0f
-                        });
-                    }
-                    else
-                    {
-                        // Update existing modifier
-                        var speedMod = EntityManager.GetComponentData<CApplianceSpeedModifier>(applianceEntity);
-                        speedMod.Speed = applianceSpeedMod - 1f;
-                        EntityManager.SetComponentData(applianceEntity, speedMod);
-                    }
-                }
+                Entity itemEntity = processingAppliances[i];
+
+                if (!entityManager.HasComponent<CItemUndergoingProcess>(itemEntity))
+                    continue;
+
+                var itemProcess = entityManager.GetComponentData<CItemUndergoingProcess>(itemEntity);
+                Entity applianceEntity = itemProcess.Appliance;
+
+                // Check if appliance has a speed modifier component
+                if (!entityManager.HasComponent<CApplianceSpeedModifier>(applianceEntity))
+                    continue;
+
+                var speedMod = entityManager.GetComponentData<CApplianceSpeedModifier>(applianceEntity);
+                float originalSpeed = speedMod.Speed;
+
+                // Modify the speed
+                speedMod.Speed *= speedMultiplier;
+                entityManager.SetComponentData(applianceEntity, speedMod);
+
+                Mod.Logger.LogInfo($"[ApplyApplianceSpeedModifiers] Applied multiplier {speedMultiplier} to appliance {applianceEntity.Index}, original speed {originalSpeed}, new speed {speedMod.Speed}");
             }
+
+            processingAppliances.Dispose();
         }
+
 
         public void IncreaseApplianceSpeedTier()
         {
             if (applianceSpeedTier < applianceSpeedTiers.Length - 1)
             {
                 applianceSpeedTier++;
-                applianceSpeedMod = applianceSpeedTiers[applianceSpeedTier];
                 Logger.LogInfo($"Appliance speed tier upgraded to {applianceSpeedTier}, multiplier set to {applianceSpeedMod}");
             }
             else
             {
-                Logger.LogInfo("Appliance speed is already at maximum tier.");
+                Logger.LogWarning("Appliance speed is already at maximum tier.");
             }
         }
 

@@ -19,15 +19,15 @@ namespace KitchenPlateupAP
         protected override void Initialise()
         {
             base.Initialise();
-            ApplianceQuery = GetEntityQuery(typeof(CAppliance)); // Query appliances
+            ApplianceQuery = GetEntityQuery(typeof(CAppliance));
         }
 
         protected override void OnUpdate()
         {
             if (!HasSingleton<SIsDayTime>())
-                return; // Only apply speed modifiers during the day
+                return;
 
-            float speedMultiplier = Mod.applianceSpeedMod; // Get the modifier from Mod.cs
+            float speedMultiplier = Mod.applianceSpeedMod;
 
             using var appliances = ApplianceQuery.ToEntityArray(Allocator.Temp);
 
@@ -35,31 +35,28 @@ namespace KitchenPlateupAP
             {
                 Entity applianceEntity = appliances[i];
 
-                // Ensure the appliance has the speed modifier component
                 if (!EntityManager.HasComponent<CApplianceSpeedModifier>(applianceEntity))
                 {
                     EntityManager.AddComponentData(applianceEntity, new CApplianceSpeedModifier
                     {
-                        AffectsAllProcesses = true, 
+                        AffectsAllProcesses = true,
                         Process = 0,
-                        Speed = speedMultiplier,
-                        BadSpeed = 1
+                        Speed = Mathf.Clamp(speedMultiplier, 0.1f, 2f), 
+                        BadSpeed = 1  // Keeping BadSpeed constant
                     });
 
-                    Debug.Log($"[PlateupAP] Applied appliance speed modifier {speedMultiplier} to appliance {applianceEntity.Index}");
+                    Mod.Logger.LogInfo($"[PlateupAP] Applied initial appliance speed multiplier {speedMultiplier} to appliance {applianceEntity.Index}");
                 }
                 else
                 {
                     var existingMod = EntityManager.GetComponentData<CApplianceSpeedModifier>(applianceEntity);
 
-                    // Prevent infinite multiplication issue
                     if (existingMod.Speed != speedMultiplier)
                     {
-                        existingMod.Speed = speedMultiplier;
-                        existingMod.BadSpeed = speedMultiplier * 1.5f;
+                        existingMod.Speed = Mathf.Clamp(speedMultiplier, 0.1f, 2f);  // Ensure valid range
                         EntityManager.SetComponentData(applianceEntity, existingMod);
 
-                        Debug.Log($"[PlateupAP] Updated appliance speed modifier to {speedMultiplier} for appliance {applianceEntity.Index}");
+                        Mod.Logger.LogInfo($"[PlateupAP] Updated appliance {applianceEntity.Index} speed to {speedMultiplier}, keeping BadSpeed {existingMod.BadSpeed}");
                     }
                 }
             }

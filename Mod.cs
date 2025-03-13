@@ -96,7 +96,7 @@ namespace KitchenPlateupAP
         private static int movementSpeedTier = 0;
 
         //Modifying Appliance Values
-        public static readonly float[] applianceSpeedTiers = { -0.4f, -0.25f, -0.15f, 0f, 0.2f };
+        public static readonly float[] applianceSpeedTiers = { 0.6f, 0.75f, 0.85f, 1.0f, 1.2f };
         public static int applianceSpeedTier = 0;
 
 
@@ -209,16 +209,15 @@ namespace KitchenPlateupAP
                     Mod.Logger.LogError("World is null in OnPostActivate!");
                 }
 
-                // Ensure preference manager is initialized
                 if (PrefManager == null)
                 {
                     PrefManager = new PreferenceSystemManager(MOD_GUID, MOD_NAME);
                 }
 
-                // Ensure session is not null before using it
                 if (ArchipelagoConnectionManager.ConnectionSuccessful)
                 {
                     RetrieveSlotData();
+                    ProcessAllReceivedItems();
                 }
             }
             catch (Exception ex)
@@ -301,6 +300,9 @@ namespace KitchenPlateupAP
             {
                 RetrieveSlotData(); // Fetch slot data
 
+                Logger.LogInfo("[Archipelago] Re-processing all previously received items...");
+                ProcessAllReceivedItems();
+
                 if (!dishesMessageSent && selectedDishes.Count > 0)
                 {
                     SendSelectedDishesMessage();
@@ -317,6 +319,7 @@ namespace KitchenPlateupAP
                 }
             }
         }
+
 
         private void EnableDeathLink()
         {
@@ -631,21 +634,25 @@ namespace KitchenPlateupAP
 
             Logger.LogInfo($"[OnItemReceived] Queuing item ID: {checkId}");
 
-            // If we are currently in PREP phase (night), spawn immediately
-            bool currentlyPrep = HasSingleton<SIsNightTime>();
-            if (currentlyPrep)
+            if (!spawnQueue.Any(x => (int)x.ItemId == checkId))
             {
-                Logger.LogInfo($"[OnItemReceived] Currently in prep phase; queueing item ID: {checkId} for immediate spawn.");
-                spawnQueue.Enqueue(info);
+                bool currentlyPrep = HasSingleton<SIsNightTime>();
+                if (currentlyPrep)
+                {
+                    Logger.LogInfo($"[OnItemReceived] Currently in prep phase; queueing item ID: {checkId} for immediate spawn.");
+                    spawnQueue.Enqueue(info);
+                }
+                else
+                {
+                    Logger.LogInfo($"[OnItemReceived] Item ID {checkId} is queued for the next run.");
+                    spawnQueue.Enqueue(info);
+                }
             }
             else
             {
-                // Otherwise, queue for the next run
-                spawnQueue.Enqueue(info);
-                Logger.LogInfo($"[OnItemReceived] Item ID {checkId} is queued for the next run.");
+                Logger.LogInfo($"[OnItemReceived] Item ID {checkId} is already in spawnQueue. Skipping duplicate.");
             }
         }
-
 
         private ItemInfo CreateItemInfoForQueue(int itemId)
         {
@@ -661,6 +668,45 @@ namespace KitchenPlateupAP
 
             // Construct the ItemInfo object with the networkItem
             return new ItemInfo(networkItem, "", "", null, null);
+        }
+
+        private void ProcessAllReceivedItems()
+        {
+            if (session == null || session.Items == null)
+            {
+                Logger.LogError("Session items not yet initialized, cannot process received items.");
+                return;
+            }
+
+            Logger.LogInfo($"[ProcessAllReceivedItems] Processing {session.Items.AllItemsReceived.Count} past items...");
+
+            foreach (var item in session.Items.AllItemsReceived)
+            {
+                int itemId = (int)item.ItemId;
+
+                // Check if it's a Speed Upgrade
+                if (ProgressionMapping.speedUpgradeMapping.TryGetValue(itemId, out string upgradeType))
+                {
+                    if (upgradeType == "Speed Upgrade Player")
+                    {
+                        if (movementSpeedTier < speedTiers.Length - 1)
+                        {
+                            movementSpeedTier++;
+                            movementSpeedMod = speedTiers[movementSpeedTier];
+                            Logger.LogInfo($"[ProcessAllReceivedItems] Re-applied Player Speed Upgrade. Tier: {movementSpeedTier} (Multiplier: {movementSpeedMod})");
+                        }
+                    }
+                    else if (upgradeType == "Speed Upgrade Appliance")
+                    {
+                        if (applianceSpeedTier < applianceSpeedTiers.Length - 1)
+                        {
+                            applianceSpeedTier++;
+                            applianceSpeedMod = applianceSpeedTiers[applianceSpeedTier];
+                            Logger.LogInfo($"[ProcessAllReceivedItems] Re-applied Appliance Speed Upgrade. Tier: {applianceSpeedTier} (Multiplier: {applianceSpeedMod})");
+                        }
+                    }
+                }
+            }
         }
 
 
@@ -729,7 +775,6 @@ namespace KitchenPlateupAP
             Logger.LogInfo("[QueueItemsFromReceivedPool] " + selectedItems.Count + " items added to spawn queue.");
         }
 
-
         private void QueueItemsForNextRun(int count)
         {
             if (receivedItemPool.Count == 0)
@@ -753,10 +798,16 @@ namespace KitchenPlateupAP
 
             foreach (int itemId in selectedItems)
             {
-                Logger.LogInfo($"Queuing item ID {itemId} for next run.");
+                if (!spawnQueue.Any(x => (int)x.ItemId == itemId))
+                {
+                    Logger.LogInfo($"Queuing item ID {itemId} for next run.");
+                    spawnQueue.Enqueue(CreateItemInfoForQueue(itemId));
+                }
+                else
+                {
+                    Logger.LogInfo($"Item ID {itemId} already queued. Skipping.");
+                }
 
-                // Use the helper function to create ItemInfo
-                spawnQueue.Enqueue(CreateItemInfoForQueue(itemId));
             }
         }
 
@@ -854,7 +905,7 @@ namespace KitchenPlateupAP
 
         private void IgniteAllAppliances()
         {
-            Logger.LogWarning("[Trap] Igniting all appliances...");
+            Logger.LogInfo("[Trap] Igniting all appliances...");
 
             EntityQuery applianceQuery = GetEntityQuery(new QueryHelper()
                 .All(typeof(CAppliance))
@@ -1082,7 +1133,6 @@ namespace KitchenPlateupAP
 
             float speedMultiplier = applianceSpeedMod;
 
-            // Get all appliances that process items
             EntityQuery processingApplianceQuery = GetEntityQuery(ComponentType.ReadOnly<CItemUndergoingProcess>());
             var processingAppliances = processingApplianceQuery.ToEntityArray(Allocator.TempJob);
 
@@ -1104,15 +1154,16 @@ namespace KitchenPlateupAP
                 var speedMod = entityManager.GetComponentData<CApplianceSpeedModifier>(applianceEntity);
                 float originalSpeed = speedMod.Speed;
 
-                // Modify the speed
-                speedMod.Speed *= speedMultiplier;
+                // 🛠️ FIX: Set the speed directly instead of multiplying
+                speedMod.Speed = speedMultiplier;
                 entityManager.SetComponentData(applianceEntity, speedMod);
 
-                Mod.Logger.LogInfo($"[ApplyApplianceSpeedModifiers] Applied multiplier {speedMultiplier} to appliance {applianceEntity.Index}, original speed {originalSpeed}, new speed {speedMod.Speed}");
+                Mod.Logger.LogInfo($"[ApplyApplianceSpeedModifiers] Set appliance {applianceEntity.Index} speed to {speedMultiplier}, previous speed {originalSpeed}");
             }
 
             processingAppliances.Dispose();
         }
+
 
 
         public void IncreaseApplianceSpeedTier()
@@ -1120,11 +1171,13 @@ namespace KitchenPlateupAP
             if (applianceSpeedTier < applianceSpeedTiers.Length - 1)
             {
                 applianceSpeedTier++;
-                Logger.LogInfo($"Appliance speed tier upgraded to {applianceSpeedTier}, multiplier set to {applianceSpeedMod}");
+                applianceSpeedMod = applianceSpeedTiers[applianceSpeedTier];
+
+                Debug.Log($"[Mod] Appliance speed upgraded to tier {applianceSpeedTier}, new speed multiplier = {applianceSpeedMod}");
             }
             else
             {
-                Logger.LogWarning("Appliance speed is already at maximum tier.");
+                Debug.LogWarning("[Mod] Appliance speed is already at maximum tier.");
             }
         }
 

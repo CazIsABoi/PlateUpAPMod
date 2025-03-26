@@ -43,7 +43,7 @@ namespace KitchenPlateupAP
     {
         public const string MOD_GUID = "com.caz.plateupap";
         public const string MOD_NAME = "PlateupAP";
-        public const string MOD_VERSION = "0.1.7";
+        public const string MOD_VERSION = "0.1.7.3.5";
         public const string MOD_AUTHOR = "Caz";
         public const string MOD_GAMEVERSION = ">=1.1.9";
 
@@ -58,7 +58,9 @@ namespace KitchenPlateupAP
         private static ArchipelagoSession session => ArchipelagoConnectionManager.Session;
         private Archipelago.MultiClient.Net.BounceFeatures.DeathLink.DeathLinkService deathLinkService;
         private int deathLinkBehavior = 0; // Default to "Reset Run"
-        private static int chosenGoal = 1;  // default to "Franchise Twice" if missing
+        private static int goal = 0;             // 0 = franchise_x_times, 1 = complete_x_days
+        private static int franchiseCount = 1;   // how many times to franchise
+        private static int dayCount = 1;        // how many days to complete
         private static List<string> selectedDishes = new List<string>();
         object rawGoal = null;
         private static bool dishesMessageSent = false;
@@ -66,6 +68,7 @@ namespace KitchenPlateupAP
         int itemsKeptPerRun = 5;
         public static int RandomTrapCardCount = 0;
         bool deathLinkResetToLastStarPending = false;
+        public static int applianceSpeedMode = 0;
 
         // Static day cycle and spawn state.
         private static int lastDay = 0;
@@ -81,6 +84,8 @@ namespace KitchenPlateupAP
         bool lost = false;
         bool franchised = false;
         private bool dayTransitionProcessed = false;
+        private static int overallDaysCompleted = 0;
+        private static int overallStarsEarned = 0;
 
         private static bool itemsEventSubscribed = false;
         private static Queue<ItemInfo> spawnQueue = new Queue<ItemInfo>();
@@ -96,13 +101,22 @@ namespace KitchenPlateupAP
         private static int movementSpeedTier = 0;
 
         //Modifying Appliance Values
-        public static readonly float[] applianceSpeedTiers = { 0.6f, 0.75f, 0.85f, 1.0f, 1.2f };
+        public static readonly float[] applianceSpeedTiers = { -0.25f, -0.15f, 0f, 0.1f, 0.2f };
         public static int applianceSpeedTier = 0;
+        public static readonly float[] chopSpeedTiers = { -0.25f, -0.15f, 0f, 0.1f, 0.2f };
+        public static int chopSpeedTier = 0;
+        public static readonly float[] cleanSpeedTiers = { -0.25f, -0.15f, 0f, 0.1f, 0.2f };
+        public static int cleanSpeedTier = 0;
+        public static readonly float[] cookSpeedTiers = { -0.25f, -0.15f, 0f, 0.1f, 0.2f };
+        public static int cookSpeedTier = 0;
 
 
         // Set initial multipliers from the tiers:
         public static float movementSpeedMod = speedTiers[movementSpeedTier];
         public static float applianceSpeedMod = applianceSpeedTiers[applianceSpeedTier];
+        public static float chopSpeedMod = chopSpeedTiers[chopSpeedTier];
+        public static float cookSpeedMod = cookSpeedTiers[cookSpeedTier];
+        public static float cleanSpeedMod = cleanSpeedTiers[cleanSpeedTier];
 
         public static class InputSourceIdentifier
         {
@@ -150,32 +164,54 @@ namespace KitchenPlateupAP
                     {
                         Logger.LogError($"[PlateupAP] Error parsing selected_dishes JSON: {ex.Message}");
                     }
+                }
 
-                    // Check if DeathLink is enabled
-                    if (slotData.TryGetValue("death_link", out object rawDeathLink))
+                if (slotData.TryGetValue("goal", out object rawGoal))
+                {
+                    goal = Convert.ToInt32(rawGoal);
+                    Logger.LogInfo($"[PlateupAP] Goal set to: {goal} (0=franchise_x_times, 1=complete_x_days)");
+                }
+
+                if (slotData.TryGetValue("franchise_count", out object rawFranchiseCount))
+                {
+                    franchiseCount = Convert.ToInt32(rawFranchiseCount);
+                    Logger.LogInfo($"[PlateupAP] Franchise count goal: {franchiseCount}");
+                }
+
+                if (slotData.TryGetValue("day_count", out object rawDayCount))
+                {
+                    dayCount = Convert.ToInt32(rawDayCount);
+                    Logger.LogInfo($"[PlateupAP] Day count goal: {dayCount}");
+                }
+
+                // Check if DeathLink is enabled
+                if (slotData.TryGetValue("death_link", out object rawDeathLink))
+                {
+                    bool deathLinkEnabled = Convert.ToBoolean(rawDeathLink);
+                    Logger.LogInfo($"[PlateupAP] DeathLink enabled: {deathLinkEnabled}");
+
+                    if (deathLinkEnabled)
                     {
-                        bool deathLinkEnabled = Convert.ToBoolean(rawDeathLink);
-                        Logger.LogInfo($"[PlateupAP] DeathLink enabled: {deathLinkEnabled}");
-
-                        if (deathLinkEnabled)
-                        {
-                            EnableDeathLink(); // Call function to activate DeathLink
-                        }
+                        EnableDeathLink(); 
                     }
+                }
 
-                    // Retrieve DeathLink behavior setting
-                    if (slotData.TryGetValue("death_link_behavior", out object rawBehavior))
-                    {
-                        deathLinkBehavior = Convert.ToInt32(rawBehavior);
-                        Logger.LogInfo($"[PlateupAP] DeathLink Behavior Set To: {deathLinkBehavior}");
-                    }
+                if (slotData.TryGetValue("death_link_behavior", out object rawBehavior))
+                {
+                    deathLinkBehavior = Convert.ToInt32(rawBehavior);
+                    Logger.LogInfo($"[PlateupAP] DeathLink Behavior Set To: {deathLinkBehavior}");
+                }
 
-                    // Retrieve Items Kept setting
-                    if (slotData.TryGetValue("items_kept", out object rawItemsKept))
-                    {
-                        itemsKeptPerRun = Convert.ToInt32(rawItemsKept);
-                        Logger.LogInfo($"[PlateupAP] Items Kept Per Run: {itemsKeptPerRun}");
-                    }
+                if (slotData.TryGetValue("items_kept", out object rawItemsKept))
+                {
+                    itemsKeptPerRun = Convert.ToInt32(rawItemsKept);
+                    Logger.LogInfo($"[PlateupAP] Items Kept Per Run: {itemsKeptPerRun}");
+                }
+
+                if (slotData.TryGetValue("appliance_speed_mode", out object rawApplianceSpeedMode))
+                {
+                    applianceSpeedMode = Convert.ToInt32(rawApplianceSpeedMode);
+                    Logger.LogInfo($"[PlateupAP] Appliance Speed Mode set to {applianceSpeedMode} (0=grouped, 1=separate)");
                 }
             }
         }
@@ -202,6 +238,9 @@ namespace KitchenPlateupAP
                 if (World != null)
                 {
                     World.GetOrCreateSystem<ApplyApplianceSpeedModifierSystem>().Enabled = true;
+                    World.GetOrCreateSystem<ApplyCleanSpeedSystem>().Enabled = true;
+                    World.GetOrCreateSystem<ApplyChopSpeedSystem>().Enabled = true;
+                    World.GetOrCreateSystem<ApplyCookSpeedSystem>().Enabled = true;
                     Mod.Logger.LogInfo("ApplianceSpeedModifierSystem enabled.");
                 }
                 else
@@ -434,7 +473,7 @@ namespace KitchenPlateupAP
             franchiseScreen = HasSingleton<SFranchiseBuilderMarker>();
             loseScreen = HasSingleton<SGameOver>();
             inLobby = HasSingleton<SFranchiseMarker>();
-            if(HasSingleton<SKitchenMarker>())
+            if (HasSingleton<SKitchenMarker>())
             {
                 UpdateDayCycle();
                 CheckReceivedItems();
@@ -445,22 +484,27 @@ namespace KitchenPlateupAP
                 return;
             }
 
-            if (franchiseScreen && !franchised)
+            else if (franchiseScreen && !franchised)
             {
                 Logger.LogInfo("You franchised!");
                 HandleGameReset();
-                lastDay = 0;
-                timesFranchised++;
-                dayID = 100000 * timesFranchised;
-                session.Locations.CompleteLocationChecks(dayID);
                 franchised = true;
 
-                Logger.LogInfo($"User has franchised {timesFranchised - 1} times. Goal is {chosenGoal + 1} franchises...");
-
-                if ((timesFranchised - 1) == (chosenGoal + 1))
+                // Only do these if goal=0
+                if (goal == 0)
                 {
-                    Logger.LogInfo("Franchise goal reached! Sending goal complete.");
-                    SendGoalComplete();
+                    lastDay = 0;
+                    timesFranchised++;
+                    dayID = 100000 * timesFranchised;
+                    session.Locations.CompleteLocationChecks(dayID);
+
+                    Logger.LogInfo($"User has franchised {timesFranchised} times, goal is {franchiseCount} times.");
+
+                    if (timesFranchised >= franchiseCount)
+                    {
+                        Logger.LogInfo("Franchise goal reached! Sending goal complete.");
+                        SendGoalComplete();
+                    }
                 }
             }
 
@@ -492,7 +536,7 @@ namespace KitchenPlateupAP
 
                 if (spawnQueue.Count == 0)
                 {
-                    QueueItemsFromReceivedPool(itemsKeptPerRun); 
+                    QueueItemsFromReceivedPool(itemsKeptPerRun);
                     Logger.LogInfo($"[Lobby] {spawnQueue.Count} items queued for next run.");
                 }
                 else
@@ -519,48 +563,48 @@ namespace KitchenPlateupAP
             // --- Dish Card Reading Logic ---
             // Create the query for player entities with CPlayer and CItemHolder.
             EntityQuery playersWithItems = GetEntityQuery(new QueryHelper().All(typeof(CPlayer), typeof(CItemHolder)));
-                using var playerEntities = playersWithItems.ToEntityArray(Allocator.Temp);
+            using var playerEntities = playersWithItems.ToEntityArray(Allocator.Temp);
 
-                for (int i = 0; i < playerEntities.Length; i++)
+            for (int i = 0; i < playerEntities.Length; i++)
+            {
+                Entity player = playerEntities[i];
+                CItemHolder holder = EntityManager.GetComponentData<CItemHolder>(player);
+
+                if (holder.HeldItem != Entity.Null)
                 {
-                    Entity player = playerEntities[i];
-                    CItemHolder holder = EntityManager.GetComponentData<CItemHolder>(player);
-
-                    if (holder.HeldItem != Entity.Null)
+                    Entity heldItem = holder.HeldItem;
+                    if (EntityManager.HasComponent<CDishChoice>(heldItem))
                     {
-                        Entity heldItem = holder.HeldItem;
-                        if (EntityManager.HasComponent<CDishChoice>(heldItem))
+                        CDishChoice dishChoice = EntityManager.GetComponentData<CDishChoice>(heldItem);
+                        int newDishID = dishChoice.Dish; // Get the new selected dish ID
+
+                        // Check if the dish has changed while in the lobby
+                        if (inLobby && newDishID != DishId && newDishID != 0)
                         {
-                            CDishChoice dishChoice = EntityManager.GetComponentData<CDishChoice>(heldItem);
-                            int newDishID = dishChoice.Dish; // Get the new selected dish ID
+                            DishId = newDishID; // Update stored dish ID
+                            loggedCardThisCycle = false;
 
-                            // Check if the dish has changed while in the lobby
-                            if (inLobby && newDishID != DishId && newDishID != 0)
+                            // Retrieve the Dish game data object.
+                            Dish dishData = (Dish)GDOUtils.GetExistingGDO(DishId);
+                            Logger.LogInfo($"New selected dish in HQ: {dishData.Name}");
+
+                            if (ProgressionMapping.dishDictionary.TryGetValue(DishId, out string dishName) && !loggedCardThisCycle)
                             {
-                                DishId = newDishID; // Update stored dish ID
-                                loggedCardThisCycle = false;
-
-                                // Retrieve the Dish game data object.
-                                Dish dishData = (Dish)GDOUtils.GetExistingGDO(DishId);
-                                Logger.LogInfo($"New selected dish in HQ: {dishData.Name}");
-
-                                if (ProgressionMapping.dishDictionary.TryGetValue(DishId, out string dishName) && !loggedCardThisCycle)
-                                {
-                                    Logger.LogInfo($"Updated dish (via dictionary): {dishName}");
-                                    loggedCardThisCycle = true;
-                                }
-                                else if (!loggedCardThisCycle)
-                                {
-                                    Logger.LogInfo($"Dish with ID {DishId} not found in dictionary; using game data: {dishData.Name}");
-                                    loggedCardThisCycle = true;
-                                }
+                                Logger.LogInfo($"Updated dish (via dictionary): {dishName}");
+                                loggedCardThisCycle = true;
                             }
-                            break;
+                            else if (!loggedCardThisCycle)
+                            {
+                                Logger.LogInfo($"Dish with ID {DishId} not found in dictionary; using game data: {dishData.Name}");
+                                loggedCardThisCycle = true;
+                            }
                         }
+                        break;
                     }
-                }   
-        ApplySpeedModifiers();
-        ApplyApplianceSpeedModifiers();
+                }
+            }
+            ApplySpeedModifiers();
+            ApplyApplianceSpeedModifiers();
         }
 
         // Spawning Items
@@ -593,39 +637,75 @@ namespace KitchenPlateupAP
             int checkId = (int)info.ItemId;
             Logger.LogInfo($"[OnItemReceived] Received check ID: {checkId}");
 
-            // 1) Check if it's a TRAP
             if (ProgressionMapping.trapDictionary.ContainsKey(checkId))
             {
                 Logger.LogWarning($"[OnItemReceived] Received TRAP: {ProgressionMapping.trapDictionary[checkId]}!");
                 ApplyTrapEffect(checkId);
-                return; // Do not add to pool or queue
+                return;
             }
 
-            // 2) Check if it's a SPEED UPGRADE (player or appliance) from the same dictionary
             if (ProgressionMapping.speedUpgradeMapping.TryGetValue(checkId, out string upgradeName))
             {
-                if (upgradeName == "Speed Upgrade Player")
+                switch (upgradeName)
                 {
-                    // INCREMENT player speed tier
-                    if (movementSpeedTier < speedTiers.Length - 1)
-                    {
-                        movementSpeedTier++;
-                        movementSpeedMod = speedTiers[movementSpeedTier];
-                        Logger.LogInfo($"[OnItemReceived] Player speed upgraded to tier {movementSpeedTier}. Multiplier = {movementSpeedMod}");
-                    }
-                    else
-                    {
-                        Logger.LogInfo("[OnItemReceived] Player speed already at max tier.");
-                    }
+                    case "Speed Upgrade Player":
+                        if (movementSpeedTier < speedTiers.Length - 1)
+                        {
+                            movementSpeedTier++;
+                            movementSpeedMod = speedTiers[movementSpeedTier];
+                            Logger.LogInfo($"[OnItemReceived] Player speed upgraded to tier {movementSpeedTier}. Multiplier = {movementSpeedMod}");
+                        }
+                        else
+                        {
+                            Logger.LogInfo("[OnItemReceived] Player speed already at max tier.");
+                        }
+                        Logger.LogInfo("[OnItemReceived] Skipping player speed item for next run.");
+                        return;
 
-                    Logger.LogInfo("[OnItemReceived] Skipping player speed item for next run.");
-                    return;
-                }
-                else if (upgradeName == "Speed Upgrade Appliance")
-                {
-                    Mod.Instance.IncreaseApplianceSpeedTier();
-                    Logger.LogInfo($"[OnItemReceived] Appliance speed item used (ID {checkId}). Skipping for next run.");
-                    return;
+                    case "Speed Upgrade Appliance":
+                        // The old logic you already have:
+                        Mod.Instance.IncreaseApplianceSpeedTier();
+                        Logger.LogInfo($"[OnItemReceived] Appliance speed item used (ID {checkId}). Skipping for next run.");
+                        return;
+
+                    case "Speed Upgrade Cook":
+                        if (cookSpeedTier < cookSpeedTiers.Length - 1)
+                        {
+                            cookSpeedTier++;
+                            cookSpeedMod = cookSpeedTiers[cookSpeedTier];
+                            Logger.LogInfo($"[OnItemReceived] Cook speed upgraded to tier {cookSpeedTier}. Multiplier = {cookSpeedMod}");
+                        }
+                        else
+                        {
+                            Logger.LogInfo("[OnItemReceived] Cook speed is already at maximum tier.");
+                        }
+                        return;
+
+                    case "Speed Upgrade Chop":
+                        if (chopSpeedTier < chopSpeedTiers.Length - 1)
+                        {
+                            chopSpeedTier++;
+                            chopSpeedMod = chopSpeedTiers[chopSpeedTier];
+                            Logger.LogInfo($"[OnItemReceived] Chop/Knead speed upgraded to tier {chopSpeedTier}. Multiplier = {chopSpeedMod}");
+                        }
+                        else
+                        {
+                            Logger.LogInfo("[OnItemReceived] Chop speed is already at maximum tier.");
+                        }
+                        return;
+
+                    case "Speed Upgrade Clean":
+                        if (cleanSpeedTier < cleanSpeedTiers.Length - 1)
+                        {
+                            cleanSpeedTier++;
+                            cleanSpeedMod = cleanSpeedTiers[cleanSpeedTier];
+                            Logger.LogInfo($"[OnItemReceived] Clean speed upgraded to tier {cleanSpeedTier}. Multiplier = {cleanSpeedMod}");
+                        }
+                        else
+                        {
+                            Logger.LogInfo("[OnItemReceived] Clean speed is already at maximum tier.");
+                        }
+                        return;
                 }
             }
 
@@ -684,31 +764,58 @@ namespace KitchenPlateupAP
             {
                 int itemId = (int)item.ItemId;
 
-                // Check if it's a Speed Upgrade
                 if (ProgressionMapping.speedUpgradeMapping.TryGetValue(itemId, out string upgradeType))
                 {
-                    if (upgradeType == "Speed Upgrade Player")
+                    switch (upgradeType)
                     {
-                        if (movementSpeedTier < speedTiers.Length - 1)
-                        {
-                            movementSpeedTier++;
-                            movementSpeedMod = speedTiers[movementSpeedTier];
-                            Logger.LogInfo($"[ProcessAllReceivedItems] Re-applied Player Speed Upgrade. Tier: {movementSpeedTier} (Multiplier: {movementSpeedMod})");
-                        }
-                    }
-                    else if (upgradeType == "Speed Upgrade Appliance")
-                    {
-                        if (applianceSpeedTier < applianceSpeedTiers.Length - 1)
-                        {
-                            applianceSpeedTier++;
-                            applianceSpeedMod = applianceSpeedTiers[applianceSpeedTier];
-                            Logger.LogInfo($"[ProcessAllReceivedItems] Re-applied Appliance Speed Upgrade. Tier: {applianceSpeedTier} (Multiplier: {applianceSpeedMod})");
-                        }
+                        case "Speed Upgrade Player":
+                            if (movementSpeedTier < speedTiers.Length - 1)
+                            {
+                                movementSpeedTier++;
+                                movementSpeedMod = speedTiers[movementSpeedTier];
+                                Logger.LogInfo($"[ProcessAllReceivedItems] Re-applied Player Speed Upgrade. Tier: {movementSpeedTier} (x{movementSpeedMod})");
+                            }
+                            break;
+
+                        case "Speed Upgrade Appliance":
+                            if (applianceSpeedTier < applianceSpeedTiers.Length - 1)
+                            {
+                                applianceSpeedTier++;
+                                applianceSpeedMod = applianceSpeedTiers[applianceSpeedTier];
+                                Logger.LogInfo($"[ProcessAllReceivedItems] Re-applied Appliance Speed. Tier: {applianceSpeedTier} (x{applianceSpeedMod})");
+                            }
+                            break;
+
+                        case "Speed Upgrade Cook":
+                            if (cookSpeedTier < cookSpeedTiers.Length - 1)
+                            {
+                                cookSpeedTier++;
+                                cookSpeedMod = cookSpeedTiers[cookSpeedTier];
+                                Logger.LogInfo($"[ProcessAllReceivedItems] Re-applied Cook Speed. Tier: {cookSpeedTier} (x{cookSpeedMod})");
+                            }
+                            break;
+
+                        case "Speed Upgrade Chop":
+                            if (chopSpeedTier < chopSpeedTiers.Length - 1)
+                            {
+                                chopSpeedTier++;
+                                chopSpeedMod = chopSpeedTiers[chopSpeedTier];
+                                Logger.LogInfo($"[ProcessAllReceivedItems] Re-applied Chop Speed. Tier: {chopSpeedTier} (x{chopSpeedMod})");
+                            }
+                            break;
+
+                        case "Speed Upgrade Clean":
+                            if (cleanSpeedTier < cleanSpeedTiers.Length - 1)
+                            {
+                                cleanSpeedTier++;
+                                cleanSpeedMod = cleanSpeedTiers[cleanSpeedTier];
+                                Logger.LogInfo($"[ProcessAllReceivedItems] Re-applied Clean Speed. Tier: {cleanSpeedTier} (x{cleanSpeedMod})");
+                            }
+                            break;
                     }
                 }
             }
         }
-
 
         private void HandleGameReset()
         {
@@ -717,12 +824,12 @@ namespace KitchenPlateupAP
             previousWasDay = false;
             franchised = false;
             lost = false;
-            lastDay = 0;
-            stars = 0;
             itemsQueuedThisLobby = false;
             itemsSpawnedThisRun = false;
 
-            Logger.LogInfo("[PlateupAP] Cleared expired items from spawn queue.");
+            lastDay = 0;
+            stars = 0;
+            
 
             Logger.LogInfo("[PlateupAP] Game reset complete. Ready for a new run.");
         }
@@ -921,8 +1028,8 @@ namespace KitchenPlateupAP
             }
         }
 
-        private Dictionary<Entity, float> originalSpeeds = new Dictionary<Entity, float>(); 
-        private HashSet<Entity> activeSlowEffects = new HashSet<Entity>(); 
+        private Dictionary<Entity, float> originalSpeeds = new Dictionary<Entity, float>();
+        private HashSet<Entity> activeSlowEffects = new HashSet<Entity>();
 
         private void ApplySlowEffect()
         {
@@ -995,120 +1102,138 @@ namespace KitchenPlateupAP
             Logger.LogInfo($"[Trap->RandomCard] Spawned random card key={randomKey}, unlockID={unlockCardId}");
         }
 
-        // Checks and Day Cycle
         private void UpdateDayCycle()
         {
-            if (session == null)
-                return;
+            if (session == null) return;
+            if (inLobby) return;
 
-            // Do not process day cycle updates while in the lobby.
-            if (inLobby)
-                return;
+            bool isDayStart = HasSingleton<SIsDayFirstUpdate>();
+            bool isPrepTime = HasSingleton<SIsNightTime>();
+            bool isPrepFirstUpdate = HasSingleton<SIsNightFirstUpdate>();
 
-            // Retrieve current state markers.
-            bool isDayStart = HasSingleton<SIsDayFirstUpdate>();        // Occurs on the first frame of a day.
-            bool isPrepTime = HasSingleton<SIsNightTime>();               // Active throughout the prep phase.
-            bool isPrepFirstUpdate = HasSingleton<SIsNightFirstUpdate>();   // Active only on the first frame of prep.
-
-            // Arm the cycle on the first day.
             if (!firstCycleCompleted && isDayStart)
             {
                 firstCycleCompleted = true;
                 dayTransitionProcessed = false;
-                itemsSpawnedThisRun = false; // Reset this so items spawn correctly
+                itemsSpawnedThisRun = false;
+
                 Logger.LogInfo("First day cycle completed; day cycle updates are now armed.");
             }
 
-            // Only spawn queued items when we enter the next prep phase after day cycle updates are armed
             if (firstCycleCompleted && isPrepTime)
             {
                 while (spawnQueue.Count > 0)
                 {
-                    ItemInfo queuedInfo = spawnQueue.Dequeue();
-                    Logger.LogInfo($"[Next Run Prep] Spawning queued item ID: {(int)queuedInfo.ItemId}");
-                    ProcessSpawn(queuedInfo);
+                    ItemInfo queued = spawnQueue.Dequeue();
+                    Logger.LogInfo($"[Prep Phase] Spawning queued item ID: {queued.ItemId}");
+                    ProcessSpawn(queued);
                 }
             }
 
-
-            // Process the day-to-night transition only on the first frame of prep.
             if (firstCycleCompleted && isPrepFirstUpdate && !dayTransitionProcessed)
             {
-                lastDay++;
-                Logger.LogInfo("Transitioning from day to night, advancing day count to: " + lastDay);
-                session.Locations.CompleteLocationChecks(dayID + lastDay);
-                int presentdayID = dayID + lastDay;
-                Logger.LogInfo("Day Logged " + lastDay + " with ID " + presentdayID);
-                prepLogDone = false;
-                loggedCardThisCycle = false;
+                dayTransitionProcessed = true;
 
-                // Process dish-based day checks
-                int dishCount = selectedDishes.Count;
-                if (dishCount == 0)
+                if (goal == 0)
                 {
-                    Logger.LogWarning("[Dish Check] No selected dishes found. Skipping dish-based checks.");
+                    // ────────────────────────────────────────────
+                    // GOAL=0 => “Franchise X Times”
+                    // ────────────────────────────────────────────
+                    lastDay++;
+                    Logger.LogInfo($"[Franchise Goal] End of Day {lastDay} this run.");
+
+                    int dayLocationID = dayID + lastDay;
+                    session.Locations.CompleteLocationChecks(dayLocationID);
+                    Logger.LogInfo($"[Franchise Goal] Completed location check => ID={dayLocationID}");
+
+                    // Dish checks up to Day 15
+                    if (lastDay <= 15)
+                    {
+                        DoDishChecks(lastDay);
+
+                        if (lastDay % 3 == 0)
+                        {
+                            stars++;
+                            Logger.LogInfo($"[Franchise Goal] Earned star #{stars} on day {lastDay}.");
+
+                            // Example star location
+                            int starLocID = (dayID + lastDay) * 10 + stars;
+                            session.Locations.CompleteLocationChecks(starLocID);
+                            Logger.LogInfo($"[Franchise Goal] Completed star location => ID={starLocID}");
+
+                            if (stars >= 5)
+                            {
+                                Logger.LogInfo("[Franchise Goal] Reached 5 stars in this run; resetting stars to 0.");
+                                stars = 0;
+                            }
+                        }
+                    }
                 }
                 else
                 {
-                    for (int i = 0; i < dishCount; i++)
-                    {
-                        string dishName = selectedDishes[i];
+                    // ────────────────────────────────────────────
+                    // GOAL=1 => “Complete X Days”
+                    // ────────────────────────────────────────────
+                    overallDaysCompleted++;
+                    Logger.LogInfo($"[Day Goal] Overall day {overallDaysCompleted} completed.");
 
-                        // Process check only for the currently selected dish
-                        if (ProgressionMapping.dishDictionary.TryGetValue(DishId, out string selectedDishName))
-                        {
-                            if (ProgressionMapping.dish_id_lookup.TryGetValue(selectedDishName, out int activeDishID))
-                            {
-                                int activeDishDayCheckID = (activeDishID * 1000) + lastDay;
-                                session.Locations.CompleteLocationChecks(activeDishDayCheckID);
-                                Logger.LogInfo($"[Dish Check] Completed location check for selected dish {selectedDishName} on Day {lastDay} with ID {activeDishDayCheckID}");
-                            }
-                            else
-                            {
-                                Logger.LogWarning($"[Dish Check] Selected dish '{selectedDishName}' not found in lookup table.");
-                            }
-                        }
-                        else
-                        {
-                            Logger.LogWarning($"[Dish Check] Dish ID {DishId} not found in dishDictionary.");
-                        }
+                    // For day-based goals, do a location check up to 100 days
+                    if (overallDaysCompleted <= 100)
+                    {
+                        int dayLocID = 110000 + overallDaysCompleted;
+                        session.Locations.CompleteLocationChecks(dayLocID);
+                        Logger.LogInfo($"[Day Goal] Completed location => ID={dayLocID}");
                     }
 
-                    // Award stars every three days.
-                    if (lastDay % 3 == 0 && lastDay <= 15) 
+                    if (overallDaysCompleted <= 15)
                     {
-                        stars++;
-                        int starCheckID = (dayID + lastDay) * 10 + 1;
+                        DoDishChecks(overallDaysCompleted);
+                    }
 
-                        Logger.LogInfo($"[Star Check] Awarding Star {stars} with ID: {starCheckID}");
-                        session.Locations.CompleteLocationChecks(starCheckID);
+                    if (overallDaysCompleted % 3 == 0 && overallStarsEarned < 33)
+                    {
+                        overallStarsEarned++;
+                        int starLocID = 120000 + overallStarsEarned;
+                        session.Locations.CompleteLocationChecks(starLocID);
+                        Logger.LogInfo($"[Day Goal] Earned star #{overallStarsEarned}, location => ID={starLocID}");
+                    }
 
-                        // Special handling for 4th and 5th stars to ensure they're sent in franchises
-                        if (stars == 4)
-                        {
-                            int star4CheckID = (dayID + 12) * 10 + 1;
-                            Logger.LogInfo($"[Star Check] Sending missing Star 4 check with ID: {star4CheckID}");
-                            session.Locations.CompleteLocationChecks(star4CheckID);
-                        }
-                        if (stars == 5)
-                        {
-                            int star5CheckID = (dayID + 15) * 10 + 1;
-                            Logger.LogInfo($"[Star Check] Sending missing Star 5 check with ID: {star5CheckID}");
-                            session.Locations.CompleteLocationChecks(star5CheckID);
-
-                            Logger.LogInfo("[Star Check] Star 5 achieved. Resetting star counter.");
-                            stars = 0; // Reset after reaching 5 stars
-                        }
+                    if (overallDaysCompleted >= dayCount)
+                    {
+                        Logger.LogInfo($"[Day Goal] Reached {overallDaysCompleted} >= {dayCount}, sending goal complete.");
+                        SendGoalComplete();
                     }
                 }
-
-                dayTransitionProcessed = true;
             }
             else if (!isPrepFirstUpdate)
             {
                 dayTransitionProcessed = false;
             }
         }
+
+        private void DoDishChecks(int dayNumber)
+        {
+            if (selectedDishes.Count == 0)
+            {
+                Logger.LogWarning("[Dish Check] No dishes selected; skipping.");
+                return;
+            }
+
+            foreach (string dishName in selectedDishes)
+            {
+                if (ProgressionMapping.dish_id_lookup.TryGetValue(dishName, out int dishID))
+                {
+                    int dishCheckID = (dishID * 1000) + dayNumber;
+                    session.Locations.CompleteLocationChecks(dishCheckID);
+                    Logger.LogInfo($"[Dish Check] Day={dayNumber}, dish='{dishName}', ID={dishCheckID}");
+                }
+                else
+                {
+                    Logger.LogWarning($"[Dish Check] dish '{dishName}' not found in dish_id_lookup.");
+                }
+            }
+        }
+
 
         private void ApplySpeedModifiers()
         {
@@ -1154,7 +1279,6 @@ namespace KitchenPlateupAP
                 var speedMod = entityManager.GetComponentData<CApplianceSpeedModifier>(applianceEntity);
                 float originalSpeed = speedMod.Speed;
 
-                // 🛠️ FIX: Set the speed directly instead of multiplying
                 speedMod.Speed = speedMultiplier;
                 entityManager.SetComponentData(applianceEntity, speedMod);
 
@@ -1163,8 +1287,6 @@ namespace KitchenPlateupAP
 
             processingAppliances.Dispose();
         }
-
-
 
         public void IncreaseApplianceSpeedTier()
         {

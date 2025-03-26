@@ -193,7 +193,10 @@ namespace KitchenPlateupAP
         public static readonly Dictionary<int, string> speedUpgradeMapping = new Dictionary<int, string>()
         {
             { 10, "Speed Upgrade Player" },
-            { 11, "Speed Upgrade Appliance" }
+            { 11, "Speed Upgrade Appliance" },
+            { 12, "Speed Upgrade Cook" },
+            { 13, "Speed Upgrade Chop" },
+            { 14, "Speed Upgrade Clean" }
         };
     }
 }

@@ -227,6 +227,12 @@ namespace KitchenPlateupAP
             string message = $"Selected Dishes: {string.Join(", ", selectedDishes)}";
             Logger.LogInfo($"Sending message: {message}");
             session.Socket.SendPacket(new SayPacket { Text = message });
+
+            ChatManager.AddSystemMessage("Selected Dishes: " + string.Join(", ", selectedDishes));
+
+            Logger.LogInfo($"ProcessReferences.Cook = {ProcessReferences.Cook}");
+            Logger.LogInfo($"ProcessReferences.Chop = {ProcessReferences.Chop}");
+            Logger.LogInfo($"ProcessReferences.Knead = {ProcessReferences.Knead}");
         }
 
         static PreferenceSystemManager PrefManager;
@@ -237,11 +243,7 @@ namespace KitchenPlateupAP
             {
                 if (World != null)
                 {
-                    World.GetOrCreateSystem<ApplyApplianceSpeedModifierSystem>().Enabled = true;
-                    World.GetOrCreateSystem<ApplyCleanSpeedSystem>().Enabled = true;
-                    World.GetOrCreateSystem<ApplyChopSpeedSystem>().Enabled = true;
-                    World.GetOrCreateSystem<ApplyCookSpeedSystem>().Enabled = true;
-                    Mod.Logger.LogInfo("ApplianceSpeedModifierSystem enabled.");
+                    
                 }
                 else
                 {
@@ -312,6 +314,15 @@ namespace KitchenPlateupAP
 
             PrefManager.RegisterMenu(PreferenceSystemManager.MenuType.MainMenu);
             PrefManager.RegisterMenu(PreferenceSystemManager.MenuType.PauseMenu);
+
+            if (GameObject.FindObjectOfType<ChatManager>() == null)
+            {
+                var obj = new GameObject("ChatManager");
+                obj.AddComponent<ChatManager>();
+                UnityEngine.Object.DontDestroyOnLoad(obj);
+            }
+
+            ChatManager.AddSystemMessage("PlateUp Archipelago loaded.");
         }
 
         protected override void OnInitialise()
@@ -342,7 +353,31 @@ namespace KitchenPlateupAP
                 Logger.LogInfo("[Archipelago] Re-processing all previously received items...");
                 ProcessAllReceivedItems();
 
-                if (!dishesMessageSent && selectedDishes.Count > 0)
+                if (World != null)
+                {
+                    if (applianceSpeedMode == 0)
+                    {
+                        World.GetOrCreateSystem<ApplyApplianceSpeedModifierSystem>().Enabled = true;
+                        World.GetOrCreateSystem<UpdateSeparateApplianceSpeedModifiersSystem>().Enabled = false;
+                        World.GetOrCreateSystem<ApplyCleanSpeedSystem>().Enabled = false;
+                        World.GetOrCreateSystem<ApplyChopSpeedSystem>().Enabled = false;
+                        World.GetOrCreateSystem<ApplyCookSpeedSystem>().Enabled = false;
+
+                        Logger.LogInfo("[OnSuccessfulConnect] Grouped mode enabled, separate-mode disabled.");
+                    }
+                    else
+                    {
+                        World.GetOrCreateSystem<ApplyApplianceSpeedModifierSystem>().Enabled = false;
+                        World.GetOrCreateSystem<UpdateSeparateApplianceSpeedModifiersSystem>().Enabled = true;
+                        World.GetOrCreateSystem<ApplyCleanSpeedSystem>().Enabled = true;
+                        World.GetOrCreateSystem<ApplyChopSpeedSystem>().Enabled = true;
+                        World.GetOrCreateSystem<ApplyCookSpeedSystem>().Enabled = true;
+
+                        Logger.LogInfo("[OnSuccessfulConnect] Separate mode enabled, grouped mode disabled.");
+                    }
+                }
+
+                    if (!dishesMessageSent && selectedDishes.Count > 0)
                 {
                     SendSelectedDishesMessage();
                     dishesMessageSent = true;
@@ -356,6 +391,10 @@ namespace KitchenPlateupAP
                 {
                     Logger.LogWarning("Skipping duplicate dish message.");
                 }
+                var name = session.Players.GetPlayerAlias(session.ConnectionInfo.Slot);
+                ChatManager.AddSystemMessage("Connected to Archipelago as " + name + ".");
+
+
             }
         }
 
@@ -1253,6 +1292,11 @@ namespace KitchenPlateupAP
 
         private void ApplyApplianceSpeedModifiers()
         {
+            if (applianceSpeedMode != 0)
+            {
+                return;
+            }
+
             if (!HasSingleton<SIsDayTime>())
                 return;
 

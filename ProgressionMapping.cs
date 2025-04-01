@@ -142,7 +142,6 @@ namespace KitchenPlateupAP
             { 33, UnlockCardReferences.SlowProcesses },
             { 34, UnlockCardReferences.TippingCulture },
         };
-
         //Trap Dictionary
         public static readonly Dictionary<int, string> trapDictionary = new Dictionary<int, string>()
         {

@@ -226,13 +226,7 @@ namespace KitchenPlateupAP
 
             string message = $"Selected Dishes: {string.Join(", ", selectedDishes)}";
             Logger.LogInfo($"Sending message: {message}");
-            session.Socket.SendPacket(new SayPacket { Text = message });
-
             ChatManager.AddSystemMessage("Selected Dishes: " + string.Join(", ", selectedDishes));
-
-            Logger.LogInfo($"ProcessReferences.Cook = {ProcessReferences.Cook}");
-            Logger.LogInfo($"ProcessReferences.Chop = {ProcessReferences.Chop}");
-            Logger.LogInfo($"ProcessReferences.Knead = {ProcessReferences.Knead}");
         }
 
         static PreferenceSystemManager PrefManager;

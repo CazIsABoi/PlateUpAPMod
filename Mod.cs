@@ -43,7 +43,7 @@ namespace KitchenPlateupAP
     {
         public const string MOD_GUID = "com.caz.plateupap";
         public const string MOD_NAME = "PlateupAP";
-        public const string MOD_VERSION = "0.1.7.3.5";
+        public const string MOD_VERSION = "0.1.9.1";
         public const string MOD_AUTHOR = "Caz";
         public const string MOD_GAMEVERSION = ">=1.1.9";
 
@@ -59,7 +59,7 @@ namespace KitchenPlateupAP
         private Archipelago.MultiClient.Net.BounceFeatures.DeathLink.DeathLinkService deathLinkService;
         private int deathLinkBehavior = 0; // Default to "Reset Run"
         private static int goal = 0;             // 0 = franchise_x_times, 1 = complete_x_days
-        private static int franchiseCount = 1;   // how many times to franchise
+        private static int franchiseCount = 0;   // how many times to franchise
         private static int dayCount = 1;        // how many days to complete
         private static List<string> selectedDishes = new List<string>();
         object rawGoal = null;
@@ -86,7 +86,7 @@ namespace KitchenPlateupAP
         private bool dayTransitionProcessed = false;
         private static int overallDaysCompleted = 0;
         private static int overallStarsEarned = 0;
-
+        public static int TotalLeaseItemsReceived = 0;
         private static bool itemsEventSubscribed = false;
         private static Queue<ItemInfo> spawnQueue = new Queue<ItemInfo>();
 
@@ -153,7 +153,7 @@ namespace KitchenPlateupAP
                         if (selectedDishes.Count > 0)
                         {
                             Logger.LogInfo($"[PlateupAP] Selected Dishes from Archipelago: {string.Join(", ", selectedDishes)}");
-                            SendSelectedDishesMessage(); // Send the message once retrieved
+                            SendSelectedDishesMessage(); 
                         }
                         else
                         {
@@ -264,6 +264,7 @@ namespace KitchenPlateupAP
             PrefManager
                 .AddLabel("Archipelago Configuration")
                 .AddInfo("Create or load configuration for the Archipelago connection")
+                .AddInfo(@"Config is found in \AppData\LocalLow\It's Happening\PlateUp")
                 .AddButton("Create Config", (int _) =>
                 {
                     string folder = Path.Combine(Application.persistentDataPath, "PlateUpAPConfig");
@@ -346,9 +347,13 @@ namespace KitchenPlateupAP
 
                 Logger.LogInfo("[Archipelago] Re-processing all previously received items...");
                 ProcessAllReceivedItems();
+                Logger.LogInfo("[Archipelago] Re-processing all previously received location checks");
+                ReconstructProgressFromLocationChecks();
 
                 if (World != null)
                 {
+                    World.GetOrCreateSystem<SaveProgressionSystem>().Enabled = true;
+
                     if (applianceSpeedMode == 0)
                     {
                         World.GetOrCreateSystem<ApplyApplianceSpeedModifierSystem>().Enabled = true;
@@ -388,10 +393,40 @@ namespace KitchenPlateupAP
                 var name = session.Players.GetPlayerAlias(session.ConnectionInfo.Slot);
                 ChatManager.AddSystemMessage("Connected to Archipelago as " + name + ".");
 
-
+                if (World != null)
+                {
+                }
             }
         }
 
+        private void ReconstructProgressFromLocationChecks()
+        {
+            if (session == null || session.Locations == null)
+            {
+                Logger.LogError("[Archipelago] Session or Locations is null. Cannot reconstruct progress.");
+                return;
+            }
+
+            var checkedLocations = session.Locations.AllLocationsChecked;
+
+            if (goal == 0)
+            {
+                // Franchise goal: Check how many franchise completions were recorded (ID 100000)
+                timesFranchised = checkedLocations.Count(loc => loc == 100000);
+                Logger.LogInfo($"[Reconstruct] timesFranchised reconstructed as: {timesFranchised}");
+            }
+            else
+            {
+                // Day goal: Count all valid day completions (110000 - 119999)
+                overallDaysCompleted = checkedLocations.Count(loc => loc >= 110000 && loc < 120000);
+                overallStarsEarned = checkedLocations.Count(loc => loc >= 120000 && loc < 130000);
+                Logger.LogInfo($"[Reconstruct] overallDaysCompleted: {overallDaysCompleted}, overallStarsEarned: {overallStarsEarned}");
+            }
+
+            // Count total lease items (item ID 15) in inventory (regardless of goal)
+            Mod.TotalLeaseItemsReceived = session.Items.AllItemsReceived.Count(item => (int)item.ItemId == 15);
+            Logger.LogInfo($"[Reconstruct] Total lease items received: {Mod.TotalLeaseItemsReceived}");
+        }
 
         private void EnableDeathLink()
         {
@@ -455,7 +490,8 @@ namespace KitchenPlateupAP
         {
             Logger.LogInfo("[PlateupAP] Attempting to reset to last star...");
 
-            var day = GetOrDefault<SDay>();
+            if (!Require(out SDay day))
+                return;
 
             Logger.LogInfo($"[PlateupAP] Current day: {day.Day}, Stars: {stars}");
 
@@ -472,8 +508,10 @@ namespace KitchenPlateupAP
                 }
 
                 Logger.LogInfo($"[PlateupAP] Rolling back to last star: {newDay}");
-                day.Day = newDay;
-                Set(day);
+                Set(new SDay()
+                {
+                    Day = newDay
+                });
 
                 Logger.LogInfo($"[PlateupAP] Reset to last earned star. New day: {day.Day}, Previous day: {lastDay}");
                 lastDay = newDay;
@@ -590,6 +628,38 @@ namespace KitchenPlateupAP
                 else
                 {
                     ResetToLastStar();
+                }
+            }
+
+            // Wall progression saving logic
+            if (HasSingleton<SKitchenMarker>())
+            {
+                EntityQuery wallQuery = GetEntityQuery(ComponentType.ReadOnly<CAppliance>());
+                using var entities = wallQuery.ToEntityArray(Allocator.Temp);
+
+                foreach (var entity in entities)
+                {
+                    var appliance = EntityManager.GetComponentData<CAppliance>(entity);
+
+                    if (appliance.ID == ApplianceReferences.WallPiece)
+                    {
+                        if (!EntityManager.HasComponent<CStoredLastDay>(entity))
+                        {
+                            EntityManager.AddComponentData(entity, new CStoredLastDay { Value = lastDay });
+                            Logger.LogInfo($"[Mod.cs] Stored lastDay={lastDay} in wall (entity {entity.Index})");
+                        }
+                        else
+                        {
+                            var stored = EntityManager.GetComponentData<CStoredLastDay>(entity);
+                            if (stored.Value != lastDay)
+                            {
+                                EntityManager.SetComponentData(entity, new CStoredLastDay { Value = lastDay });
+                                Logger.LogInfo($"[Mod.cs] Updated lastDay to {lastDay} in wall (entity {entity.Index})");
+                            }
+                        }
+
+                        break; // Only need one wall
+                    }
                 }
             }
 
@@ -1179,7 +1249,6 @@ namespace KitchenPlateupAP
                     session.Locations.CompleteLocationChecks(dayLocationID);
                     Logger.LogInfo($"[Franchise Goal] Completed location check => ID={dayLocationID}");
 
-                    // Dish checks up to Day 15
                     if (lastDay <= 15)
                     {
                         DoDishChecks(lastDay);
@@ -1189,10 +1258,17 @@ namespace KitchenPlateupAP
                             stars++;
                             Logger.LogInfo($"[Franchise Goal] Earned star #{stars} on day {lastDay}.");
 
-                            // Example star location
-                            int starLocID = (dayID + lastDay) * 10 + stars;
-                            session.Locations.CompleteLocationChecks(starLocID);
-                            Logger.LogInfo($"[Franchise Goal] Completed star location => ID={starLocID}");
+                            int[] franchiseStarOffsets = { 0, 31, 61, 91, 121, 151 };
+                            if (stars <= 5)
+                            {
+                                int starLocID = dayID + franchiseStarOffsets[stars];
+                                session.Locations.CompleteLocationChecks(starLocID);
+                                Logger.LogInfo($"[Franchise Goal] Completed star location => ID={starLocID}");
+                            }
+                            else
+                            {
+                                Logger.LogWarning("[Franchise Goal] Stars exceeded expected range (1–5). No location check sent.");
+                            }
 
                             if (stars >= 5)
                             {
@@ -1202,6 +1278,7 @@ namespace KitchenPlateupAP
                         }
                     }
                 }
+
                 else
                 {
                     // ────────────────────────────────────────────
@@ -1246,25 +1323,21 @@ namespace KitchenPlateupAP
 
         private void DoDishChecks(int dayNumber)
         {
-            if (selectedDishes.Count == 0)
+            if (!ProgressionMapping.dishDictionary.TryGetValue(DishId, out string dishName))
             {
-                Logger.LogWarning("[Dish Check] No dishes selected; skipping.");
+                Logger.LogWarning($"[Dish Check] Dish ID {DishId} not found in dictionary.");
                 return;
             }
 
-            foreach (string dishName in selectedDishes)
+            if (!ProgressionMapping.dish_id_lookup.TryGetValue(dishName, out int dishID))
             {
-                if (ProgressionMapping.dish_id_lookup.TryGetValue(dishName, out int dishID))
-                {
-                    int dishCheckID = (dishID * 1000) + dayNumber;
-                    session.Locations.CompleteLocationChecks(dishCheckID);
-                    Logger.LogInfo($"[Dish Check] Day={dayNumber}, dish='{dishName}', ID={dishCheckID}");
-                }
-                else
-                {
-                    Logger.LogWarning($"[Dish Check] dish '{dishName}' not found in dish_id_lookup.");
-                }
+                Logger.LogWarning($"[Dish Check] Dish name '{dishName}' not found in lookup.");
+                return;
             }
+
+            int dishCheckID = (dishID * 10000) + dayNumber;
+            session.Locations.CompleteLocationChecks(dishCheckID);
+            Logger.LogInfo($"[Dish Check] Day={dayNumber}, dish='{dishName}', ID={dishCheckID}");
         }
 
 

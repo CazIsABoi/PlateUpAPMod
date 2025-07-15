@@ -43,7 +43,7 @@ namespace KitchenPlateupAP
     {
         public const string MOD_GUID = "com.caz.plateupap";
         public const string MOD_NAME = "PlateupAP";
-        public const string MOD_VERSION = "0.1.9.1";
+        public const string MOD_VERSION = "0.1.9.2";
         public const string MOD_AUTHOR = "Caz";
         public const string MOD_GAMEVERSION = ">=1.1.9";
 
@@ -58,6 +58,7 @@ namespace KitchenPlateupAP
         private static ArchipelagoSession session => ArchipelagoConnectionManager.Session;
         private Archipelago.MultiClient.Net.BounceFeatures.DeathLink.DeathLinkService deathLinkService;
         private int deathLinkBehavior = 0; // Default to "Reset Run"
+        private bool suppressNextDeathLink = false;
         private static int goal = 0;             // 0 = franchise_x_times, 1 = complete_x_days
         private static int franchiseCount = 0;   // how many times to franchise
         private static int dayCount = 1;        // how many days to complete
@@ -456,6 +457,7 @@ namespace KitchenPlateupAP
 
             Logger.LogWarning($"[PlateupAP] DeathLink received! Cause: {deathLink.Source}");
 
+            suppressNextDeathLink = true;
             if (deathLinkBehavior == 0) // Full Reset
             {
                 Logger.LogWarning("[PlateupAP] Player chose to fully reset the run due to DeathLink.");
@@ -468,13 +470,20 @@ namespace KitchenPlateupAP
             else if (deathLinkBehavior == 1) // Reset to Last Star
             {
                 Logger.LogWarning("[PlateupAP] Player chose to reset to the last earned star due to DeathLink.");
-
                 deathLinkResetToLastStarPending = true;
+                suppressNextDeathLink = false;
             }
         }
 
         private void SendDeathLink()
         {
+            if (suppressNextDeathLink)
+            {
+                Logger.LogInfo("[PlateupAP] DeathLink suppressed to prevent loop.");
+                suppressNextDeathLink = false;
+                return;
+            }
+
             if (deathLinkService != null)
             {
                 string playerName = session.Players.GetPlayerAlias(session.ConnectionInfo.Slot);
@@ -497,28 +506,28 @@ namespace KitchenPlateupAP
 
             if (stars > 0 && day.Day > 1)
             {
-                // Find the last earned star (last multiple of 3)
-                int rollbackDays = day.Day % 3;
+                // Compute how many days past the last multiple of 3
+                int overshoot = day.Day % 3;
+                // If you're exactly on a multiple, overshoot==0 -> go back 3 days
+                int rollbackDays = overshoot == 0 ? 3 : overshoot;
                 int newDay = day.Day - rollbackDays;
+                newDay = Math.Max(newDay, 1);
 
-                if (newDay < 1)
-                {
-                    Logger.LogWarning($"[PlateupAP] Calculated rollback resulted in invalid day {newDay}, setting to 1.");
-                    newDay = 1;
-                }
+                Logger.LogInfo($"[PlateupAP] Rolling back to last star: from {day.Day} to {newDay}");
 
-                Logger.LogInfo($"[PlateupAP] Rolling back to last star: {newDay}");
-                Set(new SDay()
+                // ← Create a fresh entity so the Set() goes out over the socket properly
+                Entity entity = base.EntityManager.CreateEntity(typeof(SDay), typeof(CGamePauseBlock));
+                Set(entity, new SDay
                 {
                     Day = newDay
                 });
 
-                Logger.LogInfo($"[PlateupAP] Reset to last earned star. New day: {day.Day}, Previous day: {lastDay}");
+                Logger.LogInfo($"[PlateupAP] Reset to last earned star complete. Previous day: {day.Day}, New day: {newDay}");
                 lastDay = newDay;
             }
             else
             {
-                Logger.LogWarning("[PlateupAP] No stars earned or already at day 1, resetting fully instead.");
+                Logger.LogWarning("[PlateupAP] No stars earned or already at day 1, doing full reset instead.");
                 Entity entity = base.EntityManager.CreateEntity(typeof(SGameOver), typeof(CGamePauseBlock));
                 Set(entity, new SGameOver
                 {
@@ -596,6 +605,7 @@ namespace KitchenPlateupAP
 
             else if (inLobby && !itemsQueuedThisLobby)
             {
+                suppressNextDeathLink = false;
                 firstCycleCompleted = false;
                 previousWasDay = false;
                 franchised = false;

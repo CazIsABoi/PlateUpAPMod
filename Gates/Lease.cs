@@ -42,6 +42,10 @@ namespace KitchenPlateupAP
             {
                 requiredLeases = 0;
             }
+            else if (currentDay <= 5 && franchisesDone == 0)
+            {
+                requiredLeases = 0; // No leases required in first 5 days of first franchise
+            }
             else if (currentDay <= 5)
             {
                 requiredLeases = 1 + 3 * franchisesDone;

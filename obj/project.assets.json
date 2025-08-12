@@ -17,6 +17,18 @@
           "lib/net45/Newtonsoft.Json.dll": {}
         }
       },
+      "ILRepack/2.0.44": {
+        "type": "package",
+        "build": {
+          "build/ILRepack.props": {}
+        }
+      },
+      "ILRepack.Lib.MSBuild.Task/2.0.43": {
+        "type": "package",
+        "build": {
+          "build/ILRepack.Lib.MSBuild.Task.targets": {}
+        }
+      },
       "Yariazen.PlateUp.ModBuildUtilities/1.13.0": {
         "type": "package",
         "build": {
@@ -61,6 +73,36 @@
         "lib/netstandard2.0/Newtonsoft.Json.dll"
       ]
     },
+    "ILRepack/2.0.44": {
+      "sha512": "vK2Ts2gWPqKTzcrE8wnCiRLv/tiRAxqeuc7ha5ZJaKEIgPaoX7jBN6GKLE0ELieMhzXnONiRWvKhSyfCzSkCmQ==",
+      "type": "package",
+      "path": "ilrepack/2.0.44",
+      "hasTools": true,
+      "files": [
+        ".nupkg.metadata",
+        ".signature.p7s",
+        "ILRepack.png",
+        "README.md",
+        "build/ILRepack.props",
+        "ilrepack.2.0.44.nupkg.sha512",
+        "ilrepack.nuspec",
+        "tools/ILRepack.exe",
+        "tools/ILRepack.runtimeconfig.json"
+      ]
+    },
+    "ILRepack.Lib.MSBuild.Task/2.0.43": {
+      "sha512": "7oa+HoI7vwiPXzY6HVbMvUevr5Tn6ONoRRSHxRDW71hF8rFhLWQCCbgN9NWXUHhYJmKflv8Xgl4Jr4BFFpq1Gw==",
+      "type": "package",
+      "path": "ilrepack.lib.msbuild.task/2.0.43",
+      "files": [
+        ".nupkg.metadata",
+        ".signature.p7s",
+        "build/ILRepack.Lib.MSBuild.Task.dll",
+        "build/ILRepack.Lib.MSBuild.Task.targets",
+        "ilrepack.lib.msbuild.task.2.0.43.nupkg.sha512",
+        "ilrepack.lib.msbuild.task.nuspec"
+      ]
+    },
     "Yariazen.PlateUp.ModBuildUtilities/1.13.0": {
       "sha512": "84S6/nm1FmQDbuuDxzBit/XSPxB6JYWYKYOKAU+8CDjDYbyxbM5zJXciNtqlj5gH2N30jC5s+2v/96YSlFgVgw==",
       "type": "package",
@@ -79,6 +121,8 @@
   "projectFileDependencyGroups": {
     ".NETFramework,Version=v4.7.2": [
       "Archipelago.MultiClient.Net >= 6.6.0",
+      "ILRepack >= 2.0.44",
+      "ILRepack.Lib.MSBuild.Task >= 2.0.43",
       "Yariazen.PlateUp.ModBuildUtilities >= 1.13.0"
     ]
   },
@@ -135,6 +179,18 @@
           "Archipelago.MultiClient.Net": {
             "target": "Package",
             "version": "[6.6.0, )"
+          },
+          "ILRepack": {
+            "include": "Runtime, Build, Native, ContentFiles, Analyzers, BuildTransitive",
+            "suppressParent": "All",
+            "target": "Package",
+            "version": "[2.0.44, )"
+          },
+          "ILRepack.Lib.MSBuild.Task": {
+            "include": "Runtime, Build, Native, ContentFiles, Analyzers, BuildTransitive",
+            "suppressParent": "All",
+            "target": "Package",
+            "version": "[2.0.43, )"
           },
           "Yariazen.PlateUp.ModBuildUtilities": {
             "target": "Package",

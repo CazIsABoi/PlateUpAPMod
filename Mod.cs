@@ -70,6 +70,7 @@ namespace KitchenPlateupAP
         public static int RandomTrapCardCount = 0;
         bool deathLinkResetToLastStarPending = false;
         public static int applianceSpeedMode = 0;
+        private static bool checksDisabled = false;
 
         // Static day cycle and spawn state.
         private static int lastDay = 0;
@@ -158,7 +159,9 @@ namespace KitchenPlateupAP
                         }
                         else
                         {
-                            Logger.LogWarning("[PlateupAP] Retrieved slot data, but selected_dishes is empty.");
+                            checksDisabled = true;
+                            Logger.LogInfo($"[Settings] Checks disabled: {checksDisabled}");
+
                         }
                     }
                     catch (JsonReaderException ex)
@@ -750,6 +753,12 @@ namespace KitchenPlateupAP
             int checkId = (int)info.ItemId;
             Logger.LogInfo($"[OnItemReceived] Received check ID: {checkId}");
 
+            if (checkId == 15)
+            {
+                Logger.LogInfo($"[OnItemReceived] Received Day Lease");
+                return;
+            }
+
             if (ProgressionMapping.trapDictionary.ContainsKey(checkId))
             {
                 Logger.LogWarning($"[OnItemReceived] Received TRAP: {ProgressionMapping.trapDictionary[checkId]}!");
@@ -1305,9 +1314,10 @@ namespace KitchenPlateupAP
                         Logger.LogInfo($"[Day Goal] Completed location => ID={dayLocID}");
                     }
 
-                    if (overallDaysCompleted <= 15)
+                    if (lastDay < 15)
                     {
-                        DoDishChecks(overallDaysCompleted);
+                        lastDay++;
+                        DoDishChecks(lastDay); 
                     }
 
                     if (overallDaysCompleted % 3 == 0 && overallStarsEarned < 33)
@@ -1333,6 +1343,7 @@ namespace KitchenPlateupAP
 
         private void DoDishChecks(int dayNumber)
         {
+            if (checksDisabled == true) return;
             if (!ProgressionMapping.dishDictionary.TryGetValue(DishId, out string dishName))
             {
                 Logger.LogWarning($"[Dish Check] Dish ID {DishId} not found in dictionary.");

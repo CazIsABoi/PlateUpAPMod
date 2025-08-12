@@ -54,6 +54,18 @@
               "target": "Package",
               "version": "[6.6.0, )"
             },
+            "ILRepack": {
+              "include": "Runtime, Build, Native, ContentFiles, Analyzers, BuildTransitive",
+              "suppressParent": "All",
+              "target": "Package",
+              "version": "[2.0.44, )"
+            },
+            "ILRepack.Lib.MSBuild.Task": {
+              "include": "Runtime, Build, Native, ContentFiles, Analyzers, BuildTransitive",
+              "suppressParent": "All",
+              "target": "Package",
+              "version": "[2.0.43, )"
+            },
             "Yariazen.PlateUp.ModBuildUtilities": {
               "target": "Package",
               "version": "[1.13.0, )"

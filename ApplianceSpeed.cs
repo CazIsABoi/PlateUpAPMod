@@ -442,7 +442,7 @@ namespace KitchenPlateupAP
                 return;
             }
 
-            Mod.Logger.LogInfo("[UpdateSeparateApplianceSpeedModifiersSystem] OnUpdate -> Checking processed appliances...");
+            //Mod.Logger.LogInfo("[UpdateSeparateApplianceSpeedModifiersSystem] OnUpdate -> Checking processed appliances...");
 
             var entityManager = EntityManager;
             using var processingEntities = ProcessingQuery.ToEntityArray(Allocator.Temp);

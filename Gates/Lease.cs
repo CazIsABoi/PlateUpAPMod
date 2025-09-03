@@ -10,8 +10,24 @@ namespace KitchenPlateupAP
     [UpdateBefore(typeof(ManageStartDayWarnings))]
     public class LeaseRequirementSystem : SystemBase, IModSystem
     {
+        private static bool forceRefresh = false;
+        public static event Action RequestRefresh;
+
+        public static void TriggerRefresh()
+        {
+            forceRefresh = true;
+            RequestRefresh?.Invoke();
+        }
+
         protected override void OnUpdate()
         {
+            if (!forceRefresh)
+            {
+                // Only update if normal ECS update or forced
+                return;
+            }
+            forceRefresh = false;
+
             // Require Archipelago connection
             if (!ArchipelagoConnectionManager.ConnectionSuccessful || ArchipelagoConnectionManager.Session == null)
                 return;

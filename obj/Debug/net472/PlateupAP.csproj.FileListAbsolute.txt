@@ -1,9 +1,3 @@
-C:\Users\cazpe\OneDrive\Desktop\My Mods\PlateupAP\obj\Debug\net472\PlateupAP.csproj.AssemblyReference.cache
-C:\Users\cazpe\OneDrive\Desktop\My Mods\PlateupAP\obj\Debug\net472\PlateupAP.GeneratedMSBuildEditorConfig.editorconfig
-C:\Users\cazpe\OneDrive\Desktop\My Mods\PlateupAP\obj\Debug\net472\PlateupAP.AssemblyInfoInputs.cache
-C:\Users\cazpe\OneDrive\Desktop\My Mods\PlateupAP\obj\Debug\net472\PlateupAP.AssemblyInfo.cs
-C:\Users\cazpe\OneDrive\Desktop\My Mods\PlateupAP\obj\Debug\net472\PlateupAP.csproj.CoreCompileInputs.cache
-C:\Users\cazpe\OneDrive\Desktop\My Mods\PlateupAP\obj\Debug\net472\PlateupAP.sourcelink.json
 C:\Users\cazpe\OneDrive\Desktop\My Mods\PlateupAP\bin\Debug\net472\PlateupAP.dll
 C:\Users\cazpe\OneDrive\Desktop\My Mods\PlateupAP\bin\Debug\net472\PlateupAP.pdb
 C:\Users\cazpe\OneDrive\Desktop\My Mods\PlateupAP\bin\Debug\net472\Archipelago.MultiClient.Net.dll
@@ -242,6 +236,12 @@ C:\Users\cazpe\OneDrive\Desktop\My Mods\PlateupAP\bin\Debug\net472\XNode.dll
 C:\Users\cazpe\OneDrive\Desktop\My Mods\PlateupAP\bin\Debug\net472\Zio.dll
 C:\Users\cazpe\OneDrive\Desktop\My Mods\PlateupAP\bin\Debug\net472\KitchenLib-Workshop.pdb
 C:\Users\cazpe\OneDrive\Desktop\My Mods\PlateupAP\bin\Debug\net472\KitchenLib-Workshop.xml
+C:\Users\cazpe\OneDrive\Desktop\My Mods\PlateupAP\obj\Debug\net472\PlateupAP.csproj.AssemblyReference.cache
+C:\Users\cazpe\OneDrive\Desktop\My Mods\PlateupAP\obj\Debug\net472\PlateupAP.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\cazpe\OneDrive\Desktop\My Mods\PlateupAP\obj\Debug\net472\PlateupAP.AssemblyInfoInputs.cache
+C:\Users\cazpe\OneDrive\Desktop\My Mods\PlateupAP\obj\Debug\net472\PlateupAP.AssemblyInfo.cs
+C:\Users\cazpe\OneDrive\Desktop\My Mods\PlateupAP\obj\Debug\net472\PlateupAP.csproj.CoreCompileInputs.cache
+C:\Users\cazpe\OneDrive\Desktop\My Mods\PlateupAP\obj\Debug\net472\PlateupAP.sourcelink.json
 C:\Users\cazpe\OneDrive\Desktop\My Mods\PlateupAP\obj\Debug\net472\PlateupAP.csproj.Up2Date
 C:\Users\cazpe\OneDrive\Desktop\My Mods\PlateupAP\obj\Debug\net472\PlateupAP.dll
 C:\Users\cazpe\OneDrive\Desktop\My Mods\PlateupAP\obj\Debug\net472\PlateupAP.pdb

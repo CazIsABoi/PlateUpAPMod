@@ -197,5 +197,25 @@ namespace KitchenPlateupAP
             { 13, "Speed Upgrade Chop" },
             { 14, "Speed Upgrade Clean" }
         };
+
+        // Dish Unlock IDs
+        public static readonly Dictionary<string, int> dishUnlockIDs = new Dictionary<string, int>
+        {
+            { "Salad", 30101 },
+            { "Steak", 30102 },
+            { "Burger", 30103 },
+            { "Coffee", 30104 },
+            { "Pizza", 30105 },
+            { "Dumplings", 30106 },
+            { "Turkey", 30107 },
+            { "Pie", 30108 },
+            { "Cakes", 30109 },
+            { "Spaghetti", 30110 },
+            { "Fish", 30111 },
+            { "Tacos", 30112 },
+            { "Hot Dogs", 30113 },
+            { "Breakfast", 30114 },
+            { "Stir Fry", 30115 }
+        };
     }
 }

@@ -26,17 +26,18 @@ using KitchenDecorOnDemand;
 using PreferenceSystem;
 using PreferenceSystem.Event;
 using PreferenceSystem.Menus;
-using KitchenPlateupAP;
+using UnityEngine.SceneManagement;  
 
 
 namespace KitchenPlateupAP
-{
-    public class ArchipelagoConfig
+{ 
+    public class PlateupAPConfig
     {
-        public string address { get; set; }
-        public int port { get; set; }
-        public string playername { get; set; }
-        public string password { get; set; }
+        [JsonProperty] public string address { get; set; }
+        [JsonProperty] public int port { get; set; }
+        [JsonProperty] public string playername { get; set; }
+        [JsonProperty] public string password { get; set; }
+
     }
 
     public class Mod : BaseMod, IModSystem
@@ -71,6 +72,7 @@ namespace KitchenPlateupAP
         bool deathLinkResetToLastStarPending = false;
         public static int applianceSpeedMode = 0;
         private static bool checksDisabled = false;
+        private bool dishPedestalSpawned = false;
 
         // Static day cycle and spawn state.
         private static int lastDay = 0;
@@ -91,6 +93,7 @@ namespace KitchenPlateupAP
         public static int TotalLeaseItemsReceived = 0;
         private static bool itemsEventSubscribed = false;
         private static Queue<ItemInfo> spawnQueue = new Queue<ItemInfo>();
+        private bool franchisePending = false;
 
         // Flag to prevent repeated logging during a cycle.
         private static bool loggedCardThisCycle = false;
@@ -137,7 +140,7 @@ namespace KitchenPlateupAP
             if (session == null)
                 return; // Not connected
 
-            var slotData = ArchipelagoConnectionManager.SlotData;  // Fetch globally stored slot data
+            var slotData = ArchipelagoConnectionManager.SlotData;
 
             if (slotData != null)
             {
@@ -149,20 +152,24 @@ namespace KitchenPlateupAP
 
                     try
                     {
-                        // Deserialize the string into a list
                         selectedDishes = JsonConvert.DeserializeObject<List<string>>(rawDishes.ToString());
 
                         if (selectedDishes.Count > 0)
                         {
-                            Logger.LogInfo($"[PlateupAP] Selected Dishes from Archipelago: {string.Join(", ", selectedDishes)}");
-                            SendSelectedDishesMessage(); 
+                            string dishName = selectedDishes[0];
+                            if (ProgressionMapping.dish_id_lookup.TryGetValue(dishName, out int dishId))
+                            {
+                                LockedDishes.SetUnlockedDishes(new[] { dishId });
+                                PersistUnlockedDish(dishId);
+                                PersistLastSelectedDishes(selectedDishes);
+                                Logger.LogInfo($"[PlateupAP] Unlocked dish set to '{dishName}' (ID: {dishId})");
+                            }
+                            else
+                            {
+                                Logger.LogWarning($"[PlateupAP] Dish name '{dishName}' not found in dish_id_lookup!");
+                            }
                         }
-                        else
-                        {
-                            checksDisabled = true;
-                            Logger.LogInfo($"[Settings] Checks disabled: {checksDisabled}");
 
-                        }
                     }
                     catch (JsonReaderException ex)
                     {
@@ -188,7 +195,6 @@ namespace KitchenPlateupAP
                     Logger.LogInfo($"[PlateupAP] Day count goal: {dayCount}");
                 }
 
-                // Check if DeathLink is enabled
                 if (slotData.TryGetValue("death_link", out object rawDeathLink))
                 {
                     bool deathLinkEnabled = Convert.ToBoolean(rawDeathLink);
@@ -196,7 +202,7 @@ namespace KitchenPlateupAP
 
                     if (deathLinkEnabled)
                     {
-                        EnableDeathLink(); 
+                        EnableDeathLink();
                     }
                 }
 
@@ -217,6 +223,29 @@ namespace KitchenPlateupAP
                     applianceSpeedMode = Convert.ToInt32(rawApplianceSpeedMode);
                     Logger.LogInfo($"[PlateupAP] Appliance Speed Mode set to {applianceSpeedMode} (0=grouped, 1=separate)");
                 }
+            }
+
+            if (selectedDishes.Count > 0)
+            {
+                string dishName = selectedDishes[0];
+                int dishGdoId = ProgressionMapping.dishDictionary
+                    .FirstOrDefault(kv => kv.Value == dishName).Key;
+
+                if (dishGdoId != 0 && KitchenData.GameData.Main.TryGet<Dish>(dishGdoId, out var dish))
+                {
+                    LockedDishes.SetUnlockedDishes(new[] { dishGdoId });
+                    PersistUnlockedDish(dishGdoId);
+                    PersistLastSelectedDishes(selectedDishes);
+                    Logger.LogInfo($"[PlateupAP] Unlocked dish set to '{dishName}' (GDO ID: {dishGdoId})");
+                }
+                else
+                {
+                    Logger.LogWarning($"[PlateupAP] Dish name '{dishName}' not found in dishDictionary or not a valid GDO!");
+                }
+            }
+            else
+            {
+                Logger.LogWarning("[PlateupAP] selectedDishes is empty, no dish to unlock.");
             }
         }
 
@@ -276,7 +305,7 @@ namespace KitchenPlateupAP
                         Directory.CreateDirectory(folder);
 
                     string path = Path.Combine(folder, "archipelago_config.json");
-                    ArchipelagoConfig defaultConfig = new ArchipelagoConfig
+                    PlateupAPConfig defaultConfig = new PlateupAPConfig
                     {
                         address = "archipelago.gg",
                         port = 0,
@@ -296,13 +325,36 @@ namespace KitchenPlateupAP
                         Debug.LogError("Config file not found at: " + path);
                         return;
                     }
+
                     string json = File.ReadAllText(path);
-                    ArchipelagoConfig config = JsonConvert.DeserializeObject<ArchipelagoConfig>(json);
-                    if (string.IsNullOrEmpty(config.address))
+
+                    PlateupAPConfig config;
+                    try
                     {
-                        Debug.LogError("Config file does not contain a valid address.");
+                        // Manual parse only – avoids any global converter noise.
+                        var jo = Newtonsoft.Json.Linq.JObject.Parse(json);
+                        config = new PlateupAPConfig
+                        {
+                            address = (string)jo["address"],
+                            port = (int?)jo["port"] ?? 0,
+                            playername = (string)jo["playername"],
+                            password = (string)jo["password"]
+                        };
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogError("[PlateupAP][Config] Manual parse failed: " + ex);
+                        Debug.LogError("JSON: " + json);
                         return;
                     }
+
+                    if (string.IsNullOrWhiteSpace(config.address))
+                    {
+                        Debug.LogError("[PlateupAP][Config] Invalid address.");
+                        return;
+                    }
+
+                    Debug.Log($"[PlateupAP][Config] Using server={config.address}:{config.port} player={config.playername}");
                     UpdateArchipelagoConfig(config);
                 });
 
@@ -337,7 +389,7 @@ namespace KitchenPlateupAP
             applianceSpeedQuery = GetEntityQuery(new QueryHelper().All(typeof(CApplianceSpeedModifier)));
         }
 
-        public void UpdateArchipelagoConfig(ArchipelagoConfig config)
+        public void UpdateArchipelagoConfig(PlateupAPConfig config)
         {
             // Use static connection manager.
             ArchipelagoConnectionManager.TryConnect(config.address, config.port, config.playername, config.password);
@@ -358,6 +410,7 @@ namespace KitchenPlateupAP
                 {
                     World.GetOrCreateSystem<SaveProgressionSystem>().Enabled = true;
 
+                    // Reinitialize systems based on appliance speed mode
                     if (applianceSpeedMode == 0)
                     {
                         World.GetOrCreateSystem<ApplyApplianceSpeedModifierSystem>().Enabled = true;
@@ -380,25 +433,49 @@ namespace KitchenPlateupAP
                     }
                 }
 
-                    if (!dishesMessageSent && selectedDishes.Count > 0)
+                if (!dishesMessageSent && LockedDishes.GetAvailableDishes().Any())
                 {
                     SendSelectedDishesMessage();
                     dishesMessageSent = true;
                     Logger.LogInfo("Selected dishes message sent successfully.");
                 }
-                else if (selectedDishes.Count == 0)
+                else if (!LockedDishes.GetAvailableDishes().Any())
                 {
-                    Logger.LogWarning("Tried to send selected dishes, but the list is empty.");
+                    Logger.LogWarning("No unlocked dishes available.");
                 }
-                else
-                {
-                    Logger.LogWarning("Skipping duplicate dish message.");
-                }
-                var name = session.Players.GetPlayerAlias(session.ConnectionInfo.Slot);
-                ChatManager.AddSystemMessage("Connected to Archipelago as " + name + ".");
 
-                if (World != null)
+                // OPTIONAL: sanitize any string permission collections that contain "Disabled"
+                try
                 {
+                    var ci = ArchipelagoConnectionManager.Session?.ConnectionInfo;
+                    // Example: if there is a string list you stored somewhere (pseudo – adjust to your actual structure).
+                    // if (ci?.PermissionsList is List<string> perms)
+                    // {
+                    //     int removed = perms.RemoveAll(p => p == "Disabled");
+                    //     if (removed > 0)
+                    //         Logger.LogInfo($"[PlateupAP] Removed {removed} 'Disabled' permission entries post-login.");
+                    // }
+                }
+                catch (System.Exception ex)
+                {
+                    Logger.LogWarning("[PlateupAP] Post-login permission cleanup failed: " + ex.Message);
+                }
+
+                // OPTIONAL: sanitize any string permission collections that contain "Disabled"
+                try
+                {
+                    var ci = ArchipelagoConnectionManager.Session?.ConnectionInfo;
+                    // Example: if there is a string list you stored somewhere (pseudo – adjust to your actual structure).
+                    // if (ci?.PermissionsList is List<string> perms)
+                    // {
+                    //     int removed = perms.RemoveAll(p => p == "Disabled");
+                    //     if (removed > 0)
+                    //         Logger.LogInfo($"[PlateupAP] Removed {removed} 'Disabled' permission entries post-login.");
+                    // }
+                }
+                catch (System.Exception ex)
+                {
+                    Logger.LogWarning("[PlateupAP] Post-login permission cleanup failed: " + ex.Message);
                 }
             }
         }
@@ -412,19 +489,59 @@ namespace KitchenPlateupAP
             }
 
             var checkedLocations = session.Locations.AllLocationsChecked;
+            Logger.LogInfo("[Reconstruct] All checked locations: " + string.Join(", ", checkedLocations));
 
             if (goal == 0)
             {
-                // Franchise goal: Check how many franchise completions were recorded (ID 100000)
-                timesFranchised = checkedLocations.Count(loc => loc == 100000);
+                // Franchise goal: Only count franchise completions (ID 100000)
+                timesFranchised = 0;
+                foreach (var loc in checkedLocations)
+                {
+                    if (loc == 100000)
+                        timesFranchised++;
+                }
                 Logger.LogInfo($"[Reconstruct] timesFranchised reconstructed as: {timesFranchised}");
             }
             else
             {
-                // Day goal: Count all valid day completions (110000 - 119999)
-                overallDaysCompleted = checkedLocations.Count(loc => loc >= 110000 && loc < 120000);
-                overallStarsEarned = checkedLocations.Count(loc => loc >= 120000 && loc < 130000);
-                Logger.LogInfo($"[Reconstruct] overallDaysCompleted: {overallDaysCompleted}, overallStarsEarned: {overallStarsEarned}");
+                // Day goal: Count all valid day and star completions, and find lastDay for dish checks
+                overallDaysCompleted = 0;
+                overallStarsEarned = 0;
+                int lastFranchiseIdx = -1;
+                int idx = 0;
+
+                // Find the last franchise index
+                foreach (var loc in checkedLocations)
+                {
+                    if (loc == 100000)
+                        lastFranchiseIdx = idx;
+                    idx++;
+                }
+
+                // Find lastDay after last franchise, and count days/stars overall
+                int tempIdx = 0;
+                int tempLastDay = 0;
+                foreach (var loc in checkedLocations)
+                {
+                    if (loc >= 110000 && loc < 120000)
+                    {
+                        overallDaysCompleted++;
+                        if (tempIdx > lastFranchiseIdx)
+                        {
+                            int dayNum = (int)(loc - 110000);
+                            if (dayNum > tempLastDay)
+                                tempLastDay = dayNum;
+                        }
+                    }
+                    if (loc >= 120000 && loc < 130000)
+                    {
+                        overallStarsEarned++;
+                    }
+                    tempIdx++;
+                }
+                lastDay = tempLastDay;
+
+                Logger.LogInfo($"[Reconstruct] overallDaysCompleted: {overallDaysCompleted}, overallStarsEarned: {overallStarsEarned}, lastDay (for dish checks): {lastDay}");
             }
 
             // Count total lease items (item ID 15) in inventory (regardless of goal)
@@ -556,6 +673,18 @@ namespace KitchenPlateupAP
             franchiseScreen = HasSingleton<SFranchiseBuilderMarker>();
             loseScreen = HasSingleton<SGameOver>();
             inLobby = HasSingleton<SFranchiseMarker>();
+
+            // Ensure dish pedestal is spawned as soon as we enter the lobby
+            if (inLobby && !dishPedestalSpawned && LockedDishes.GetAvailableDishes().Any())
+            {
+                Logger.LogInfo("[OnUpdate] Forced dish card refresh in lobby.");
+                dishPedestalSpawned = true;
+            }
+            else if (!inLobby)
+            {
+                dishPedestalSpawned = false; // Reset flag when leaving lobby
+            }
+
             if (HasSingleton<SKitchenMarker>())
             {
                 UpdateDayCycle();
@@ -567,28 +696,20 @@ namespace KitchenPlateupAP
                 return;
             }
 
-            else if (franchiseScreen && !franchised)
+            else if (goal == 0 && franchisePending)
             {
-                Logger.LogInfo("You franchised!");
-                HandleGameReset();
-                franchised = true;
+                timesFranchised++;
+                dayID = 100000 * timesFranchised;
+                session.Locations.CompleteLocationChecks(dayID);
+                Logger.LogInfo($"[Franchise Goal] Franchise completion recorded early. Total: {timesFranchised}");
 
-                // Only do these if goal=0
-                if (goal == 0)
+                if (timesFranchised >= franchiseCount)
                 {
-                    lastDay = 0;
-                    timesFranchised++;
-                    dayID = 100000 * timesFranchised;
-                    session.Locations.CompleteLocationChecks(dayID);
-
-                    Logger.LogInfo($"User has franchised {timesFranchised} times, goal is {franchiseCount} times.");
-
-                    if (timesFranchised >= franchiseCount)
-                    {
-                        Logger.LogInfo("Franchise goal reached! Sending goal complete.");
-                        SendGoalComplete();
-                    }
+                    Logger.LogInfo("Franchise goal reached! Sending goal complete.");
+                    SendGoalComplete();
                 }
+
+                franchisePending = false;
             }
 
             else if (loseScreen && !lost)
@@ -751,11 +872,14 @@ namespace KitchenPlateupAP
         {
             ItemInfo info = helper.DequeueItem();
             int checkId = (int)info.ItemId;
+            string itemName = session.Items.GetItemName(checkId);
+
             Logger.LogInfo($"[OnItemReceived] Received check ID: {checkId}");
 
             if (checkId == 15)
             {
                 Logger.LogInfo($"[OnItemReceived] Received Day Lease");
+                KitchenPlateupAP.LeaseRequirementSystem.TriggerRefresh();
                 return;
             }
 
@@ -854,6 +978,23 @@ namespace KitchenPlateupAP
             {
                 Logger.LogInfo($"[OnItemReceived] Item ID {checkId} is already in spawnQueue. Skipping duplicate.");
             }
+
+            // Dish unlock logic
+    if (itemName != null && itemName.StartsWith("Unlock: "))
+    {
+        string dishName = itemName.Substring("Unlock: ".Length).Trim();
+        if (ProgressionMapping.dish_id_lookup.TryGetValue(dishName, out int newDishId))
+        {
+            PersistUnlockedDish(newDishId);
+            LockedDishes.SetUnlockedDishes(new[] { newDishId });
+            Logger.LogInfo($"Unlocked new dish: {dishName} (ID: {newDishId})");
+        }
+        else
+        {
+            Logger.LogWarning($"Received unknown dish unlock: {dishName}");
+        }
+        return;
+    }
         }
 
         private ItemInfo CreateItemInfoForQueue(int itemId)
@@ -948,6 +1089,7 @@ namespace KitchenPlateupAP
             lost = false;
             itemsQueuedThisLobby = false;
             itemsSpawnedThisRun = false;
+            franchisePending = false;
 
             lastDay = 0;
             stars = 0;
@@ -1078,10 +1220,10 @@ namespace KitchenPlateupAP
             if (ProgressionMapping.progressionToGDO.TryGetValue(checkId, out int gdoId))
             {
                 SpawnPositionType positionType = SpawnPositionType.Door;
-                SpawnApplianceMode spawnApplianceMode = SpawnApplianceMode.Blueprint;
 
                 if (KitchenData.GameData.Main.TryGet<Appliance>(gdoId, out Appliance appliance))
-                    SpawnRequestSystem.Request<Appliance>(gdoId, positionType, InputSourceIdentifier.Identifier, spawnApplianceMode);
+                    //Directly spawn appliances without blueprint mode
+                    SpawnRequestSystem.Request<Appliance>(gdoId, positionType, InputSourceIdentifier.Identifier);
                 else if (KitchenData.GameData.Main.TryGet<Decor>(gdoId, out Decor decor))
                     SpawnRequestSystem.Request<Decor>(gdoId, positionType);
                 else
@@ -1267,6 +1409,13 @@ namespace KitchenPlateupAP
                     int dayLocationID = dayID + lastDay;
                     session.Locations.CompleteLocationChecks(dayLocationID);
                     Logger.LogInfo($"[Franchise Goal] Completed location check => ID={dayLocationID}");
+
+                    if (lastDay == 15 && !franchisePending)
+                    {
+                        // Mark franchise as pending, so it will be counted even if the player exits before franchise screen
+                        franchisePending = true;
+                        Logger.LogInfo("[Franchise Goal] Franchise completion is now pending.");
+                    }
 
                     if (lastDay <= 15)
                     {
@@ -1473,5 +1622,109 @@ namespace KitchenPlateupAP
             statusUpdate.Status = ArchipelagoClientState.ClientGoal;
             session.Socket.SendPacket(statusUpdate);
         }
+
+        private const string UnlockedDishFile = "unlocked_dish.txt";
+
+private int? LoadPersistedUnlockedDish()
+{
+    string path = Path.Combine(Application.persistentDataPath, UnlockedDishFile);
+    if (File.Exists(path) && int.TryParse(File.ReadAllText(path), out int id))
+        return id;
+    return null;
+}
+
+private void PersistUnlockedDish(int dishId)
+{
+    string path = Path.Combine(Application.persistentDataPath, UnlockedDishFile);
+    File.WriteAllText(path, dishId.ToString());
+}
+
+private const string LastSelectedDishesFile = "last_selected_dishes.txt";
+
+private List<string> LoadLastSelectedDishes()
+{
+    string path = Path.Combine(Application.persistentDataPath, LastSelectedDishesFile);
+    if (File.Exists(path))
+        return File.ReadAllLines(path).ToList();
+    return new List<string>();
+}
+
+private void PersistLastSelectedDishes(List<string> dishes)
+{
+    string path = Path.Combine(Application.persistentDataPath, LastSelectedDishesFile);
+    File.WriteAllLines(path, dishes);
+}
+
+private PlateupAPConfig LoadConfigIsolated(string json)
+{
+    // 1. Raw dump of currently registered global converters (if any)
+    try
+    {
+        var global = JsonConvert.DefaultSettings?.Invoke();
+        if (global != null && global.Converters != null)
+        {
+            Debug.Log("[PlateupAP][ConfigDebug] Global Converters:");
+            for (int i = 0; i < global.Converters.Count; i++)
+            {
+                var c = global.Converters[i];
+                Debug.Log($"[PlateupAP][ConfigDebug]   #{i}: {c.GetType().FullName}");
+            }
+        }
+        else
+        {
+            Debug.Log("[PlateupAP][ConfigDebug] No global DefaultSettings or no converters.");
+        }
+    }
+    catch (Exception ex)
+    {
+        Debug.Log($"[PlateupAP][ConfigDebug] Failed dumping global converters: {ex.Message}");
+    }
+
+    // 2. Attempt strict clean deserialization (NO converters)
+    try
+    {
+        var cleanSettings = new JsonSerializerSettings
+        {
+            Converters = new List<JsonConverter>(), // force empty
+            MetadataPropertyHandling = MetadataPropertyHandling.Ignore,
+            MissingMemberHandling = MissingMemberHandling.Ignore,
+            NullValueHandling = NullValueHandling.Include
+        };
+        var clean = JsonConvert.DeserializeObject<PlateupAPConfig>(json, cleanSettings);
+        if (clean != null)
+        {
+            Debug.Log("[PlateupAP][ConfigDebug] Clean settings deserialization succeeded.");
+            return clean;
+        }
+        Debug.Log("[PlateupAP][ConfigDebug] Clean settings deserialization returned null – falling back to manual parse.");
+    }
+    catch (Exception ex)
+    {
+        Debug.Log($"[PlateupAP][ConfigDebug] Clean deserialization path failed: {ex}");
+    }
+
+    // 3. Manual parse fallback (completely bypass converters)
+    try
+    {
+        var jo = Newtonsoft.Json.Linq.JObject.Parse(json);
+        var manual = new PlateupAPConfig
+        {
+            address = (string)jo["address"],
+            port = (int?)jo["port"] ?? 0,
+            playername = (string)jo["playername"],
+            password = (string)jo["password"]
+        };
+        if (string.IsNullOrWhiteSpace(manual.address))
+            throw new Exception("Manual parse produced empty address.");
+        Debug.Log("[PlateupAP][ConfigDebug] Manual parse succeeded.");
+        return manual;
+    }
+    catch (Exception ex)
+    {
+        Debug.LogError($"[PlateupAP][ConfigDebug] Manual parse failed: {ex}");
+    }
+
+    return null;
+}
     }
 }

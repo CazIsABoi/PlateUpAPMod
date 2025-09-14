@@ -1,26 +1,52 @@
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
 
-  <UsingTask TaskName="ILRepack.ILRepack"
-             AssemblyFile="$(NuGetPackageRoot)ilrepack\2.0.44\tools\ILRepack.dll" />
+  <!-- Control flags -->
+  <PropertyGroup>
+    <!-- Set IsPacked=true via build parameter or a PropertyGroup in Release -->
+    <IsPacked Condition="'$(IsPacked)' == ''">false</IsPacked>
+    <DoILRepack Condition="'$(IsPacked)' == 'true'">true</DoILRepack>
+    <MergedTemp>$(TargetDir)$(AssemblyName).merged.dll</MergedTemp>
+    <!-- Toggle if you really want to merge Newtonsoft.Json (default false) -->
+    <MergeNewtonsoft>true</MergeNewtonsoft>
+  </PropertyGroup>
 
-<Target Name="ILRepack" AfterTargets="Build" Condition="'$(IsPacked)' == 'true'">
-<ItemGroup>
-  <InputAssemblies Include="$(TargetPath)" />
-  <InputAssemblies Include="
-      $(LibFolder)\Archipelago.MultiClient.Net.dll;
-      $(LibFolder)\PLib.dll;
-      $(LibFolder)\KaitoKid.ArchipelagoUtilities.Net.dll;
-      $(LibFolder)\UtilLibs.dll;
-      C:\Users\cazpe\OneDrive\Desktop\My Mods\PlateupAP\bin\Debug\net472\Newtonsoft.Json.dll" />
-</ItemGroup>
+  <!-- Optional exclude file -->
+  <ItemGroup Condition="Exists('$(ProjectDir)ilrepack-exclude.txt')">
+    <RepackExcludeFile Include="$(ProjectDir)ilrepack-exclude.txt" />
+  </ItemGroup>
 
-  <ILRepack
-    TargetPlatformVersion="v4"
-    TargetKind="SameAsPrimaryAssembly"
-    InputAssemblies="@(InputAssemblies)"
-    Wildcards="true"
-    LibraryPath="$(GameLibsFolder)"
-    Parallel="true"
-    OutputFile="$(TargetPath)" />
-</Target>
+  <Target Name="ILRepack"
+          AfterTargets="Build"
+          Condition="'$(DoILRepack)' == 'true'">
+
+    <ItemGroup>
+      <MergeInputs Include="$(TargetPath)" />
+      <MergeInputs Include="$(TargetDir)Newtonsoft.Json.dll"
+                   Condition="'$(MergeNewtonsoft)'=='true' and Exists('$(TargetDir)Newtonsoft.Json.dll')" />
+      <MergeInputs Include="$(TargetDir)Archipelago.MultiClient.Net.dll"
+                   Condition="'$(MergeArchipelago)'=='true' and Exists('$(TargetDir)Archipelago.MultiClient.Net.dll')" />
+      <MergeInputs Include="$(TargetDir)KaitoKid.ArchipelagoUtilities.Net.dll"
+                   Condition="'$(MergeArchipelago)'=='true' and Exists('$(TargetDir)KaitoKid.ArchipelagoUtilities.Net.dll')" />
+    </ItemGroup>
+
+    <Message Text="ILRepack merging: @(MergeInputs)" Importance="High" />
+
+    <ILRepack
+        InputAssemblies="@(MergeInputs)"
+        OutputFile="$(MergedTemp)"
+        TargetKind="SameAsPrimaryAssembly"
+        Parallel="true"
+        Internalize="false"
+        LibraryPath="$(TargetDir)"
+        TargetPlatformVersion="v4"
+        Verbose="true"
+        Wildcards="false"
+        ExcludeFile="@(RepackExcludeFile)"
+        Condition="'@(MergeInputs)' != ''" />
+
+    <Copy SourceFiles="$(MergedTemp)"
+          DestinationFiles="$(TargetPath)"
+          OverwriteReadOnlyFiles="true" />
+    <Delete Files="$(MergedTemp)" />
+  </Target>
 </Project>

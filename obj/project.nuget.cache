@@ -1,12 +1,12 @@
 {
   "version": 2,
-  "dgSpecHash": "2m9DYmjrYMk=",
+  "dgSpecHash": "0/KO/MB6MbQ=",
   "success": true,
-  "projectFilePath": "C:\\Users\\cazpe\\OneDrive\\Desktop\\My Mods\\PlateupAP\\PlateupAP.csproj",
+  "projectFilePath": "C:\\My Mods\\PlateupAP\\PlateupAP.csproj",
   "expectedPackageFiles": [
-    "C:\\Users\\cazpe\\.nuget\\packages\\archipelago.multiclient.net\\6.6.0\\archipelago.multiclient.net.6.6.0.nupkg.sha512",
-    "C:\\Users\\cazpe\\.nuget\\packages\\ilrepack\\2.0.44\\ilrepack.2.0.44.nupkg.sha512",
+    "C:\\Users\\cazpe\\.nuget\\packages\\archipelago.multiclient.net\\6.6.1\\archipelago.multiclient.net.6.6.1.nupkg.sha512",
     "C:\\Users\\cazpe\\.nuget\\packages\\ilrepack.lib.msbuild.task\\2.0.43\\ilrepack.lib.msbuild.task.2.0.43.nupkg.sha512",
+    "C:\\Users\\cazpe\\.nuget\\packages\\newtonsoft.json\\13.0.3\\newtonsoft.json.13.0.3.nupkg.sha512",
     "C:\\Users\\cazpe\\.nuget\\packages\\yariazen.plateup.modbuildutilities\\1.13.0\\yariazen.plateup.modbuildutilities.1.13.0.nupkg.sha512"
   ],
   "logs": []

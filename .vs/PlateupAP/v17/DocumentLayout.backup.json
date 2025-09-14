@@ -1,38 +1,42 @@
 {
   "Version": 1,
-  "WorkspaceRootPath": "C:\\Users\\cazpe\\OneDrive\\Desktop\\My Mods\\PlateupAP\\",
+  "WorkspaceRootPath": "C:\\My Mods\\PlateupAP\\",
   "Documents": [
     {
-      "AbsoluteMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|c:\\users\\cazpe\\onedrive\\desktop\\my mods\\plateupap\\patches\\patches.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
-      "RelativeMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|solutionrelative:patches\\patches.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+      "AbsoluteMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|c:\\my mods\\plateupap\\archipelagoconnectionmanager.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|solutionrelative:archipelagoconnectionmanager.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|c:\\users\\cazpe\\onedrive\\desktop\\my mods\\plateupap\\mod.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
-      "RelativeMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|solutionrelative:mod.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+      "AbsoluteMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|c:\\my mods\\plateupap\\ilrepack.targets||{FA3CD31E-987B-443A-9B81-186104E8DAC1}",
+      "RelativeMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|solutionrelative:ilrepack.targets||{FA3CD31E-987B-443A-9B81-186104E8DAC1}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|c:\\users\\cazpe\\onedrive\\desktop\\my mods\\plateupap\\patches\\lockeddishes.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
-      "RelativeMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|solutionrelative:patches\\lockeddishes.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|c:\\users\\cazpe\\onedrive\\desktop\\my mods\\plateupap\\progressionmapping.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
-      "RelativeMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|solutionrelative:progressionmapping.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|c:\\users\\cazpe\\onedrive\\desktop\\my mods\\plateupap\\plateupap.csproj||{FA3CD31E-987B-443A-9B81-186104E8DAC1}|",
+      "AbsoluteMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|c:\\my mods\\plateupap\\plateupap.csproj||{FA3CD31E-987B-443A-9B81-186104E8DAC1}|",
       "RelativeMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|solutionrelative:plateupap.csproj||{FA3CD31E-987B-443A-9B81-186104E8DAC1}|"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|c:\\users\\cazpe\\onedrive\\desktop\\my mods\\plateupap\\gates\\lease.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "AbsoluteMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|c:\\my mods\\plateupap\\patches\\patches.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|solutionrelative:patches\\patches.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|c:\\my mods\\plateupap\\mod.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|solutionrelative:mod.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|c:\\my mods\\plateupap\\patches\\lockeddishes.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|solutionrelative:patches\\lockeddishes.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|c:\\my mods\\plateupap\\gates\\lease.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
       "RelativeMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|solutionrelative:gates\\lease.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|c:\\users\\cazpe\\onedrive\\desktop\\my mods\\plateupap\\appliancespeed.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
-      "RelativeMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|solutionrelative:appliancespeed.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+      "AbsoluteMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|c:\\my mods\\plateupap\\progressionmapping.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|solutionrelative:progressionmapping.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|c:\\users\\cazpe\\onedrive\\desktop\\my mods\\plateupap\\archipelagoconnectionmanager.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
-      "RelativeMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|solutionrelative:archipelagoconnectionmanager.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+      "AbsoluteMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|c:\\my mods\\plateupap\\appliancespeed.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|solutionrelative:appliancespeed.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
     }
   ],
   "DocumentGroupContainers": [
@@ -42,106 +46,124 @@
       "DocumentGroups": [
         {
           "DockedWidth": 200,
-          "SelectedChildIndex": 0,
+          "SelectedChildIndex": 8,
           "Children": [
             {
               "$type": "Document",
-              "DocumentIndex": 0,
+              "DocumentIndex": 1,
+              "Title": "ILRepack.targets",
+              "DocumentMoniker": "C:\\My Mods\\PlateupAP\\ILRepack.targets",
+              "RelativeDocumentMoniker": "ILRepack.targets",
+              "ToolTip": "C:\\My Mods\\PlateupAP\\ILRepack.targets",
+              "RelativeToolTip": "ILRepack.targets",
+              "ViewState": "AgIAAA8AAAAAAAAAAAAAACMAAAAiAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.003801|",
+              "WhenOpened": "2025-09-13T22:18:38.73Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 3,
               "Title": "Patches.cs",
-              "DocumentMoniker": "C:\\Users\\cazpe\\OneDrive\\Desktop\\My Mods\\PlateupAP\\Patches\\Patches.cs",
+              "DocumentMoniker": "C:\\My Mods\\PlateupAP\\Patches\\Patches.cs",
               "RelativeDocumentMoniker": "Patches\\Patches.cs",
-              "ToolTip": "C:\\Users\\cazpe\\OneDrive\\Desktop\\My Mods\\PlateupAP\\Patches\\Patches.cs",
+              "ToolTip": "C:\\My Mods\\PlateupAP\\Patches\\Patches.cs",
               "RelativeToolTip": "Patches\\Patches.cs",
-              "ViewState": "AgIAAGQAAAAAAAAAAAAswHUAAAByAAAAAAAAAA==",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAUAAAAAAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
               "WhenOpened": "2025-09-01T23:20:16.233Z",
               "EditorCaption": ""
             },
             {
               "$type": "Document",
-              "DocumentIndex": 1,
+              "DocumentIndex": 4,
               "Title": "Mod.cs",
-              "DocumentMoniker": "C:\\Users\\cazpe\\OneDrive\\Desktop\\My Mods\\PlateupAP\\Mod.cs",
+              "DocumentMoniker": "C:\\My Mods\\PlateupAP\\Mod.cs",
               "RelativeDocumentMoniker": "Mod.cs",
-              "ToolTip": "C:\\Users\\cazpe\\OneDrive\\Desktop\\My Mods\\PlateupAP\\Mod.cs",
+              "ToolTip": "C:\\My Mods\\PlateupAP\\Mod.cs",
               "RelativeToolTip": "Mod.cs",
-              "ViewState": "AgIAAHUGAAAAAAAAAAAIwLEGAAAyAAAAAAAAAA==",
+              "ViewState": "AgIAAFcGAAAAAAAAAAAkwH0GAAABAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
               "WhenOpened": "2025-08-30T01:45:16.658Z",
               "EditorCaption": ""
             },
             {
               "$type": "Document",
-              "DocumentIndex": 2,
+              "DocumentIndex": 5,
               "Title": "LockedDishes.cs",
-              "DocumentMoniker": "C:\\Users\\cazpe\\OneDrive\\Desktop\\My Mods\\PlateupAP\\Patches\\LockedDishes.cs",
+              "DocumentMoniker": "C:\\My Mods\\PlateupAP\\Patches\\LockedDishes.cs",
               "RelativeDocumentMoniker": "Patches\\LockedDishes.cs",
-              "ToolTip": "C:\\Users\\cazpe\\OneDrive\\Desktop\\My Mods\\PlateupAP\\Patches\\LockedDishes.cs",
+              "ToolTip": "C:\\My Mods\\PlateupAP\\Patches\\LockedDishes.cs",
               "RelativeToolTip": "Patches\\LockedDishes.cs",
-              "ViewState": "AgIAABkAAAAAAAAAAAAewDsAAAABAAAAAAAAAA==",
+              "ViewState": "AgIAAAkAAAAAAAAAAIA7wDsAAAABAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
               "WhenOpened": "2025-08-30T01:45:11.721Z",
               "EditorCaption": ""
             },
             {
               "$type": "Document",
-              "DocumentIndex": 6,
+              "DocumentIndex": 8,
               "Title": "ApplianceSpeed.cs",
-              "DocumentMoniker": "C:\\Users\\cazpe\\OneDrive\\Desktop\\My Mods\\PlateupAP\\ApplianceSpeed.cs",
+              "DocumentMoniker": "C:\\My Mods\\PlateupAP\\ApplianceSpeed.cs",
               "RelativeDocumentMoniker": "ApplianceSpeed.cs",
-              "ToolTip": "C:\\Users\\cazpe\\OneDrive\\Desktop\\My Mods\\PlateupAP\\ApplianceSpeed.cs",
+              "ToolTip": "C:\\My Mods\\PlateupAP\\ApplianceSpeed.cs",
               "RelativeToolTip": "ApplianceSpeed.cs",
               "ViewState": "AgIAAEEBAAAAAAAAAAAcwFMBAAAaAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2025-08-11T23:51:12.275Z"
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 3,
-              "Title": "ProgressionMapping.cs",
-              "DocumentMoniker": "C:\\Users\\cazpe\\OneDrive\\Desktop\\My Mods\\PlateupAP\\ProgressionMapping.cs",
-              "RelativeDocumentMoniker": "ProgressionMapping.cs",
-              "ToolTip": "C:\\Users\\cazpe\\OneDrive\\Desktop\\My Mods\\PlateupAP\\ProgressionMapping.cs",
-              "RelativeToolTip": "ProgressionMapping.cs",
-              "ViewState": "AgIAAIgAAAAAAAAAAAAswKkAAAAKAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2025-08-11T23:35:38.348Z"
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 5,
-              "Title": "Lease.cs",
-              "DocumentMoniker": "C:\\Users\\cazpe\\OneDrive\\Desktop\\My Mods\\PlateupAP\\Gates\\Lease.cs",
-              "RelativeDocumentMoniker": "Gates\\Lease.cs",
-              "ToolTip": "C:\\Users\\cazpe\\OneDrive\\Desktop\\My Mods\\PlateupAP\\Gates\\Lease.cs",
-              "RelativeToolTip": "Gates\\Lease.cs",
-              "ViewState": "AgIAACQAAAAAAAAAAAAowDMAAAANAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2025-07-22T14:59:38.851Z"
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 4,
-              "Title": "PlateupAP.csproj",
-              "DocumentMoniker": "C:\\Users\\cazpe\\OneDrive\\Desktop\\My Mods\\PlateupAP\\PlateupAP.csproj",
-              "RelativeDocumentMoniker": "PlateupAP.csproj",
-              "ToolTip": "C:\\Users\\cazpe\\OneDrive\\Desktop\\My Mods\\PlateupAP\\PlateupAP.csproj",
-              "RelativeToolTip": "PlateupAP.csproj",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAAABUAAAAAAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000758|",
-              "WhenOpened": "2025-07-15T14:17:33.521Z"
+              "WhenOpened": "2025-08-11T23:51:12.275Z",
+              "EditorCaption": ""
             },
             {
               "$type": "Document",
               "DocumentIndex": 7,
-              "Title": "ArchipelagoConnectionManager.cs",
-              "DocumentMoniker": "C:\\Users\\cazpe\\OneDrive\\Desktop\\My Mods\\PlateupAP\\ArchipelagoConnectionManager.cs",
-              "RelativeDocumentMoniker": "ArchipelagoConnectionManager.cs",
-              "ToolTip": "C:\\Users\\cazpe\\OneDrive\\Desktop\\My Mods\\PlateupAP\\ArchipelagoConnectionManager.cs",
-              "RelativeToolTip": "ArchipelagoConnectionManager.cs",
-              "ViewState": "AgIAACAAAAAAAAAAAAAAAD8AAAAwAAAAAAAAAA==",
+              "Title": "ProgressionMapping.cs",
+              "DocumentMoniker": "C:\\My Mods\\PlateupAP\\ProgressionMapping.cs",
+              "RelativeDocumentMoniker": "ProgressionMapping.cs",
+              "ToolTip": "C:\\My Mods\\PlateupAP\\ProgressionMapping.cs",
+              "RelativeToolTip": "ProgressionMapping.cs",
+              "ViewState": "AgIAAIgAAAAAAAAAAAAswKkAAAAKAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2025-07-15T02:05:31.812Z"
+              "WhenOpened": "2025-08-11T23:35:38.348Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 6,
+              "Title": "Lease.cs",
+              "DocumentMoniker": "C:\\My Mods\\PlateupAP\\Gates\\Lease.cs",
+              "RelativeDocumentMoniker": "Gates\\Lease.cs",
+              "ToolTip": "C:\\My Mods\\PlateupAP\\Gates\\Lease.cs",
+              "RelativeToolTip": "Gates\\Lease.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAADQAAAANAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2025-07-22T14:59:38.851Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 2,
+              "Title": "PlateupAP.csproj",
+              "DocumentMoniker": "C:\\My Mods\\PlateupAP\\PlateupAP.csproj",
+              "RelativeDocumentMoniker": "PlateupAP.csproj",
+              "ToolTip": "C:\\My Mods\\PlateupAP\\PlateupAP.csproj",
+              "RelativeToolTip": "PlateupAP.csproj",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAcAAABWAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000758|",
+              "WhenOpened": "2025-07-15T14:17:33.521Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 0,
+              "Title": "ArchipelagoConnectionManager.cs",
+              "DocumentMoniker": "C:\\My Mods\\PlateupAP\\ArchipelagoConnectionManager.cs",
+              "RelativeDocumentMoniker": "ArchipelagoConnectionManager.cs",
+              "ToolTip": "C:\\My Mods\\PlateupAP\\ArchipelagoConnectionManager.cs",
+              "RelativeToolTip": "ArchipelagoConnectionManager.cs",
+              "ViewState": "AgIAAGgAAAAAAAAAAAAIwHgAAAA/AAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2025-07-15T02:05:31.812Z",
+              "EditorCaption": ""
             }
           ]
         }

@@ -1,122 +1,39 @@
 using HarmonyLib;
-using Kitchen;
-using Unity.Collections;
-using Unity.Entities;
-using UnityEngine;
-using System;
-using System.Collections;
-using System.Collections.Generic;
-using System.Linq;
 using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
+using System;
+using Unity.Entities;
+using Unity.Collections;
+using UnityEngine;
+using Kitchen;
 using Archipelago.MultiClient.Net.Enums;
 
 namespace KitchenPlateupAP
 {
+    // Bypass PermissionsEnumConverter when deserialising plain strings (prevents enum objects going into List<string>)
     [HarmonyPatch(typeof(Archipelago.MultiClient.Net.Converters.PermissionsEnumConverter), "ReadJson")]
-    internal static class Patch_PermissionsEnumConverter_ReadJson
+    internal static class Patch_PermissionsEnumConverter_ReadJson_StringBypass
     {
-        // Prefix returns false when we fully handle deserialization ourselves.
-        static bool Prefix(
-            ref object __result,
-            JsonReader reader,
-            Type objectType,
-            object existingValue,
-            JsonSerializer serializer)
+        static bool Prefix(ref object __result,
+                           JsonReader reader,
+                           Type objectType,
+                           object existingValue,
+                           JsonSerializer serializer)
         {
-            try
+            if (objectType == typeof(string))
             {
-                // Let original run for raw Permissions or nullable Permissions or collections of Permissions.
-                if (objectType == typeof(Permissions) ||
-                    objectType == typeof(Permissions?) ||
-                    IsPermissionsCollection(objectType))
+                // Reader may already be at a String token; otherwise just take its textual form
+                if (reader.TokenType == JsonToken.String)
                 {
-                    return true; // allow original method
+                    __result = (string)reader.Value;
                 }
-
-                // Snapshot token so we don't leave reader mid-stream
-                JToken token = JToken.Load(reader);
-
-                // If target is List<string> (or IList<string> / string[]), we sanitize "Disabled".
-                if (IsStringList(objectType))
+                else
                 {
-                    var strings = token.Type == JTokenType.Array
-                        ? token.Children().Select(t => (string)t).Where(s => s != "Disabled").ToList()
-                        : new List<string>();
-
-                    if (IsConcreteList(objectType))
-                    {
-                        __result = strings;
-                    }
-                    else if (objectType.IsArray)
-                    {
-                        __result = strings.ToArray();
-                    }
-                    else
-                    {
-                        // Try to create instance of requested collection and add
-                        var listInstance = (IList)Activator.CreateInstance(objectType);
-                        foreach (var s in strings) listInstance.Add(s);
-                        __result = listInstance;
-                    }
-
-                    Debug.Log($"[PlateupAP][PermPatch] Sanitized string list ({strings.Count} entries).");
-                    return false;
+                    // Fallback: convert current token to string safely
+                    __result = reader.Value == null ? null : reader.Value.ToString();
                 }
-
-                // For any other non-Permissions target: convert using an isolated serializer
-                var cleanSettings = new JsonSerializerSettings
-                {
-                    Converters = new List<JsonConverter>() // empty -> avoids invoking the same converter recursively
-                };
-                var cleanSerializer = JsonSerializer.Create(cleanSettings);
-                __result = token.ToObject(objectType, cleanSerializer);
-                return false;
+                return false; // Skip original converter
             }
-            catch (Exception ex)
-            {
-                Debug.LogError($"[PlateupAP][PermPatch] Fallback failed for {objectType}: {ex.Message}");
-                // Let original attempt if we failed
-                return true;
-            }
-        }
-
-        private static bool IsPermissionsCollection(Type t)
-        {
-            if (!typeof(IEnumerable).IsAssignableFrom(t))
-                return false;
-
-            if (t.IsArray)
-                return t.GetElementType() == typeof(Permissions);
-
-            if (t.IsGenericType)
-            {
-                var arg = t.GetGenericArguments().FirstOrDefault();
-                return arg == typeof(Permissions);
-            }
-            return false;
-        }
-
-        private static bool IsStringList(Type t)
-        {
-            if (t == typeof(List<string>) || t == typeof(IList<string>) || t == typeof(IEnumerable<string>))
-                return true;
-            if (t.IsArray && t.GetElementType() == typeof(string))
-                return true;
-            if (t.IsGenericType)
-            {
-                var ga = t.GetGenericArguments();
-                return ga.Length == 1 && ga[0] == typeof(string) &&
-                       (typeof(IList<>).MakeGenericType(typeof(string)).IsAssignableFrom(t) ||
-                        typeof(IEnumerable<>).MakeGenericType(typeof(string)).IsAssignableFrom(t));
-            }
-            return false;
-        }
-
-        private static bool IsConcreteList(Type t)
-        {
-            return t == typeof(List<string>) || (t.IsGenericType && t.GetGenericTypeDefinition() == typeof(List<>)
-                                                 && t.GetGenericArguments()[0] == typeof(string));
+            return true; // Let original handle enum targets
         }
     }
 
@@ -139,7 +56,6 @@ namespace KitchenPlateupAP
 
                 float slowMultiplier = Mod.Instance.GetPlayerSpeedMultiplier(playerEntity);
                 player.Speed *= Mod.movementSpeedMod * slowMultiplier;
-
                 em.SetComponentData(playerEntity, player);
             }
         }

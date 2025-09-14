@@ -24,6 +24,7 @@
     <Folder Condition="Exists('Changelogs')" Include="Changelogs\" />
     <Folder Condition="Exists('Changelogs\Github')" Include="Changelogs\Github" />
     <Folder Condition="Exists('Changelogs\Workshop')" Include="Changelogs\Workshop" />
+    <Folder Include="Libraries\PlateUpDecorOnDemand\" />
   </ItemGroup>
 
   <Import Project="ILRepack.targets" />

@@ -7,7 +7,7 @@
     <DoILRepack Condition="'$(IsPacked)' == 'true'">true</DoILRepack>
     <MergedTemp>$(TargetDir)$(AssemblyName).merged.dll</MergedTemp>
     <!-- Toggle if you really want to merge Newtonsoft.Json (default false) -->
-    <MergeNewtonsoft>true</MergeNewtonsoft>
+    <MergeNewtonsoft>false</MergeNewtonsoft>
   </PropertyGroup>
 
   <!-- Optional exclude file -->
@@ -24,8 +24,6 @@
       <MergeInputs Include="$(TargetDir)Newtonsoft.Json.dll"
                    Condition="'$(MergeNewtonsoft)'=='true' and Exists('$(TargetDir)Newtonsoft.Json.dll')" />
       <MergeInputs Include="$(TargetDir)Archipelago.MultiClient.Net.dll"
-                   Condition="'$(MergeArchipelago)'=='true' and Exists('$(TargetDir)Archipelago.MultiClient.Net.dll')" />
-      <MergeInputs Include="$(TargetDir)KaitoKid.ArchipelagoUtilities.Net.dll"
                    Condition="'$(MergeArchipelago)'=='true' and Exists('$(TargetDir)KaitoKid.ArchipelagoUtilities.Net.dll')" />
     </ItemGroup>
 

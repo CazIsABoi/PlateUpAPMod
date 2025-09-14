@@ -1,12 +1,16 @@
 ﻿using System;
 using System.IO;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using Archipelago.MultiClient.Net;
 using Archipelago.MultiClient.Net.Models;
 using Archipelago.MultiClient.Net.Enums;
 using KitchenLib.Logging;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace KitchenPlateupAP
 {
@@ -30,18 +34,17 @@ namespace KitchenPlateupAP
             ConnectionSuccessful = false;
             _sawPermissionsCastError = false;
 
+            try { EnumIdentityDiagnostics(); }
+            catch (Exception ex) { Logger.LogWarning("[APDiag] Enum diagnostics failed: " + ex.Message); }
+
             try
             {
                 var jsonAsm = AppDomain.CurrentDomain.GetAssemblies()
                     .FirstOrDefault(a => a.GetName().Name == "Newtonsoft.Json");
                 if (jsonAsm != null)
-                {
                     Logger.LogInfo($"[Json] Using Newtonsoft.Json v{jsonAsm.GetName().Version} ({SafeLocation(jsonAsm)})");
-                }
                 else
-                {
                     Logger.LogInfo("[Json] Newtonsoft.Json not yet loaded at connect time.");
-                }
             }
             catch (Exception ex)
             {
@@ -58,28 +61,13 @@ namespace KitchenPlateupAP
                 Logger.LogInfo("Diagnostic metadata gathering failed: " + ex.Message);
             }
 
-            try
-            {
-                var apAsms = AppDomain.CurrentDomain.GetAssemblies()
-                    .Where(a => a.GetName().Name == "Archipelago.MultiClient.Net")
-                    .ToList();
-                foreach (var a in apAsms)
-                    Logger.LogInfo($"[APDiag] Loaded Archipelago assembly: {a.FullName} @ {SafeLocation(a)}");
-                if (apAsms.Count > 1)
-                    Logger.LogError("[APDiag] Multiple Archipelago.MultiClient.Net assemblies loaded – this will break enum casting.");
-            }
-            catch (Exception ex)
-            {
-                Logger.LogWarning("[APDiag] Assembly scan failed: " + ex.Message);
-            }
-
             var candidateUris = BuildCandidateUris(ip, port);
 
             foreach (var uri in candidateUris)
             {
                 if (_sawPermissionsCastError)
                 {
-                    Logger.LogError("Aborting further attempts due to detected Permissions enum cast mismatch.");
+                    Logger.LogError("Aborting further attempts due to previous Permissions cast mismatch.");
                     break;
                 }
 
@@ -87,7 +75,6 @@ namespace KitchenPlateupAP
 
                 try
                 {
- 
                     Session = ArchipelagoSessionFactory.CreateSession(uri);
                 }
                 catch (Exception ex)
@@ -95,6 +82,8 @@ namespace KitchenPlateupAP
                     Logger.LogError("Error creating session: " + ex.GetBaseException().Message);
                     continue;
                 }
+
+                TryInstallLenientStringListConverter();
 
                 Session.Socket.ErrorReceived += OnSocketError;
                 Session.Socket.SocketOpened += OnSocketOpened;
@@ -107,7 +96,7 @@ namespace KitchenPlateupAP
                         game: "plateup",
                         name: playerName,
                         flags: ItemsHandlingFlags.AllItems,
-                        password: string.IsNullOrWhiteSpace(password) ? null : password
+                        password: password ?? string.Empty
                     );
                 }
                 catch (Exception e)
@@ -132,13 +121,11 @@ namespace KitchenPlateupAP
                 var failure = (LoginFailure)result;
                 var errorMessage = $"Failed to connect to {uri} as {playerName}:";
                 foreach (string error in failure.Errors) errorMessage += "\n    " + error;
-                foreach (ConnectionRefusedError error in failure.ErrorCodes) errorMessage += "\n    " + error;
+                foreach (ConnectionRefusedError code in failure.ErrorCodes) errorMessage += "\n    " + code;
                 Logger.LogError(errorMessage);
 
                 if (_sawPermissionsCastError)
-                {
-                    Logger.LogError("Detected Permissions serialization cast error. If issues persist, update Newtonsoft.Json or keep the compatibility patch.");
-                }
+                    Logger.LogError("Detected Permissions serialization cast error. Verify single Archipelago assembly and no custom JSON patches remain.");
 
                 CleanupSocketEvents();
             }
@@ -146,41 +133,178 @@ namespace KitchenPlateupAP
             IsConnecting = false;
             if (!ConnectionSuccessful)
             {
-                if (_sawPermissionsCastError)
-                    Logger.LogError("Connection aborted due to Permissions enum cast mismatch.");
+                Logger.LogError(_sawPermissionsCastError
+                    ? "Connection aborted due to Permissions enum cast mismatch."
+                    : "All connection attempts failed.");
+            }
+        }
+
+        // Adds a high-priority converter that ensures any List<string> (or string[]) gets only string items.
+        private static void TryInstallLenientStringListConverter()
+        {
+            try
+            {
+                if (Session?.Socket == null) return;
+
+                var socket = Session.Socket;
+                var helperField = socket.GetType().GetFields(BindingFlags.NonPublic | BindingFlags.Instance)
+                    .FirstOrDefault(f => f.FieldType.FullName != null && f.FieldType.FullName.Contains("BaseArchipelagoSocketHelper"));
+                if (helperField == null) return;
+
+                var helper = helperField.GetValue(socket);
+                if (helper == null) return;
+
+                var settingsField = helper.GetType().GetFields(BindingFlags.NonPublic | BindingFlags.Instance)
+                    .FirstOrDefault(f => f.FieldType == typeof(JsonSerializerSettings));
+                if (settingsField == null) return;
+
+                var settings = settingsField.GetValue(helper) as JsonSerializerSettings;
+                if (settings == null) return;
+
+                if (!settings.Converters.Any(c => c.GetType() == typeof(LenientStringListConverter)))
+                {
+                    settings.Converters.Insert(0, new LenientStringListConverter());
+                    Logger.LogInfo("[LenientStrings] Installed List<string> safety converter.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning("[LenientStrings] Install failed: " + ex.Message);
+            }
+        }
+
+        // Converter that ensures list-of-strings targets never receive enum instances.
+        private sealed class LenientStringListConverter : JsonConverter
+        {
+            public override bool CanConvert(Type objectType)
+            {
+                if (objectType == typeof(List<string>) || objectType == typeof(string[]))
+                    return true;
+
+                if (objectType.IsGenericType &&
+                    objectType.GetGenericTypeDefinition() == typeof(List<>) &&
+                    objectType.GetGenericArguments()[0] == typeof(string))
+                    return true;
+
+                return false;
+            }
+
+            public override object ReadJson(JsonReader reader, Type objectType, object existingValue, JsonSerializer serializer)
+            {
+                if (reader.TokenType == JsonToken.Null)
+                {
+                    if (objectType == typeof(string[]))
+                        return new string[0];
+                    return new List<string>();
+                }
+
+                JArray arr = JArray.Load(reader);
+                var list = new List<string>(arr.Count);
+                foreach (var token in arr)
+                {
+                    if (token.Type == JTokenType.String)
+                        list.Add(token.Value<string>());
+                    else if (token.Type == JTokenType.Null)
+                        list.Add(null);
+                    else
+                        list.Add(token.ToString());
+                }
+
+                if (objectType == typeof(string[]))
+                    return list.ToArray();
+                return list;
+            }
+
+            public override void WriteJson(JsonWriter writer, object value, JsonSerializer serializer)
+            {
+                if (value == null)
+                {
+                    writer.WriteNull();
+                    return;
+                }
+
+                // Avoid conditional expressions mixing array/list (C# 8 limitation)
+                IEnumerable<string> seq = null;
+                var asArray = value as string[];
+                if (asArray != null)
+                {
+                    seq = asArray;
+                }
                 else
-                    Logger.LogError("All connection attempts failed.");
+                {
+                    var asList = value as List<string>;
+                    if (asList != null)
+                        seq = asList;
+                    else
+                        seq = value as IEnumerable<string>;
+                }
+
+                writer.WriteStartArray();
+                if (seq != null)
+                {
+                    foreach (var s in seq)
+                        writer.WriteValue(s);
+                }
+                writer.WriteEndArray();
+            }
+        }
+
+        private static void EnumIdentityDiagnostics()
+        {
+            string[] targets =
+            {
+                "Archipelago.MultiClient.Net.Enums.Permissions",
+                "Archipelago.MultiClient.Net.Enums.ItemsHandlingFlags"
+            };
+
+            var assemblies = AppDomain.CurrentDomain.GetAssemblies();
+            foreach (var name in targets)
+            {
+                var hits = new List<Type>();
+                foreach (var asm in assemblies)
+                {
+                    try
+                    {
+                        var t = asm.GetType(name, false, false);
+                        if (t != null) hits.Add(t);
+                    }
+                    catch { }
+                }
+
+                Logger.LogInfo($"[APDiag] {name} definitions found: {hits.Count}");
+                int i = 0;
+                foreach (var t in hits)
+                {
+                    var asm = t.Assembly;
+                    string loc = SafeLocation(asm);
+                    string underlying = Enum.GetUnderlyingType(t).Name;
+                    string members = string.Join(",", Enum.GetNames(t));
+                    Logger.LogInfo($"[APDiag]  [{i}] Asm={asm.GetName().Name} v{asm.GetName().Version} Path={loc} Hash={RuntimeHelpers.GetHashCode(asm)}");
+                    Logger.LogInfo($"[APDiag]       AQN={t.AssemblyQualifiedName}");
+                    Logger.LogInfo($"[APDiag]       Underlying={underlying} Members={members}");
+                    i++;
+                }
+                if (hits.Count > 1)
+                    Logger.LogError($"[APDiag] MULTIPLE {name} TYPE IDENTITIES DETECTED.");
             }
         }
 
         private static List<Uri> BuildCandidateUris(string hostInput, int port)
         {
             var list = new List<Uri>();
-
             if (Uri.TryCreate(hostInput, UriKind.Absolute, out var provided) &&
                 (provided.Scheme == "ws" || provided.Scheme == "wss"))
             {
                 if (provided.IsDefaultPort && port > 0)
                 {
-                    try
-                    {
-                        var ub = new UriBuilder(provided) { Port = port };
-                        provided = ub.Uri;
-                    }
-                    catch { }
+                    try { provided = new UriBuilder(provided) { Port = port }.Uri; } catch { }
                 }
                 list.Add(provided);
                 return list;
             }
-
-            try { list.Add(new UriBuilder("wss", hostInput, port).Uri); }
-            catch (Exception ex) { Logger.LogWarning("Failed to build wss URI: " + ex.Message); }
-
-            try { list.Add(new UriBuilder("ws", hostInput, port).Uri); }
-            catch (Exception ex) { Logger.LogWarning("Failed to build ws URI: " + ex.Message); }
-
-            list = list.Distinct().ToList();
-            return list;
+            try { list.Add(new UriBuilder("wss", hostInput, port).Uri); } catch { }
+            try { list.Add(new UriBuilder("ws", hostInput, port).Uri); } catch { }
+            return list.Distinct().ToList();
         }
 
         private static string SafeLocation(Assembly asm)
@@ -266,23 +390,16 @@ namespace KitchenPlateupAP
         {
             Logger.LogInfo("Socket Error: " + message);
             Logger.LogInfo("Socket Exception: " + e.Message);
-            if (e.StackTrace != null)
-            {
-                foreach (var line in e.StackTrace.Split('\n'))
-                    Logger.LogInfo("    " + line);
-            }
-            else
-            {
-                Logger.LogInfo("    No stacktrace provided");
-            }
 
             if (!_sawPermissionsCastError &&
                 (message.IndexOf("cast", StringComparison.OrdinalIgnoreCase) >= 0 ||
                  e.Message.IndexOf("cast", StringComparison.OrdinalIgnoreCase) >= 0) &&
-                e.StackTrace?.IndexOf("PermissionsEnumConverter", StringComparison.OrdinalIgnoreCase) >= 0)
+                (e.StackTrace != null && e.StackTrace.IndexOf("PermissionsEnumConverter", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                 message.IndexOf("PermissionsEnumConverter", StringComparison.OrdinalIgnoreCase) >= 0))
             {
                 _sawPermissionsCastError = true;
-                Logger.LogError("Permissions enum cast error detected (handled by compatibility patch).");
+                Logger.LogError("Permissions enum cast error detected.");
+                try { EnumIdentityDiagnostics(); } catch { }
             }
         }
 

@@ -36,20 +36,30 @@ namespace KitchenPlateupAP
                 return;
 
             var entityManager = EntityManager;
-            var query = GetEntityQuery(typeof(CDishUpgrade));
+            var query = GetEntityQuery(ComponentType.ReadOnly<CDishUpgrade>());
             using var entities = query.ToEntityArray(Allocator.Temp);
+
+            // Collect existing dish IDs first
+            HashSet<int> existing = new HashSet<int>();
 
             foreach (var entity in entities)
             {
-                var dishUpgrade = entityManager.GetComponentData<CDishUpgrade>(entity);
-                if (!allowed.Contains(dishUpgrade.DishID))
+                if (!entityManager.Exists(entity) || !entityManager.HasComponent<CDishUpgrade>(entity))
+                    continue;
+
+                var data = entityManager.GetComponentData<CDishUpgrade>(entity);
+                existing.Add(data.DishID);
+
+                if (!allowed.Contains(data.DishID))
                 {
                     entityManager.DestroyEntity(entity);
                 }
             }
+
+            // Create any missing allowed dish upgrades
             foreach (var dishId in allowed)
             {
-                if (!entities.Any(e => entityManager.GetComponentData<CDishUpgrade>(e).DishID == dishId))
+                if (!existing.Contains(dishId))
                 {
                     var newEntity = entityManager.CreateEntity(typeof(CDishUpgrade));
                     entityManager.SetComponentData(newEntity, new CDishUpgrade { DishID = dishId });

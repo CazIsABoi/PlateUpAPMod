@@ -1,31 +1,34 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <TargetFramework>net472</TargetFramework>
-    <AssemblyName>$(MSBuildProjectName)</AssemblyName>
-    <AssetBundlePath>UnityProject - PlateupAP\content\mod.assets</AssetBundlePath>
-    <LangVersion>8.0</LangVersion>
-    <!-- Default: do not pack in Debug -->
-    <IsPacked Condition="'$(Configuration)' == 'Release' and '$(IsPacked)' == ''">true</IsPacked>
-  </PropertyGroup>
+<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<TargetFramework>net472</TargetFramework>
+		<AssemblyName>$(MSBuildProjectName)</AssemblyName>
+		<AssetBundlePath>UnityProject - PlateupAP\content\mod.assets</AssetBundlePath>
+		<LangVersion>8.0</LangVersion>
+		<IsPacked>true</IsPacked>
+	</PropertyGroup>
 
-  <ItemGroup>
-    <PackageReference Include="ILRepack.Lib.MSBuild.Task" Version="2.0.43" PrivateAssets="all" />
-    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
-    <PackageReference Include="Yariazen.PlateUp.ModBuildUtilities" Version="1.13.0" />
-    <PackageReference Include="Archipelago.MultiClient.Net" Version="6.6.1" />
-  </ItemGroup>
+	<ItemGroup>
+		<PackageReference Include="ILRepack" Version="2.0.44">
+			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+			<PrivateAssets>all</PrivateAssets>
+		</PackageReference>
+		<PackageReference Include="ILRepack.Lib.MSBuild.Task" Version="2.0.43">
+		  <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+		  <PrivateAssets>all</PrivateAssets>
+		</PackageReference>
+		<PackageReference Include="Yariazen.PlateUp.ModBuildUtilities" Version="1.13.0" />
+		<PackageReference Include="Archipelago.MultiClient.Net" Version="6.6.1" />
+	</ItemGroup>
 
-  <ItemGroup>
-    <Compile Remove="UnityProject - PlateupAP\**" />
-    <None Remove="UnityProject - PlateupAP\**" />
-  </ItemGroup>
+	<ItemGroup>
+		<Compile Remove="UnityProject - PlateupAP\**" />
+		<None Remove="UnityProject - PlateupAP\**" />
+	</ItemGroup>
 
-  <ItemGroup>
-    <Folder Condition="Exists('Changelogs')" Include="Changelogs\" />
-    <Folder Condition="Exists('Changelogs\Github')" Include="Changelogs\Github" />
-    <Folder Condition="Exists('Changelogs\Workshop')" Include="Changelogs\Workshop" />
-    <Folder Include="Libraries\PlateUpDecorOnDemand\" />
-  </ItemGroup>
-
-  <Import Project="ILRepack.targets" />
+	<ItemGroup>
+		<Folder Condition="Exists('Changelogs')" Include="Changelogs\" />
+		<Folder Condition="Exists('Changelogs\Github')" Include="Changelogs\Github" />
+		<Folder Condition="Exists('Changelogs\Workshop')" Include="Changelogs\Workshop" />
+	</ItemGroup>
+	<Import Project="ILRepack.targets" />
 </Project>

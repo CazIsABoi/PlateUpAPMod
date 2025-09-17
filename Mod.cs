@@ -4,7 +4,6 @@ using System.IO;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Threading.Tasks;
-using System.Diagnostics; // ADDED
 using UnityEngine;
 using Unity.Entities;
 using Unity.Collections;
@@ -27,11 +26,11 @@ using KitchenDecorOnDemand;
 using PreferenceSystem;
 using PreferenceSystem.Event;
 using PreferenceSystem.Menus;
-using UnityEngine.SceneManagement;
+using UnityEngine.SceneManagement;  
 
 
 namespace KitchenPlateupAP
-{
+{ 
     public class PlateupAPConfig
     {
         [JsonProperty] public string address { get; set; }
@@ -271,7 +270,7 @@ namespace KitchenPlateupAP
             {
                 if (World != null)
                 {
-
+                    
                 }
                 else
                 {
@@ -316,29 +315,6 @@ namespace KitchenPlateupAP
                     string json = JsonConvert.SerializeObject(defaultConfig, Formatting.Indented);
                     File.WriteAllText(path, json);
                     Debug.Log("Created config file at: " + path);
-
-                    // NEW: open the parent persistent data folder (the one you requested)
-                    try
-                    {
-                        string targetFolder = Application.persistentDataPath; // %appdata%\..\LocalLow\It's Happening\PlateUp
-#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
-                        // Use explorer to open the folder
-                        Process.Start(new ProcessStartInfo
-                        {
-                            FileName = "explorer.exe",
-                            Arguments = "\"" + targetFolder + "\"",
-                            UseShellExecute = true
-                        });
-#else
-                        // Fallback for non-Windows (opens in file browser if possible)
-                        Application.OpenURL("file://" + targetFolder);
-#endif
-                        Debug.Log("[PlateupAP] Opened folder: " + targetFolder);
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.LogError("[PlateupAP] Failed to open config folder: " + ex.Message);
-                    }
                 })
                 .AddButton("Connect", (int _) =>
                 {
@@ -406,6 +382,7 @@ namespace KitchenPlateupAP
             Logger.LogWarning($"{MOD_GUID} v{MOD_VERSION} in use!");
             var harmony = new Harmony("com.caz.plateupap.patch");
             harmony.PatchAll(Assembly.GetExecutingAssembly());
+            JsonConvert.DefaultSettings = null;
             Mod.Logger.LogInfo("DishCardReadingSystem initialised.");
             playersWithItems = GetEntityQuery(new QueryHelper().All(typeof(CPlayer), typeof(CItemHolder)));
             playerSpeedQuery = GetEntityQuery(new QueryHelper().All(typeof(CPlayer)));
@@ -467,18 +444,34 @@ namespace KitchenPlateupAP
                     Logger.LogWarning("No unlocked dishes available.");
                 }
 
+                // OPTIONAL: sanitize any string permission collections that contain "Disabled"
                 try
                 {
                     var ci = ArchipelagoConnectionManager.Session?.ConnectionInfo;
+                    // Example: if there is a string list you stored somewhere (pseudo – adjust to your actual structure).
+                    // if (ci?.PermissionsList is List<string> perms)
+                    // {
+                    //     int removed = perms.RemoveAll(p => p == "Disabled");
+                    //     if (removed > 0)
+                    //         Logger.LogInfo($"[PlateupAP] Removed {removed} 'Disabled' permission entries post-login.");
+                    // }
                 }
                 catch (System.Exception ex)
                 {
                     Logger.LogWarning("[PlateupAP] Post-login permission cleanup failed: " + ex.Message);
                 }
 
+                // OPTIONAL: sanitize any string permission collections that contain "Disabled"
                 try
                 {
                     var ci = ArchipelagoConnectionManager.Session?.ConnectionInfo;
+                    // Example: if there is a string list you stored somewhere (pseudo – adjust to your actual structure).
+                    // if (ci?.PermissionsList is List<string> perms)
+                    // {
+                    //     int removed = perms.RemoveAll(p => p == "Disabled");
+                    //     if (removed > 0)
+                    //         Logger.LogInfo($"[PlateupAP] Removed {removed} 'Disabled' permission entries post-login.");
+                    // }
                 }
                 catch (System.Exception ex)
                 {
@@ -805,6 +798,7 @@ namespace KitchenPlateupAP
             }
 
             // --- Dish Card Reading Logic ---
+            // Create the query for player entities with CPlayer and CItemHolder.
             EntityQuery playersWithItems = GetEntityQuery(new QueryHelper().All(typeof(CPlayer), typeof(CItemHolder)));
             using var playerEntities = playersWithItems.ToEntityArray(Allocator.Temp);
 
@@ -986,21 +980,21 @@ namespace KitchenPlateupAP
             }
 
             // Dish unlock logic
-            if (itemName != null && itemName.StartsWith("Unlock: "))
-            {
-                string dishName = itemName.Substring("Unlock: ".Length).Trim();
-                if (ProgressionMapping.dish_id_lookup.TryGetValue(dishName, out int newDishId))
-                {
-                    PersistUnlockedDish(newDishId);
-                    LockedDishes.SetUnlockedDishes(new[] { newDishId });
-                    Logger.LogInfo($"Unlocked new dish: {dishName} (ID: {newDishId})");
-                }
-                else
-                {
-                    Logger.LogWarning($"Received unknown dish unlock: {dishName}");
-                }
-                return;
-            }
+    if (itemName != null && itemName.StartsWith("Unlock: "))
+    {
+        string dishName = itemName.Substring("Unlock: ".Length).Trim();
+        if (ProgressionMapping.dish_id_lookup.TryGetValue(dishName, out int newDishId))
+        {
+            PersistUnlockedDish(newDishId);
+            LockedDishes.SetUnlockedDishes(new[] { newDishId });
+            Logger.LogInfo($"Unlocked new dish: {dishName} (ID: {newDishId})");
+        }
+        else
+        {
+            Logger.LogWarning($"Received unknown dish unlock: {dishName}");
+        }
+        return;
+    }
         }
 
         private ItemInfo CreateItemInfoForQueue(int itemId)
@@ -1099,7 +1093,7 @@ namespace KitchenPlateupAP
 
             lastDay = 0;
             stars = 0;
-
+            
 
             Logger.LogInfo("[PlateupAP] Game reset complete. Ready for a new run.");
         }
@@ -1114,6 +1108,7 @@ namespace KitchenPlateupAP
 
             HashSet<int> trapIDs = new HashSet<int>(ProgressionMapping.trapDictionary.Keys);
 
+            // Log all received items from Archipelago
             Logger.LogInfo("[QueueItemsFromReceivedPool] Total received items count: " + session.Items.AllItemsReceived.Count);
 
             if (session.Items.AllItemsReceived.Count == 0)
@@ -1227,6 +1222,7 @@ namespace KitchenPlateupAP
                 SpawnPositionType positionType = SpawnPositionType.Door;
 
                 if (KitchenData.GameData.Main.TryGet<Appliance>(gdoId, out Appliance appliance))
+                    //Directly spawn appliances without blueprint mode
                     SpawnRequestSystem.Request<Appliance>(gdoId, positionType, InputSourceIdentifier.Identifier);
                 else if (KitchenData.GameData.Main.TryGet<Decor>(gdoId, out Decor decor))
                     SpawnRequestSystem.Request<Decor>(gdoId, positionType);
@@ -1470,7 +1466,7 @@ namespace KitchenPlateupAP
                     if (lastDay < 15)
                     {
                         lastDay++;
-                        DoDishChecks(lastDay);
+                        DoDishChecks(lastDay); 
                     }
 
                     if (overallDaysCompleted % 3 == 0 && overallStarsEarned < 33)
@@ -1629,34 +1625,106 @@ namespace KitchenPlateupAP
 
         private const string UnlockedDishFile = "unlocked_dish.txt";
 
-        private int? LoadPersistedUnlockedDish()
-        {
-            string path = Path.Combine(Application.persistentDataPath, UnlockedDishFile);
-            if (File.Exists(path) && int.TryParse(File.ReadAllText(path), out int id))
-                return id;
-            return null;
-        }
+private int? LoadPersistedUnlockedDish()
+{
+    string path = Path.Combine(Application.persistentDataPath, UnlockedDishFile);
+    if (File.Exists(path) && int.TryParse(File.ReadAllText(path), out int id))
+        return id;
+    return null;
+}
 
-        private void PersistUnlockedDish(int dishId)
-        {
-            string path = Path.Combine(Application.persistentDataPath, UnlockedDishFile);
-            File.WriteAllText(path, dishId.ToString());
-        }
+private void PersistUnlockedDish(int dishId)
+{
+    string path = Path.Combine(Application.persistentDataPath, UnlockedDishFile);
+    File.WriteAllText(path, dishId.ToString());
+}
 
-        private const string LastSelectedDishesFile = "last_selected_dishes.txt";
+private const string LastSelectedDishesFile = "last_selected_dishes.txt";
 
-        private List<string> LoadLastSelectedDishes()
-        {
-            string path = Path.Combine(Application.persistentDataPath, LastSelectedDishesFile);
-            if (File.Exists(path))
-                return File.ReadAllLines(path).ToList();
-            return new List<string>();
-        }
+private List<string> LoadLastSelectedDishes()
+{
+    string path = Path.Combine(Application.persistentDataPath, LastSelectedDishesFile);
+    if (File.Exists(path))
+        return File.ReadAllLines(path).ToList();
+    return new List<string>();
+}
 
-        private void PersistLastSelectedDishes(List<string> dishes)
+private void PersistLastSelectedDishes(List<string> dishes)
+{
+    string path = Path.Combine(Application.persistentDataPath, LastSelectedDishesFile);
+    File.WriteAllLines(path, dishes);
+}
+
+private PlateupAPConfig LoadConfigIsolated(string json)
+{
+    // 1. Raw dump of currently registered global converters (if any)
+    try
+    {
+        var global = JsonConvert.DefaultSettings?.Invoke();
+        if (global != null && global.Converters != null)
         {
-            string path = Path.Combine(Application.persistentDataPath, LastSelectedDishesFile);
-            File.WriteAllLines(path, dishes);
+            Debug.Log("[PlateupAP][ConfigDebug] Global Converters:");
+            for (int i = 0; i < global.Converters.Count; i++)
+            {
+                var c = global.Converters[i];
+                Debug.Log($"[PlateupAP][ConfigDebug]   #{i}: {c.GetType().FullName}");
+            }
         }
+        else
+        {
+            Debug.Log("[PlateupAP][ConfigDebug] No global DefaultSettings or no converters.");
+        }
+    }
+    catch (Exception ex)
+    {
+        Debug.Log($"[PlateupAP][ConfigDebug] Failed dumping global converters: {ex.Message}");
+    }
+
+    // 2. Attempt strict clean deserialization (NO converters)
+    try
+    {
+        var cleanSettings = new JsonSerializerSettings
+        {
+            Converters = new List<JsonConverter>(), // force empty
+            MetadataPropertyHandling = MetadataPropertyHandling.Ignore,
+            MissingMemberHandling = MissingMemberHandling.Ignore,
+            NullValueHandling = NullValueHandling.Include
+        };
+        var clean = JsonConvert.DeserializeObject<PlateupAPConfig>(json, cleanSettings);
+        if (clean != null)
+        {
+            Debug.Log("[PlateupAP][ConfigDebug] Clean settings deserialization succeeded.");
+            return clean;
+        }
+        Debug.Log("[PlateupAP][ConfigDebug] Clean settings deserialization returned null – falling back to manual parse.");
+    }
+    catch (Exception ex)
+    {
+        Debug.Log($"[PlateupAP][ConfigDebug] Clean deserialization path failed: {ex}");
+    }
+
+    // 3. Manual parse fallback (completely bypass converters)
+    try
+    {
+        var jo = Newtonsoft.Json.Linq.JObject.Parse(json);
+        var manual = new PlateupAPConfig
+        {
+            address = (string)jo["address"],
+            port = (int?)jo["port"] ?? 0,
+            playername = (string)jo["playername"],
+            password = (string)jo["password"]
+        };
+        if (string.IsNullOrWhiteSpace(manual.address))
+            throw new Exception("Manual parse produced empty address.");
+        Debug.Log("[PlateupAP][ConfigDebug] Manual parse succeeded.");
+        return manual;
+    }
+    catch (Exception ex)
+    {
+        Debug.LogError($"[PlateupAP][ConfigDebug] Manual parse failed: {ex}");
+    }
+
+    return null;
+}
     }
 }

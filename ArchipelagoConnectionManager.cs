@@ -6,6 +6,11 @@ using Archipelago.MultiClient.Net;
 using Archipelago.MultiClient.Net.Enums;
 using Archipelago.MultiClient.Net.Models;
 using KitchenLib.Logging;
+using System.Reflection;
+using System.Linq;
+using Archipelago.MultiClient.Net.Packets;
+using System.Net;              // DEBUG: for SecurityProtocol
+using System.Text;             // DEBUG: for building exception diagnostic strings
 
 namespace KitchenPlateupAP
 {
@@ -16,6 +21,45 @@ namespace KitchenPlateupAP
         private static CancellationTokenSource _cts;
         private static ArchipelagoSession _session;
         private static string _currentAttemptUri;
+
+        // Network logging fields
+        private static bool _logNetworkPackets;
+        private static string _lastPacketSummary;
+        private static int _packetSeq;
+
+        static ArchipelagoConnectionManager()
+        {
+            // DEBUG: Force TLS1.2 (some older frameworks / Unity combos can negotiate lower protocols)
+            try
+            {
+                ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
+            }
+            catch { }
+
+            try
+            {
+                var args = Environment.GetCommandLineArgs();
+                if (args.Any(a => string.Equals(a, "--log_network", StringComparison.OrdinalIgnoreCase)))
+                {
+                    _logNetworkPackets = true;
+                    Logger.LogWarning("[NETLOG] --log_network enabled (verbose packet logging).");
+                }
+                else
+                {
+                    Logger.LogInfo("[NETLOG] Network logging disabled (pass --log_network or call EnableNetworkLogging(true)).");
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("[NETLOG] Failed to parse command line args: " + ex.Message);
+            }
+        }
+
+        public static void EnableNetworkLogging(bool enabled = true)
+        {
+            _logNetworkPackets = enabled;
+            Logger.LogInfo("[NETLOG] Network packet logging " + (enabled ? "ENABLED" : "DISABLED"));
+        }
 
         public static ArchipelagoSession Session
         {
@@ -39,11 +83,9 @@ namespace KitchenPlateupAP
         [Obsolete("Use StartConnect(...) or await TryConnectAsync(...). The sync wrapper can deadlock Unity.")]
         public static void TryConnect(string host, int port, string playerName, string password)
         {
-            // Intentionally changed: fire-and-forget instead of blocking GetResult()
             _ = TryConnectAsync(host, port, playerName, password, ItemsHandlingFlags.AllItems);
         }
 
-        // Convenience method for UI button (non-async handler)
         public static void StartConnect(string host, int port, string playerName, string password,
                                         ItemsHandlingFlags flags = ItemsHandlingFlags.AllItems,
                                         bool autoReconnect = false)
@@ -176,12 +218,10 @@ namespace KitchenPlateupAP
                             Logger.LogInfo($"Successfully connected to {uri} (Slot {SlotIndex}, Name '{playerName}').");
                             lock (_stateLock) IsConnecting = false;
 
-                            // Dispatch events (no Unity object access here)
                             SafeInvokeConnected();
 
                             try
                             {
-                                // If OnSuccessfulConnect touches Unity objects, ensure it runs on main thread (add a dispatcher if needed).
                                 Mod.Instance.OnSuccessfulConnect();
                             }
                             catch (Exception callbackEx)
@@ -293,6 +333,7 @@ namespace KitchenPlateupAP
             session.Socket.SocketOpened += OnSocketOpened;
             session.Socket.SocketClosed += OnSocketClosed;
             session.Socket.ErrorReceived += OnSocketError;
+            session.Socket.PacketReceived += OnPacketReceived;
         }
 
         private static void DetachSocketHandlers(ArchipelagoSession session)
@@ -302,10 +343,9 @@ namespace KitchenPlateupAP
                 session.Socket.SocketOpened -= OnSocketOpened;
                 session.Socket.SocketClosed -= OnSocketClosed;
                 session.Socket.ErrorReceived -= OnSocketError;
+                session.Socket.PacketReceived -= OnPacketReceived;
             }
-            catch
-            {
-            }
+            catch { }
         }
 
         private static void CleanupSession()
@@ -344,14 +384,12 @@ namespace KitchenPlateupAP
             if (string.IsNullOrWhiteSpace(host))
                 return new[] { "wss://", "ws://" };
 
-            // If caller already included a protocol, return sentinel empty string so we don't prepend another
             if (host.StartsWith("ws://", StringComparison.OrdinalIgnoreCase) ||
                 host.StartsWith("wss://", StringComparison.OrdinalIgnoreCase))
             {
                 return new[] { string.Empty };
             }
 
-            // Default preference: secure first, then insecure fallback
             return new[] { "wss://", "ws://" };
         }
 
@@ -359,14 +397,18 @@ namespace KitchenPlateupAP
 
         private static void OnSocketOpened()
         {
-            // Use Session if present; fall back to last attempt URI
             var uriText = Session?.Socket?.Uri?.ToString() ?? _currentAttemptUri ?? "<unknown>";
             Logger.LogInfo("Socket opened (pre-login possible): " + uriText);
+            if (_logNetworkPackets)
+                Logger.LogInfo("[NETLOG] Waiting for first packet...");
         }
 
         private static void OnSocketClosed(string reason)
         {
             Logger.LogInfo("Socket closed: " + reason);
+            if (!string.IsNullOrEmpty(_lastPacketSummary))
+                Logger.LogInfo("[NETLOG] Last inbound packet before close: " + _lastPacketSummary);
+
             if (ConnectionSuccessful)
             {
                 ConnectionSuccessful = false;
@@ -377,7 +419,96 @@ namespace KitchenPlateupAP
         private static void OnSocketError(Exception ex, string message)
         {
             Logger.LogError("Socket error: " + message);
-            Logger.LogError("Exception: " + ex.GetBaseException().Message);
+            DumpExceptionDetail(ex);
+            if (!string.IsNullOrEmpty(_lastPacketSummary))
+                Logger.LogWarning("[NETLOG] Last inbound packet before error: " + _lastPacketSummary);
+        }
+
+        private static void OnPacketReceived(ArchipelagoPacketBase packet)
+        {
+            if (!_logNetworkPackets || packet == null) return;
+
+            try
+            {
+                int seq = ++_packetSeq;
+                var type = packet.GetType();
+                string typeName = type.Name;
+
+                string extra = "";
+                if (packet is PrintJsonPacket pjp && pjp.Data != null)
+                {
+                    try
+                    {
+                        var text = string.Concat(pjp.Data.Select(d => d.Text));
+                        extra = " Text=\"" + Truncate(text, 200) + "\"";
+                    }
+                    catch { }
+                }
+                else
+                {
+                    var props = type.GetProperties(BindingFlags.Instance | BindingFlags.Public)
+                        .Where(p =>
+                            p.CanRead &&
+                            (p.PropertyType.IsPrimitive ||
+                             p.PropertyType == typeof(string) ||
+                             p.PropertyType.IsEnum))
+                        .Take(6);
+
+                    List<string> parts = new List<string>();
+                    foreach (var p in props)
+                    {
+                        object valSafe = null;
+                        try { valSafe = p.GetValue(packet); } catch { }
+                        if (valSafe is string s)
+                            parts.Add(p.Name + "=\"" + Truncate(s, 80) + "\"");
+                        else
+                            parts.Add(p.Name + "=" + (valSafe ?? "null"));
+                    }
+                    if (parts.Count > 0)
+                        extra = " " + string.Join(", ", parts);
+                }
+
+                string summary = $"#{seq} {typeName}{extra}";
+                _lastPacketSummary = summary;
+                Logger.LogInfo("[NETLOG] " + summary);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("[NETLOG] Failed to log packet: " + ex.Message);
+            }
+        }
+
+        private static string Truncate(string s, int max)
+        {
+            if (string.IsNullOrEmpty(s)) return s;
+            return s.Length <= max ? s : s.Substring(0, max) + "...";
+        }
+
+        #endregion
+
+        #region Diagnostics
+
+        private static void DumpExceptionDetail(Exception ex)
+        {
+            if (ex == null) return;
+            try
+            {
+                var sb = new StringBuilder();
+                sb.AppendLine("[NETLOG] Exception Type: " + ex.GetType().FullName);
+                sb.AppendLine("[NETLOG] Message: " + ex.Message);
+                if (ex.InnerException != null)
+                    sb.AppendLine("[NETLOG] Inner: " + ex.InnerException.GetType().FullName + ": " + ex.InnerException.Message);
+                if (ex.Data != null && ex.Data.Count > 0)
+                {
+                    sb.AppendLine("[NETLOG] Data:");
+                    foreach (var key in ex.Data.Keys)
+                        sb.AppendLine("  - " + key + " = " + ex.Data[key]);
+                }
+                sb.AppendLine("[NETLOG] Stack:");
+                sb.AppendLine(ex.StackTrace);
+                Logger.LogError(sb.ToString());
+            }
+            catch { }
         }
 
         #endregion

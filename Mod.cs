@@ -22,15 +22,15 @@ using Archipelago.MultiClient.Net.Enums;
 using Archipelago.MultiClient.Net.Helpers;
 using Archipelago.MultiClient.Net.Packets;
 using Archipelago.MultiClient.Net.BounceFeatures.DeathLink;
-using KitchenDecorOnDemand;
 using PreferenceSystem;
 using PreferenceSystem.Event;
 using PreferenceSystem.Menus;
-using UnityEngine.SceneManagement;  
-
+using UnityEngine.SceneManagement;
+using Newtonsoft.Json.Linq;
+using KitchenPlateupAP.Spawning;
 
 namespace KitchenPlateupAP
-{ 
+{
     public class PlateupAPConfig
     {
         [JsonProperty] public string address { get; set; }
@@ -47,6 +47,7 @@ namespace KitchenPlateupAP
         public const string MOD_VERSION = "0.1.9.2";
         public const string MOD_AUTHOR = "Caz";
         public const string MOD_GAMEVERSION = ">=1.1.9";
+        public static int TOTAL_SCENES_LOADED = 0;
 
         internal static AssetBundle Bundle = null;
         internal static KitchenLib.Logging.KitchenLogger Logger;
@@ -55,6 +56,8 @@ namespace KitchenPlateupAP
         private EntityQuery applianceSpeedQuery;
 
         public static Mod Instance { get; private set; }
+        internal static PlateupAPConfig CachedConfig;
+        private static bool _configWarmed;
 
         private static ArchipelagoSession session => ArchipelagoConnectionManager.Session;
         private Archipelago.MultiClient.Net.BounceFeatures.DeathLink.DeathLinkService deathLinkService;
@@ -133,6 +136,76 @@ namespace KitchenPlateupAP
             Instance = this;
             Logger = InitLogger();
             Logger.LogWarning("Created instance");
+            // Replace inline lambda with method to also warm config
+            SceneManager.sceneLoaded += OnSceneLoaded;
+        }
+
+        // New: scene callback, warms config on main menu
+        private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+        {
+            Logger.LogInfo($"{TOTAL_SCENES_LOADED} Loaded Scene: {scene.name}");
+            TOTAL_SCENES_LOADED++;
+
+            // Main menu scene appears to be "Scene" from your logs
+            if (!_configWarmed && string.Equals(scene.name, "Scene", StringComparison.OrdinalIgnoreCase))
+            {
+                _configWarmed = true;
+                TryWarmupConfig();
+            }
+        }
+
+        // New: read and cache config early
+        private void TryWarmupConfig()
+        {
+            try
+            {
+                string folder = Path.Combine(Application.persistentDataPath, "PlateUpAPConfig");
+                string path = Path.Combine(folder, "archipelago_config.json");
+                if (!File.Exists(path))
+                {
+                    Logger.LogWarning($"[PlateupAP][ConfigWarmup] No config at: {path}");
+                    return;
+                }
+
+                var json = File.ReadAllText(path);
+                // Use isolated manual parse to avoid converter interference
+                var jo = JObject.Parse(json);
+                var cfg = new PlateupAPConfig
+                {
+                    address = (string)jo["address"],
+                    port = (int?)jo["port"] ?? 0,
+                    playername = (string)jo["playername"],
+                    password = (string)jo["password"]
+                };
+
+                if (string.IsNullOrWhiteSpace(cfg.address))
+                {
+                    Logger.LogWarning("[PlateupAP][ConfigWarmup] Address is empty in config; will not cache.");
+                    return;
+                }
+
+                CachedConfig = cfg;
+                Logger.LogInfo($"[PlateupAP][ConfigWarmup] Cached config for {CachedConfig.address}:{CachedConfig.port} user={CachedConfig.playername}");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("[PlateupAP][ConfigWarmup] Failed: " + ex.Message);
+            }
+        }
+
+        // Small helper: connect using cached config if present (optional delay if you want)
+        private async Task ConnectUsingCachedAsync(int delayMs = 0)
+        {
+            if (CachedConfig == null)
+            {
+                Logger.LogWarning("[PlateupAP] No cached config available to connect with.");
+                return;
+            }
+            if (delayMs > 0)
+                await Task.Delay(delayMs);
+
+            Logger.LogInfo($"[PlateupAP][Config] Using server={CachedConfig.address}:{CachedConfig.port} player={CachedConfig.playername}");
+            UpdateArchipelagoConfig(CachedConfig);
         }
 
         private void RetrieveSlotData()
@@ -268,19 +341,11 @@ namespace KitchenPlateupAP
         {
             try
             {
-                if (World != null)
-                {
-                    
-                }
-                else
-                {
+                if (World == null)
                     Mod.Logger.LogError("World is null in OnPostActivate!");
-                }
 
                 if (PrefManager == null)
-                {
                     PrefManager = new PreferenceSystemManager(MOD_GUID, MOD_NAME);
-                }
 
                 if (ArchipelagoConnectionManager.ConnectionSuccessful)
                 {
@@ -318,34 +383,36 @@ namespace KitchenPlateupAP
                 })
                 .AddButton("Connect", (int _) =>
                 {
-                    string folder = Path.Combine(Application.persistentDataPath, "PlateUpAPConfig");
-                    string path = Path.Combine(folder, "archipelago_config.json");
-                    if (!File.Exists(path))
+                    // Prefer cached config warmed in main menu; fallback to file
+                    PlateupAPConfig config = CachedConfig;
+                    if (config == null)
                     {
-                        Debug.LogError("Config file not found at: " + path);
-                        return;
-                    }
-
-                    string json = File.ReadAllText(path);
-
-                    PlateupAPConfig config;
-                    try
-                    {
-                        // Manual parse only – avoids any global converter noise.
-                        var jo = Newtonsoft.Json.Linq.JObject.Parse(json);
-                        config = new PlateupAPConfig
+                        string folder = Path.Combine(Application.persistentDataPath, "PlateUpAPConfig");
+                        string path = Path.Combine(folder, "archipelago_config.json");
+                        if (!File.Exists(path))
                         {
-                            address = (string)jo["address"],
-                            port = (int?)jo["port"] ?? 0,
-                            playername = (string)jo["playername"],
-                            password = (string)jo["password"]
-                        };
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.LogError("[PlateupAP][Config] Manual parse failed: " + ex);
-                        Debug.LogError("JSON: " + json);
-                        return;
+                            Debug.LogError("Config file not found at: " + path);
+                            return;
+                        }
+
+                        string json = File.ReadAllText(path);
+                        try
+                        {
+                            var jo = Newtonsoft.Json.Linq.JObject.Parse(json);
+                            config = new PlateupAPConfig
+                            {
+                                address = (string)jo["address"],
+                                port = (int?)jo["port"] ?? 0,
+                                playername = (string)jo["playername"],
+                                password = (string)jo["password"]
+                            };
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.LogError("[PlateupAP][Config] Manual parse failed: " + ex);
+                            Debug.LogError("JSON: " + json);
+                            return;
+                        }
                     }
 
                     if (string.IsNullOrWhiteSpace(config.address))
@@ -356,12 +423,11 @@ namespace KitchenPlateupAP
 
                     Debug.Log($"[PlateupAP][Config] Using server={config.address}:{config.port} player={config.playername}");
                     UpdateArchipelagoConfig(config);
+                })
+                .AddButton("Connect (Cached, +1.5s delay)", (int i) =>
+                {
+                    _ = ConnectUsingCachedAsync(1500);
                 });
-
-            if (ArchipelagoConnectionManager.ConnectionSuccessful)
-            {
-
-            }
 
             PrefManager.RegisterMenu(PreferenceSystemManager.MenuType.MainMenu);
             PrefManager.RegisterMenu(PreferenceSystemManager.MenuType.PauseMenu);
@@ -391,7 +457,8 @@ namespace KitchenPlateupAP
 
         public void UpdateArchipelagoConfig(PlateupAPConfig config)
         {
-            // Use static connection manager.
+            // cache the latest known-good config too
+            CachedConfig = config;
             ArchipelagoConnectionManager.TryConnect(config.address, config.port, config.playername, config.password);
         }
 
@@ -670,6 +737,7 @@ namespace KitchenPlateupAP
 
         protected override void OnUpdate()
         {
+
             franchiseScreen = HasSingleton<SFranchiseBuilderMarker>();
             loseScreen = HasSingleton<SGameOver>();
             inLobby = HasSingleton<SFranchiseMarker>();
@@ -1186,52 +1254,49 @@ namespace KitchenPlateupAP
         {
             int checkId = (int)info.ItemId;
 
-            // Check persistently with Archipelago if item is still valid
             string itemName = session.Items.GetItemName(checkId);
             if (string.IsNullOrEmpty(itemName))
             {
-                Logger.LogWarning("[Spawn] Skipping expired or invalid item ID: " + checkId);
+                Logger.LogWarning("[Spawn] Skipping invalid item ID: " + checkId);
                 return;
             }
 
             Logger.LogInfo("[Spawn] Processing item ID: " + checkId);
 
-            // Handle speed upgrades
+            // Speed upgrades handled in OnItemReceived / processing path already
             if (ProgressionMapping.speedUpgradeMapping.ContainsKey(checkId))
             {
-                string upgradeType = ProgressionMapping.speedUpgradeMapping[checkId];
-
-                if (upgradeType == "Speed Upgrade Player" && movementSpeedTier < speedTiers.Length - 1)
-                {
-                    movementSpeedTier++;
-                    movementSpeedMod = speedTiers[movementSpeedTier];
-                    Logger.LogInfo(upgradeType + " applied. Movement speed now at tier " + movementSpeedTier + " (multiplier = " + movementSpeedMod + ").");
-                }
-                else if (upgradeType == "Speed Upgrade Appliance" && applianceSpeedTier < applianceSpeedTiers.Length - 1)
-                {
-                    applianceSpeedTier++;
-                    applianceSpeedMod = applianceSpeedTiers[applianceSpeedTier];
-                    Logger.LogInfo(upgradeType + " applied. Appliance speed now at tier " + applianceSpeedTier + " (multiplier = " + applianceSpeedMod + ").");
-                }
+                Logger.LogInfo("[Spawn] Skipping speed upgrade (already applied).");
                 return;
             }
 
-            // Handle regular item spawning
-            if (ProgressionMapping.progressionToGDO.TryGetValue(checkId, out int gdoId))
+            if (!ProgressionMapping.progressionToGDO.TryGetValue(checkId, out int gdoId))
             {
-                SpawnPositionType positionType = SpawnPositionType.Door;
+                Logger.LogWarning("No mapping found for check id: " + checkId);
+                return;
+            }
 
-                if (KitchenData.GameData.Main.TryGet<Appliance>(gdoId, out Appliance appliance))
-                    //Directly spawn appliances without blueprint mode
-                    SpawnRequestSystem.Request<Appliance>(gdoId, positionType, InputSourceIdentifier.Identifier);
-                else if (KitchenData.GameData.Main.TryGet<Decor>(gdoId, out Decor decor))
-                    SpawnRequestSystem.Request<Decor>(gdoId, positionType);
-                else
-                    Logger.LogWarning("GDO id " + gdoId + " does not correspond to a known Appliance or Decor.");
+            // Always door spawn in your original queue logic (you had SpawnPositionType.Door)
+            var positionType = SpawnPositionType.Door;
+            Vector3 spawnPos = SpawnHelpers.ResolveSpawnPosition(EntityManager, positionType, InputSourceIdentifier.Identifier);
+
+            bool spawned = false;
+
+            if (KitchenData.GameData.Main.TryGet<Appliance>(gdoId, out _))
+            {
+                spawned = SpawnHelpers.TrySpawnApplianceBlueprint(EntityManager, gdoId, spawnPos, costMode: 0f);
+                if (spawned)
+                    Logger.LogInfo($"[Spawn] Appliance blueprint spawned (GDO {gdoId}) at {spawnPos}.");
+            }
+            else if (KitchenData.GameData.Main.TryGet<Decor>(gdoId, out _))
+            {
+                spawned = SpawnHelpers.TrySpawnDecor(EntityManager, gdoId, spawnPos);
+                if (spawned)
+                    Logger.LogInfo($"[Spawn] Decor spawned (GDO {gdoId}) at {spawnPos}.");
             }
             else
             {
-                Logger.LogWarning("No mapping found for check id: " + checkId);
+                Logger.LogWarning("GDO id " + gdoId + " is neither Appliance nor Decor.");
             }
         }
 

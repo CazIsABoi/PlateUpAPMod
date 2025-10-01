@@ -44,7 +44,7 @@ namespace KitchenPlateupAP
     {
         public const string MOD_GUID = "com.caz.plateupap";
         public const string MOD_NAME = "PlateupAP";
-        public const string MOD_VERSION = "0.1.9.2";
+        public const string MOD_VERSION = "0.2.0.1";
         public const string MOD_AUTHOR = "Caz";
         public const string MOD_GAMEVERSION = ">=1.1.9";
         public static int TOTAL_SCENES_LOADED = 0;
@@ -192,22 +192,6 @@ namespace KitchenPlateupAP
                 Logger.LogError("[PlateupAP][ConfigWarmup] Failed: " + ex.Message);
             }
         }
-
-        // Small helper: connect using cached config if present (optional delay if you want)
-        private async Task ConnectUsingCachedAsync(int delayMs = 0)
-        {
-            if (CachedConfig == null)
-            {
-                Logger.LogWarning("[PlateupAP] No cached config available to connect with.");
-                return;
-            }
-            if (delayMs > 0)
-                await Task.Delay(delayMs);
-
-            Logger.LogInfo($"[PlateupAP][Config] Using server={CachedConfig.address}:{CachedConfig.port} player={CachedConfig.playername}");
-            UpdateArchipelagoConfig(CachedConfig);
-        }
-
         private void RetrieveSlotData()
         {
             if (session == null)
@@ -423,10 +407,6 @@ namespace KitchenPlateupAP
 
                     Debug.Log($"[PlateupAP][Config] Using server={config.address}:{config.port} player={config.playername}");
                     UpdateArchipelagoConfig(config);
-                })
-                .AddButton("Connect (Cached, +1.5s delay)", (int i) =>
-                {
-                    _ = ConnectUsingCachedAsync(1500);
                 });
 
             PrefManager.RegisterMenu(PreferenceSystemManager.MenuType.MainMenu);
@@ -741,6 +721,10 @@ namespace KitchenPlateupAP
             franchiseScreen = HasSingleton<SFranchiseBuilderMarker>();
             loseScreen = HasSingleton<SGameOver>();
             inLobby = HasSingleton<SFranchiseMarker>();
+            SceneManager.sceneLoaded += (scene, loadScene) =>
+            {
+                Logger.LogInfo($"Scene: {scene.name}");
+            };
 
             // Ensure dish pedestal is spawned as soon as we enter the lobby
             if (inLobby && !dishPedestalSpawned && LockedDishes.GetAvailableDishes().Any())

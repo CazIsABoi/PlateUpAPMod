@@ -52,7 +52,7 @@
           "dependencies": {
             "Archipelago.MultiClient.Net": {
               "target": "Package",
-              "version": "[6.6.1, )"
+              "version": "[6.7.0, )"
             },
             "ILRepack": {
               "include": "Runtime, Build, Native, ContentFiles, Analyzers, BuildTransitive",
@@ -64,7 +64,7 @@
               "include": "Runtime, Build, Native, ContentFiles, Analyzers, BuildTransitive",
               "suppressParent": "All",
               "target": "Package",
-              "version": "[2.0.43, )"
+              "version": "[2.0.44.1, )"
             },
             "Yariazen.PlateUp.ModBuildUtilities": {
               "target": "Package",

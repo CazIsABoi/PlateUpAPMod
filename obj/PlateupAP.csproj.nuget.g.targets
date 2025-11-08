@@ -2,6 +2,6 @@
 <Project ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ImportGroup Condition=" '$(ExcludeRestorePackageImports)' != 'true' ">
     <Import Project="$(NuGetPackageRoot)yariazen.plateup.modbuildutilities\1.13.0\build\Yariazen.PlateUp.ModBuildUtilities.targets" Condition="Exists('$(NuGetPackageRoot)yariazen.plateup.modbuildutilities\1.13.0\build\Yariazen.PlateUp.ModBuildUtilities.targets')" />
-    <Import Project="$(NuGetPackageRoot)ilrepack.lib.msbuild.task\2.0.43\build\ILRepack.Lib.MSBuild.Task.targets" Condition="Exists('$(NuGetPackageRoot)ilrepack.lib.msbuild.task\2.0.43\build\ILRepack.Lib.MSBuild.Task.targets')" />
+    <Import Project="$(NuGetPackageRoot)ilrepack.lib.msbuild.task\2.0.44.1\build\ILRepack.Lib.MSBuild.Task.targets" Condition="Exists('$(NuGetPackageRoot)ilrepack.lib.msbuild.task\2.0.44.1\build\ILRepack.Lib.MSBuild.Task.targets')" />
   </ImportGroup>
 </Project>

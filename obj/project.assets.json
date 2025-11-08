@@ -2,7 +2,7 @@
   "version": 3,
   "targets": {
     ".NETFramework,Version=v4.7.2": {
-      "Archipelago.MultiClient.Net/6.6.1": {
+      "Archipelago.MultiClient.Net/6.7.0": {
         "type": "package",
         "compile": {
           "lib/net45/Archipelago.MultiClient.Net.dll": {
@@ -23,10 +23,13 @@
           "build/ILRepack.props": {}
         }
       },
-      "ILRepack.Lib.MSBuild.Task/2.0.43": {
+      "ILRepack.Lib.MSBuild.Task/2.0.44.1": {
         "type": "package",
         "build": {
           "build/ILRepack.Lib.MSBuild.Task.targets": {}
+        },
+        "buildMultiTargeting": {
+          "buildCrossTargeting/ILRepack.Lib.MSBuild.Task.targets": {}
         }
       },
       "Yariazen.PlateUp.ModBuildUtilities/1.13.0": {
@@ -38,15 +41,15 @@
     }
   },
   "libraries": {
-    "Archipelago.MultiClient.Net/6.6.1": {
-      "sha512": "CvojDLce6/ZkDTa/JNeCX4fM7X0gDdVAI5oIOKOtZjsOk4xJ9kTBix6ajnV2tIABEgpKzmMQm21Oz93Bu0m7IA==",
+    "Archipelago.MultiClient.Net/6.7.0": {
+      "sha512": "fsK7kx3dC4EwvEA7kMTUwbP+kYeanYVWHyTXOjYKxl6zj4elHMj42YCjvOYqHee+V2NrRm0f0pljhWEY+BI72g==",
       "type": "package",
-      "path": "archipelago.multiclient.net/6.6.1",
+      "path": "archipelago.multiclient.net/6.7.0",
       "files": [
         ".nupkg.metadata",
         ".signature.p7s",
         "README.md",
-        "archipelago.multiclient.net.6.6.1.nupkg.sha512",
+        "archipelago.multiclient.net.6.7.0.nupkg.sha512",
         "archipelago.multiclient.net.nuspec",
         "blue-icon.png",
         "lib/net35/Archipelago.MultiClient.Net.dll",
@@ -90,16 +93,18 @@
         "tools/ILRepack.runtimeconfig.json"
       ]
     },
-    "ILRepack.Lib.MSBuild.Task/2.0.43": {
-      "sha512": "7oa+HoI7vwiPXzY6HVbMvUevr5Tn6ONoRRSHxRDW71hF8rFhLWQCCbgN9NWXUHhYJmKflv8Xgl4Jr4BFFpq1Gw==",
+    "ILRepack.Lib.MSBuild.Task/2.0.44.1": {
+      "sha512": "3XeHBO90AI5ggjmSeaSCVWuMuVWvNj+67ghtjTlOjhFSwhsFOJ3YU0GB/Zk19DG1grgHcJY195SIxCFVRiWf9Q==",
       "type": "package",
-      "path": "ilrepack.lib.msbuild.task/2.0.43",
+      "path": "ilrepack.lib.msbuild.task/2.0.44.1",
       "files": [
         ".nupkg.metadata",
         ".signature.p7s",
         "build/ILRepack.Lib.MSBuild.Task.dll",
         "build/ILRepack.Lib.MSBuild.Task.targets",
-        "ilrepack.lib.msbuild.task.2.0.43.nupkg.sha512",
+        "buildCrossTargeting/ILRepack.Lib.MSBuild.Task.dll",
+        "buildCrossTargeting/ILRepack.Lib.MSBuild.Task.targets",
+        "ilrepack.lib.msbuild.task.2.0.44.1.nupkg.sha512",
         "ilrepack.lib.msbuild.task.nuspec"
       ]
     },
@@ -120,9 +125,9 @@
   },
   "projectFileDependencyGroups": {
     ".NETFramework,Version=v4.7.2": [
-      "Archipelago.MultiClient.Net >= 6.6.1",
+      "Archipelago.MultiClient.Net >= 6.7.0",
       "ILRepack >= 2.0.44",
-      "ILRepack.Lib.MSBuild.Task >= 2.0.43",
+      "ILRepack.Lib.MSBuild.Task >= 2.0.44.1",
       "Yariazen.PlateUp.ModBuildUtilities >= 1.13.0"
     ]
   },
@@ -178,7 +183,7 @@
         "dependencies": {
           "Archipelago.MultiClient.Net": {
             "target": "Package",
-            "version": "[6.6.1, )"
+            "version": "[6.7.0, )"
           },
           "ILRepack": {
             "include": "Runtime, Build, Native, ContentFiles, Analyzers, BuildTransitive",
@@ -190,7 +195,7 @@
             "include": "Runtime, Build, Native, ContentFiles, Analyzers, BuildTransitive",
             "suppressParent": "All",
             "target": "Package",
-            "version": "[2.0.43, )"
+            "version": "[2.0.44.1, )"
           },
           "Yariazen.PlateUp.ModBuildUtilities": {
             "target": "Package",

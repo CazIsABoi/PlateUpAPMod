@@ -54,6 +54,9 @@ namespace KitchenPlateupAP
         private EntityQuery playersWithItems;
         private EntityQuery playerSpeedQuery;
         private EntityQuery applianceSpeedQuery;
+        private static RunIdentity currentIdentity;
+        private static PendingSpawnState pendingSpawnState = new PendingSpawnState();
+        private static bool persistenceLoaded = false;
 
         public static Mod Instance { get; private set; }
         internal static PlateupAPConfig CachedConfig;
@@ -103,6 +106,8 @@ namespace KitchenPlateupAP
         private static bool prepLogDone = false;
         private static bool sessionNotInitLogged = false;
         private bool itemsSpawnedThisRun = false;
+        private static Dictionary<int, float> playerBaseSpeeds = new Dictionary<int, float>();
+        private static bool deferredItemHistoryApplied = false;
 
         //Modifying player values
         private static readonly float[] speedTiers = new float[] { 0.5f, 0.6f, 0.8f, 1f, 1.15f };
@@ -153,6 +158,36 @@ namespace KitchenPlateupAP
                 TryWarmupConfig();
             }
         }
+
+        private static RunIdentity BuildIdentity()
+        {
+            if (CachedConfig == null)
+                return null;
+            return new RunIdentity
+            {
+                Address = CachedConfig.address ?? "",
+                Port = CachedConfig.port,
+                Player = CachedConfig.playername ?? ""
+            };
+        }
+
+        public void UpdateArchipelagoConfig(PlateupAPConfig config)
+        {
+            CachedConfig = config;
+            currentIdentity = BuildIdentity();
+            if (currentIdentity != null)
+            {
+                bool reset = PersistenceManager.ShouldResetForIdentity(currentIdentity);
+                if (reset)
+                {
+                    Logger.LogInfo("[Persistence] Identity changed (port/address/player). Resetting stored speed upgrades and pending items.");
+                    PersistenceManager.ResetForNewRun(currentIdentity);
+                }
+                PersistenceManager.SaveIdentity(currentIdentity);
+            }
+            ArchipelagoConnectionManager.TryConnect(config.address, config.port, config.playername, config.password);
+        }
+
 
         // New: read and cache config early
         private void TryWarmupConfig()
@@ -435,21 +470,58 @@ namespace KitchenPlateupAP
             applianceSpeedQuery = GetEntityQuery(new QueryHelper().All(typeof(CApplianceSpeedModifier)));
         }
 
-        public void UpdateArchipelagoConfig(PlateupAPConfig config)
-        {
-            // cache the latest known-good config too
-            CachedConfig = config;
-            ArchipelagoConnectionManager.TryConnect(config.address, config.port, config.playername, config.password);
-        }
-
         public void OnSuccessfulConnect()
         {
             if (ArchipelagoConnectionManager.ConnectionSuccessful)
             {
                 RetrieveSlotData(); // Fetch slot data
 
+                // Load persistence once per connection (before applying past items)
+                if (!persistenceLoaded)
+                {
+                    currentIdentity = BuildIdentity();
+                    if (currentIdentity != null)
+                    {
+                        var speedState = PersistenceManager.LoadSpeedState(currentIdentity);
+                        if (speedState != null)
+                        {
+                            movementSpeedTier   = Mathf.Clamp(speedState.MovementTier,   0, speedTiers.Length - 1);
+                            applianceSpeedTier  = Mathf.Clamp(speedState.ApplianceTier, 0, applianceSpeedTiers.Length - 1);
+                            cookSpeedTier       = Mathf.Clamp(speedState.CookTier,      0, cookSpeedTiers.Length - 1);
+                            chopSpeedTier       = Mathf.Clamp(speedState.ChopTier,      0, chopSpeedTiers.Length - 1);
+                            cleanSpeedTier      = Mathf.Clamp(speedState.CleanTier,     0, cleanSpeedTiers.Length - 1);
+
+                            movementSpeedMod    = speedTiers[movementSpeedTier];
+                            applianceSpeedMod   = applianceSpeedTiers[applianceSpeedTier];
+                            cookSpeedMod        = cookSpeedTiers[cookSpeedTier];
+                            chopSpeedMod        = chopSpeedTiers[chopSpeedTier];
+                            cleanSpeedMod       = cleanSpeedTiers[cleanSpeedTier];
+
+                            Logger.LogInfo($"[Persistence] Loaded speed tiers: M={movementSpeedTier} A={applianceSpeedTier} Cook={cookSpeedTier} Chop={chopSpeedTier} Clean={cleanSpeedTier}");
+                        }
+                        else
+                        {
+                            Logger.LogInfo("[Persistence] No prior speed state file found for this identity.");
+                        }
+
+                        pendingSpawnState = PersistenceManager.LoadPendingSpawn(currentIdentity) ?? new PendingSpawnState();
+                        if (pendingSpawnState.PendingItemIDs.Count > 0)
+                        {
+                            Logger.LogInfo($"[Persistence] Restored {pendingSpawnState.PendingItemIDs.Count} pending items to spawn queue.");
+                            foreach (int id in pendingSpawnState.PendingItemIDs)
+                            {
+                                if (!spawnQueue.Any(x => (int)x.ItemId == id))
+                                    spawnQueue.Enqueue(CreateItemInfoForQueue(id));
+                            }
+                        }
+                    }
+                    persistenceLoaded = true;
+                }
+
+                // Re-apply upgrades from session history (will clamp; persistence prevents over-increment)
                 Logger.LogInfo("[Archipelago] Re-processing all previously received items...");
                 ProcessAllReceivedItems();
+                deferredItemHistoryApplied = false; // arm second pass
                 Logger.LogInfo("[Archipelago] Re-processing all previously received location checks");
                 ReconstructProgressFromLocationChecks();
 
@@ -465,7 +537,6 @@ namespace KitchenPlateupAP
                         World.GetOrCreateSystem<ApplyCleanSpeedSystem>().Enabled = false;
                         World.GetOrCreateSystem<ApplyChopSpeedSystem>().Enabled = false;
                         World.GetOrCreateSystem<ApplyCookSpeedSystem>().Enabled = false;
-
                         Logger.LogInfo("[OnSuccessfulConnect] Grouped mode enabled, separate-mode disabled.");
                     }
                     else
@@ -475,7 +546,6 @@ namespace KitchenPlateupAP
                         World.GetOrCreateSystem<ApplyCleanSpeedSystem>().Enabled = true;
                         World.GetOrCreateSystem<ApplyChopSpeedSystem>().Enabled = true;
                         World.GetOrCreateSystem<ApplyCookSpeedSystem>().Enabled = true;
-
                         Logger.LogInfo("[OnSuccessfulConnect] Separate mode enabled, grouped mode disabled.");
                     }
                 }
@@ -495,13 +565,6 @@ namespace KitchenPlateupAP
                 try
                 {
                     var ci = ArchipelagoConnectionManager.Session?.ConnectionInfo;
-                    // Example: if there is a string list you stored somewhere (pseudo – adjust to your actual structure).
-                    // if (ci?.PermissionsList is List<string> perms)
-                    // {
-                    //     int removed = perms.RemoveAll(p => p == "Disabled");
-                    //     if (removed > 0)
-                    //         Logger.LogInfo($"[PlateupAP] Removed {removed} 'Disabled' permission entries post-login.");
-                    // }
                 }
                 catch (System.Exception ex)
                 {
@@ -512,13 +575,6 @@ namespace KitchenPlateupAP
                 try
                 {
                     var ci = ArchipelagoConnectionManager.Session?.ConnectionInfo;
-                    // Example: if there is a string list you stored somewhere (pseudo – adjust to your actual structure).
-                    // if (ci?.PermissionsList is List<string> perms)
-                    // {
-                    //     int removed = perms.RemoveAll(p => p == "Disabled");
-                    //     if (removed > 0)
-                    //         Logger.LogInfo($"[PlateupAP] Removed {removed} 'Disabled' permission entries post-login.");
-                    // }
                 }
                 catch (System.Exception ex)
                 {
@@ -894,6 +950,18 @@ namespace KitchenPlateupAP
             }
             ApplySpeedModifiers();
             ApplyApplianceSpeedModifiers();
+
+            // In OnUpdate (anywhere after session null checks), add this one-shot deferred pass:
+            if (!deferredItemHistoryApplied && session != null && session.Items != null)
+            {
+                // Run once when the server has pushed the historical items
+                if (session.Items.AllItemsReceived != null && session.Items.AllItemsReceived.Count > 0)
+                {
+                    Logger.LogInfo("[Archipelago] Performing deferred item history re-processing...");
+                    ProcessAllReceivedItems();
+                    deferredItemHistoryApplied = true;
+                }
+            }
         }
 
         // Spawning Items
@@ -908,33 +976,42 @@ namespace KitchenPlateupAP
                 }
                 return;
             }
-            // Reset the flag when session items become available.
             sessionNotInitLogged = false;
 
             if (!itemsEventSubscribed)
             {
-                session.Items.ItemReceived += new ReceivedItemsHelper.ItemReceivedHandler(OnItemReceived);
+                // Use method group; delegate type matches event signature
+                session.Items.ItemReceived += OnItemReceived;
                 itemsEventSubscribed = true;
+                Logger.LogInfo("Subscribed to session.Items.ItemReceived.");
             }
         }
 
         private static List<int> receivedItemPool = new List<int>();
 
-        private void OnItemReceived(ReceivedItemsHelper helper)
+        private void OnItemReceived(IReceivedItemsHelper helper)
         {
+            // Dequeue now; we persist non-speed items so they survive restarts
             ItemInfo info = helper.DequeueItem();
-            int checkId = (int)info.ItemId;
-            string itemName = session.Items.GetItemName(checkId);
 
-            Logger.LogInfo($"[OnItemReceived] Received check ID: {checkId}");
+            long itemIdLong = info.ItemId;
+            int checkId = (int)itemIdLong; // our mappings use int keys
+            long locationId = info.LocationId;
 
+            string itemName = helper.GetItemName(itemIdLong);
+            string locationName = session?.Locations?.GetLocationNameFromId(locationId);
+
+            Logger.LogInfo($"[OnItemReceived] Got item '{itemName}' (ID {itemIdLong}) from location '{locationName}' (ID {locationId})");
+
+            // Lease item special case
             if (checkId == 15)
             {
-                Logger.LogInfo($"[OnItemReceived] Received Day Lease");
+                Logger.LogInfo("[OnItemReceived] Received Day Lease");
                 KitchenPlateupAP.LeaseRequirementSystem.TriggerRefresh();
                 return;
             }
 
+            // Traps
             if (ProgressionMapping.trapDictionary.ContainsKey(checkId))
             {
                 Logger.LogWarning($"[OnItemReceived] Received TRAP: {ProgressionMapping.trapDictionary[checkId]}!");
@@ -942,8 +1019,10 @@ namespace KitchenPlateupAP
                 return;
             }
 
+            // Speed upgrades (apply immediately, persist tiers)
             if (ProgressionMapping.speedUpgradeMapping.TryGetValue(checkId, out string upgradeName))
             {
+                bool changed = false;
                 switch (upgradeName)
                 {
                     case "Speed Upgrade Player":
@@ -951,88 +1030,87 @@ namespace KitchenPlateupAP
                         {
                             movementSpeedTier++;
                             movementSpeedMod = speedTiers[movementSpeedTier];
+                            changed = true;
                             Logger.LogInfo($"[OnItemReceived] Player speed upgraded to tier {movementSpeedTier}. Multiplier = {movementSpeedMod}");
                         }
-                        else
-                        {
-                            Logger.LogInfo("[OnItemReceived] Player speed already at max tier.");
-                        }
                         Logger.LogInfo("[OnItemReceived] Skipping player speed item for next run.");
-                        return;
+                        break;
 
                     case "Speed Upgrade Appliance":
-                        // The old logic you already have:
-                        Mod.Instance.IncreaseApplianceSpeedTier();
-                        Logger.LogInfo($"[OnItemReceived] Appliance speed item used (ID {checkId}). Skipping for next run.");
-                        return;
+                        if (applianceSpeedTier < applianceSpeedTiers.Length - 1)
+                        {
+                            applianceSpeedTier++;
+                            applianceSpeedMod = applianceSpeedTiers[applianceSpeedTier];
+                            changed = true;
+                            Logger.LogInfo($"[OnItemReceived] Appliance speed upgraded to tier {applianceSpeedTier}. Multiplier = {applianceSpeedMod}");
+                        }
+                        break;
 
                     case "Speed Upgrade Cook":
                         if (cookSpeedTier < cookSpeedTiers.Length - 1)
                         {
                             cookSpeedTier++;
                             cookSpeedMod = cookSpeedTiers[cookSpeedTier];
+                            changed = true;
                             Logger.LogInfo($"[OnItemReceived] Cook speed upgraded to tier {cookSpeedTier}. Multiplier = {cookSpeedMod}");
                         }
-                        else
-                        {
-                            Logger.LogInfo("[OnItemReceived] Cook speed is already at maximum tier.");
-                        }
-                        return;
+                        break;
 
                     case "Speed Upgrade Chop":
                         if (chopSpeedTier < chopSpeedTiers.Length - 1)
                         {
                             chopSpeedTier++;
                             chopSpeedMod = chopSpeedTiers[chopSpeedTier];
+                            changed = true;
                             Logger.LogInfo($"[OnItemReceived] Chop/Knead speed upgraded to tier {chopSpeedTier}. Multiplier = {chopSpeedMod}");
                         }
-                        else
-                        {
-                            Logger.LogInfo("[OnItemReceived] Chop speed is already at maximum tier.");
-                        }
-                        return;
+                        break;
 
                     case "Speed Upgrade Clean":
                         if (cleanSpeedTier < cleanSpeedTiers.Length - 1)
                         {
                             cleanSpeedTier++;
                             cleanSpeedMod = cleanSpeedTiers[cleanSpeedTier];
+                            changed = true;
                             Logger.LogInfo($"[OnItemReceived] Clean speed upgraded to tier {cleanSpeedTier}. Multiplier = {cleanSpeedMod}");
                         }
-                        else
-                        {
-                            Logger.LogInfo("[OnItemReceived] Clean speed is already at maximum tier.");
-                        }
-                        return;
+                        break;
                 }
+
+                if (changed && currentIdentity != null)
+                {
+                    var state = new SpeedUpgradeState
+                    {
+                        MovementTier = movementSpeedTier,
+                        ApplianceTier = applianceSpeedTier,
+                        CookTier = cookSpeedTier,
+                        ChopTier = chopSpeedTier,
+                        CleanTier = cleanSpeedTier
+                    };
+                    PersistenceManager.SaveSpeedState(currentIdentity, state);
+                }
+                playerBaseSpeeds.Clear();
+                return;
             }
 
+            // Non-speed items -> add to queue and persist
             receivedItemPool.Add(checkId);
-            Logger.LogInfo($"[OnItemReceived] Item ID {checkId} added to receivedItemPool.");
-
-            Logger.LogInfo($"[OnItemReceived] Queuing item ID: {checkId}");
 
             if (!spawnQueue.Any(x => (int)x.ItemId == checkId))
             {
-                bool currentlyPrep = HasSingleton<SIsNightTime>();
-                if (currentlyPrep)
+                spawnQueue.Enqueue(info);
+
+                if (currentIdentity != null)
                 {
-                    Logger.LogInfo($"[OnItemReceived] Currently in prep phase; queueing item ID: {checkId} for immediate spawn.");
-                    spawnQueue.Enqueue(info);
+                    if (!pendingSpawnState.PendingItemIDs.Contains(checkId))
+                        pendingSpawnState.PendingItemIDs.Add(checkId);
+                    PersistenceManager.SavePendingSpawn(currentIdentity, pendingSpawnState);
                 }
-                else
-                {
-                    Logger.LogInfo($"[OnItemReceived] Item ID {checkId} is queued for the next run.");
-                    spawnQueue.Enqueue(info);
-                }
-            }
-            else
-            {
-                Logger.LogInfo($"[OnItemReceived] Item ID {checkId} is already in spawnQueue. Skipping duplicate.");
+                Logger.LogInfo($"[OnItemReceived] Queued item ID {checkId} for spawn.");
             }
 
             // Dish unlock logic
-    if (itemName != null && itemName.StartsWith("Unlock: "))
+            if (!string.IsNullOrEmpty(itemName) && itemName.StartsWith("Unlock: "))
     {
         string dishName = itemName.Substring("Unlock: ".Length).Trim();
         if (ProgressionMapping.dish_id_lookup.TryGetValue(dishName, out int newDishId))
@@ -1237,7 +1315,6 @@ namespace KitchenPlateupAP
         private void ProcessSpawn(ItemInfo info)
         {
             int checkId = (int)info.ItemId;
-
             string itemName = session.Items.GetItemName(checkId);
             if (string.IsNullOrEmpty(itemName))
             {
@@ -1245,9 +1322,6 @@ namespace KitchenPlateupAP
                 return;
             }
 
-            Logger.LogInfo("[Spawn] Processing item ID: " + checkId);
-
-            // Speed upgrades handled in OnItemReceived / processing path already
             if (ProgressionMapping.speedUpgradeMapping.ContainsKey(checkId))
             {
                 Logger.LogInfo("[Spawn] Skipping speed upgrade (already applied).");
@@ -1260,7 +1334,6 @@ namespace KitchenPlateupAP
                 return;
             }
 
-            // Always door spawn in your original queue logic (you had SpawnPositionType.Door)
             var positionType = SpawnPositionType.Door;
             Vector3 spawnPos = SpawnHelpers.ResolveSpawnPosition(EntityManager, positionType, InputSourceIdentifier.Identifier);
 
@@ -1269,18 +1342,24 @@ namespace KitchenPlateupAP
             if (KitchenData.GameData.Main.TryGet<Appliance>(gdoId, out _))
             {
                 spawned = SpawnHelpers.TrySpawnApplianceBlueprint(EntityManager, gdoId, spawnPos, costMode: 0f);
-                if (spawned)
-                    Logger.LogInfo($"[Spawn] Appliance blueprint spawned (GDO {gdoId}) at {spawnPos}.");
             }
             else if (KitchenData.GameData.Main.TryGet<Decor>(gdoId, out _))
             {
                 spawned = SpawnHelpers.TrySpawnDecor(EntityManager, gdoId, spawnPos);
-                if (spawned)
-                    Logger.LogInfo($"[Spawn] Decor spawned (GDO {gdoId}) at {spawnPos}.");
+            }
+
+            if (spawned)
+            {
+                Logger.LogInfo($"[Spawn] Spawned item ID {checkId} (GDO {gdoId}) at {spawnPos}.");
+                // Remove from persistence queue
+                if (currentIdentity != null && pendingSpawnState.PendingItemIDs.Remove(checkId))
+                {
+                    PersistenceManager.SavePendingSpawn(currentIdentity, pendingSpawnState);
+                }
             }
             else
             {
-                Logger.LogWarning("GDO id " + gdoId + " is neither Appliance nor Decor.");
+                Logger.LogWarning($"[Spawn] Failed to spawn item ID {checkId} (GDO {gdoId}). Will remain pending.");
             }
         }
 
@@ -1567,11 +1646,21 @@ namespace KitchenPlateupAP
                 for (int i = 0; i < playerEntities.Length; i++)
                 {
                     Entity playerEntity = playerEntities[i];
-                    // Get the player's component (assumes CPlayer contains a Speed field)
                     CPlayer player = EntityManager.GetComponentData<CPlayer>(playerEntity);
-                    // Apply the movement speed modifier from the current tier.
-                    player.Speed = player.Speed * movementSpeedMod;
-                    EntityManager.SetComponentData(playerEntity, player);
+
+                    if (!playerBaseSpeeds.TryGetValue(playerEntity.Index, out float baseSpeed))
+                    {
+                        baseSpeed = player.Speed;
+                        playerBaseSpeeds[playerEntity.Index] = baseSpeed;
+                        // Optional: Logger.LogInfo($"[Speed] Cached base player speed {baseSpeed} for entity {playerEntity.Index}");
+                    }
+
+                    float target = baseSpeed * movementSpeedMod;
+                    if (Math.Abs(player.Speed - target) > 0.0001f)
+                    {
+                        player.Speed = target;
+                        EntityManager.SetComponentData(playerEntity, player);
+                    }
                 }
             }
         }
@@ -1659,7 +1748,7 @@ namespace KitchenPlateupAP
 
             if (!itemsEventSubscribed)
             {
-                session.Items.ItemReceived += new ReceivedItemsHelper.ItemReceivedHandler(OnItemReceived);
+                session.Items.ItemReceived += OnItemReceived;
                 itemsEventSubscribed = true;
                 Logger.LogInfo("Subscribed to session.Items.ItemReceived.");
             }

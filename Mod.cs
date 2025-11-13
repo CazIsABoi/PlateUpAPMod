@@ -44,7 +44,7 @@ namespace KitchenPlateupAP
     {
         public const string MOD_GUID = "com.caz.plateupap";
         public const string MOD_NAME = "PlateupAP";
-        public const string MOD_VERSION = "0.2.0.1";
+        public const string MOD_VERSION = "0.2.1.1";
         public const string MOD_AUTHOR = "Caz";
         public const string MOD_GAMEVERSION = ">=1.1.9";
         public static int TOTAL_SCENES_LOADED = 0;
@@ -79,6 +79,7 @@ namespace KitchenPlateupAP
         public static int applianceSpeedMode = 0;
         private static bool checksDisabled = false;
         private bool dishPedestalSpawned = false;
+        private static int dayLeaseInterval = 5;
 
         // Static day cycle and spawn state.
         private static int lastDay = 0;
@@ -315,6 +316,13 @@ namespace KitchenPlateupAP
                     applianceSpeedMode = Convert.ToInt32(rawApplianceSpeedMode);
                     Logger.LogInfo($"[PlateupAP] Appliance Speed Mode set to {applianceSpeedMode} (0=grouped, 1=separate)");
                 }
+
+                if (slotData.TryGetValue("day_lease_interval", out object rawLeaseInterval))
+                {
+                    dayLeaseInterval = Mathf.Clamp(Convert.ToInt32(rawLeaseInterval), 1, 30);
+                    Logger.LogInfo($"[PlateupAP] Day Lease Interval set to: {dayLeaseInterval}");
+                    KitchenPlateupAP.LeaseRequirementSystem.TriggerRefresh();
+                }
             }
 
             if (selectedDishes.Count > 0)
@@ -442,7 +450,12 @@ namespace KitchenPlateupAP
 
                     Debug.Log($"[PlateupAP][Config] Using server={config.address}:{config.port} player={config.playername}");
                     UpdateArchipelagoConfig(config);
-                });
+                })
+                // NEW: Debug utilities
+                .AddLabel("Debug Utilities")
+                .AddInfo("Quick fixes during a run")
+                .AddButton("Set Player Speed to 1x", (int _) => { ForcePlayerSpeedToOne(); })
+                .AddButton("Increment Franchise Count", (int _) => { IncrementFranchiseAndCheckGoal(); });
 
             PrefManager.RegisterMenu(PreferenceSystemManager.MenuType.MainMenu);
             PrefManager.RegisterMenu(PreferenceSystemManager.MenuType.PauseMenu);
@@ -1863,6 +1876,63 @@ private PlateupAPConfig LoadConfigIsolated(string json)
     }
 
     return null;
+}
+
+// Forces the movement speed mod to 1.0 and persists the new tier.
+private void ForcePlayerSpeedToOne()
+{
+    int idx = Array.IndexOf(speedTiers, 1f);
+    movementSpeedTier = idx >= 0 ? idx : 3; // fall back to the known 1.0 tier index
+    movementSpeedMod = 1f;
+
+    // Clear cached bases to be safe; next ApplySpeedModifiers will re-cache and apply 1x
+    playerBaseSpeeds.Clear();
+
+    Logger.LogWarning("[Debug] Forced player movement speed to 1x.");
+
+    if (currentIdentity != null)
+    {
+        var state = new SpeedUpgradeState
+        {
+            MovementTier = movementSpeedTier,
+            ApplianceTier = applianceSpeedTier,
+            CookTier = cookSpeedTier,
+            ChopTier = chopSpeedTier,
+            CleanTier = cleanSpeedTier
+        };
+        PersistenceManager.SaveSpeedState(currentIdentity, state);
+    }
+}
+
+// Increments the franchise completion count and sends the franchise location check.
+private void IncrementFranchiseAndCheckGoal()
+{
+    timesFranchised++;
+    Logger.LogWarning("[Debug] Manually incremented franchise counter to " + timesFranchised + ".");
+
+    try
+    {
+        if (session != null && session.Locations != null)
+        {
+            // 100000 == franchise completion check
+            session.Locations.CompleteLocationChecks(100000);
+            Logger.LogInfo("[Debug] Sent franchise completion check (ID 100000) to Archipelago.");
+        }
+        else
+        {
+            Logger.LogWarning("[Debug] Session or Locations unavailable; will not send location check.");
+        }
+    }
+    catch (Exception ex)
+    {
+        Logger.LogWarning("[Debug] Failed to send franchise completion check: " + ex.Message);
+    }
+
+    if (goal == 0 && franchiseCount > 0 && timesFranchised >= franchiseCount)
+    {
+        Logger.LogInfo("[Debug] Franchise goal reached via manual increment. Sending goal complete.");
+        SendGoalComplete();
+    }
 }
     }
 }

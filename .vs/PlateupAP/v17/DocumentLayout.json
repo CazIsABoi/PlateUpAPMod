@@ -7,6 +7,10 @@
       "RelativeMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|solutionrelative:mod.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
     },
     {
+      "AbsoluteMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|c:\\my mods\\plateupap\\gates\\lease.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|solutionrelative:gates\\lease.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
       "AbsoluteMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|c:\\my mods\\plateupap\\persistence\\persistencemanager.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
       "RelativeMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|solutionrelative:persistence\\persistencemanager.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
     },
@@ -39,10 +43,6 @@
       "RelativeMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|solutionrelative:plateupap.csproj||{FA3CD31E-987B-443A-9B81-186104E8DAC1}|"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|c:\\my mods\\plateupap\\gates\\lease.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
-      "RelativeMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|solutionrelative:gates\\lease.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
-    },
-    {
       "AbsoluteMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|c:\\my mods\\plateupap\\appliancespeed.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
       "RelativeMoniker": "D:0:0:{024DDD5C-4123-BEB9-B5E4-7F62A5F8783E}|PlateupAP.csproj|solutionrelative:appliancespeed.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
     },
@@ -62,15 +62,11 @@
       "DocumentGroups": [
         {
           "DockedWidth": 200,
-          "SelectedChildIndex": 7,
+          "SelectedChildIndex": 6,
           "Children": [
             {
-              "$type": "Bookmark",
-              "Name": "ST:0:0:{1c4feeaa-4718-4aa9-859d-94ce25d182ba}"
-            },
-            {
               "$type": "Document",
-              "DocumentIndex": 1,
+              "DocumentIndex": 2,
               "Title": "PersistenceManager.cs",
               "DocumentMoniker": "C:\\My Mods\\PlateupAP\\Persistence\\PersistenceManager.cs",
               "RelativeDocumentMoniker": "Persistence\\PersistenceManager.cs",
@@ -78,11 +74,12 @@
               "RelativeToolTip": "Persistence\\PersistenceManager.cs",
               "ViewState": "AgIAAAAAAAAAAAAAAAAAAKgAAAABAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2025-11-07T16:11:24.509Z"
+              "WhenOpened": "2025-11-07T16:11:24.509Z",
+              "EditorCaption": ""
             },
             {
               "$type": "Document",
-              "DocumentIndex": 2,
+              "DocumentIndex": 3,
               "Title": "DoorPositionSystem.cs",
               "DocumentMoniker": "C:\\My Mods\\PlateupAP\\SpawnSystems\\DoorPositionSystem.cs",
               "RelativeDocumentMoniker": "SpawnSystems\\DoorPositionSystem.cs",
@@ -90,11 +87,12 @@
               "RelativeToolTip": "SpawnSystems\\DoorPositionSystem.cs",
               "ViewState": "AgIAAAAAAAAAAAAAAAAAACUAAAABAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2025-09-25T13:58:18.398Z"
+              "WhenOpened": "2025-09-25T13:58:18.398Z",
+              "EditorCaption": ""
             },
             {
               "$type": "Document",
-              "DocumentIndex": 4,
+              "DocumentIndex": 5,
               "Title": "Wrappers.cs",
               "DocumentMoniker": "C:\\My Mods\\PlateupAP\\Wrappers.cs",
               "RelativeDocumentMoniker": "Wrappers.cs",
@@ -102,11 +100,12 @@
               "RelativeToolTip": "Wrappers.cs",
               "ViewState": "AgIAAAAAAAAAAAAAAAAAABoAAAAAAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2025-09-25T13:46:14.255Z"
+              "WhenOpened": "2025-09-25T13:46:14.255Z",
+              "EditorCaption": ""
             },
             {
               "$type": "Document",
-              "DocumentIndex": 5,
+              "DocumentIndex": 6,
               "Title": "ECSSPawnSystems.cs",
               "DocumentMoniker": "C:\\My Mods\\PlateupAP\\SpawnSystems\\ECSSPawnSystems.cs",
               "RelativeDocumentMoniker": "SpawnSystems\\ECSSPawnSystems.cs",
@@ -114,11 +113,12 @@
               "RelativeToolTip": "SpawnSystems\\ECSSPawnSystems.cs",
               "ViewState": "AgIAAGwAAAAAAAAAAAAYwMEAAAAEAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2025-09-25T13:42:38.879Z"
+              "WhenOpened": "2025-09-25T13:42:38.879Z",
+              "EditorCaption": ""
             },
             {
               "$type": "Document",
-              "DocumentIndex": 3,
+              "DocumentIndex": 4,
               "Title": "SpawnHelpers.cs",
               "DocumentMoniker": "C:\\My Mods\\PlateupAP\\SpawnSystems\\SpawnHelpers.cs",
               "RelativeDocumentMoniker": "SpawnSystems\\SpawnHelpers.cs",
@@ -126,7 +126,8 @@
               "RelativeToolTip": "SpawnSystems\\SpawnHelpers.cs",
               "ViewState": "AgIAAAoAAAAAAAAAAAAqwDkAAAAYAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2025-09-25T13:24:53.035Z"
+              "WhenOpened": "2025-09-25T13:24:53.035Z",
+              "EditorCaption": ""
             },
             {
               "$type": "Document",
@@ -138,7 +139,8 @@
               "RelativeToolTip": "Patches\\Patches.cs",
               "ViewState": "AgIAAGQAAAAAAAAAAAAswHoAAAAuAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2025-09-01T23:20:16.233Z"
+              "WhenOpened": "2025-09-01T23:20:16.233Z",
+              "EditorCaption": ""
             },
             {
               "$type": "Document",
@@ -148,7 +150,7 @@
               "RelativeDocumentMoniker": "Mod.cs",
               "ToolTip": "C:\\My Mods\\PlateupAP\\Mod.cs",
               "RelativeToolTip": "Mod.cs",
-              "ViewState": "AgIAAFAAAAAAAAAAAAAAAGAAAAA0AAAAAAAAAA==",
+              "ViewState": "AgIAACoAAAAAAAAAAAAqwDAAAAA4AAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
               "WhenOpened": "2025-08-30T01:45:16.658Z",
               "EditorCaption": ""
@@ -163,7 +165,8 @@
               "RelativeToolTip": "Patches\\LockedDishes.cs",
               "ViewState": "AgIAAA4AAAAAAAAAAAAYwBwAAAAtAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2025-08-30T01:45:11.721Z"
+              "WhenOpened": "2025-08-30T01:45:11.721Z",
+              "EditorCaption": ""
             },
             {
               "$type": "Document",
@@ -175,11 +178,12 @@
               "RelativeToolTip": "ApplianceSpeed.cs",
               "ViewState": "AgIAAEEBAAAAAAAAAAAcwFMBAAAbAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2025-08-11T23:51:12.275Z"
+              "WhenOpened": "2025-08-11T23:51:12.275Z",
+              "EditorCaption": ""
             },
             {
               "$type": "Document",
-              "DocumentIndex": 6,
+              "DocumentIndex": 7,
               "Title": "ProgressionMapping.cs",
               "DocumentMoniker": "C:\\My Mods\\PlateupAP\\ProgressionMapping.cs",
               "RelativeDocumentMoniker": "ProgressionMapping.cs",
@@ -187,23 +191,25 @@
               "RelativeToolTip": "ProgressionMapping.cs",
               "ViewState": "AgIAAIgAAAAAAAAAAAAswI0AAAA3AAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2025-08-11T23:35:38.348Z"
+              "WhenOpened": "2025-08-11T23:35:38.348Z",
+              "EditorCaption": ""
             },
             {
               "$type": "Document",
-              "DocumentIndex": 9,
+              "DocumentIndex": 1,
               "Title": "Lease.cs",
               "DocumentMoniker": "C:\\My Mods\\PlateupAP\\Gates\\Lease.cs",
               "RelativeDocumentMoniker": "Gates\\Lease.cs",
               "ToolTip": "C:\\My Mods\\PlateupAP\\Gates\\Lease.cs",
               "RelativeToolTip": "Gates\\Lease.cs",
-              "ViewState": "AgIAACQAAAAAAAAAAAAowCwAAABHAAAAAAAAAA==",
+              "ViewState": "AgIAAEcAAAAAAAAAAAAUwIkAAAABAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2025-07-22T14:59:38.851Z"
+              "WhenOpened": "2025-07-22T14:59:38.851Z",
+              "EditorCaption": ""
             },
             {
               "$type": "Document",
-              "DocumentIndex": 8,
+              "DocumentIndex": 9,
               "Title": "PlateupAP.csproj",
               "DocumentMoniker": "C:\\My Mods\\PlateupAP\\PlateupAP.csproj",
               "RelativeDocumentMoniker": "PlateupAP.csproj",
@@ -211,11 +217,12 @@
               "RelativeToolTip": "PlateupAP.csproj",
               "ViewState": "AgIAAAAAAAAAAAAAAAAAAAcAAAARAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000758|",
-              "WhenOpened": "2025-07-15T14:17:33.521Z"
+              "WhenOpened": "2025-07-15T14:17:33.521Z",
+              "EditorCaption": ""
             },
             {
               "$type": "Document",
-              "DocumentIndex": 7,
+              "DocumentIndex": 8,
               "Title": "ArchipelagoConnectionManager.cs",
               "DocumentMoniker": "C:\\My Mods\\PlateupAP\\ArchipelagoConnectionManager.cs",
               "RelativeDocumentMoniker": "ArchipelagoConnectionManager.cs",
@@ -223,7 +230,16 @@
               "RelativeToolTip": "ArchipelagoConnectionManager.cs",
               "ViewState": "AgIAAMcAAAAAAAAAAAAnwM4AAAANAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2025-07-15T02:05:31.812Z"
+              "WhenOpened": "2025-07-15T02:05:31.812Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{cce594b6-0c39-4442-ba28-10c64ac7e89f}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{1c4feeaa-4718-4aa9-859d-94ce25d182ba}"
             }
           ]
         }

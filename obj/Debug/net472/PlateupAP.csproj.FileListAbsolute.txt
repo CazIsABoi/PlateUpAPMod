@@ -255,3 +255,4 @@ C:\My Mods\PlateupAP\obj\Debug\net472\PlateupAP.csproj.CoreCompileInputs.cache
 C:\My Mods\PlateupAP\obj\Debug\net472\PlateupAP.csproj.Up2Date
 C:\My Mods\PlateupAP\obj\Debug\net472\PlateupAP.dll
 C:\My Mods\PlateupAP\obj\Debug\net472\PlateupAP.pdb
+C:\My Mods\PlateupAP\obj\Debug\net472\PlateupAP.sourcelink.json

@@ -21,66 +21,118 @@ namespace KitchenPlateupAP
 
         protected override void OnUpdate()
         {
-            if (!forceRefresh)
-            {
-                // Only update if normal ECS update or forced
-                return;
-            }
-            forceRefresh = false;
-
             // Require Archipelago connection
             if (!ArchipelagoConnectionManager.ConnectionSuccessful || ArchipelagoConnectionManager.Session == null)
                 return;
-            // Only during prep phase in an active kitchen
+
+            // Only during prep phase in an active kitchen (night = prep)
             if (!HasSingleton<SKitchenMarker>() || !HasSingleton<SIsNightTime>())
                 return;
-            // Current day
+
+            // Upcoming day
             int currentDay = HasSingleton<SDay>() ? GetSingleton<SDay>().Day : 0;
-            if (currentDay < 1) return;
+            if (currentDay < 1)
+                return;
 
-            // Get current number of lease items from Archipelago
+            // Goal (0 = franchise_x_times, 1 = complete_x_days)
+            int goal = 0;
+            try
+            {
+                var goalField = typeof(Mod).GetField("goal", BindingFlags.NonPublic | BindingFlags.Static);
+                if (goalField != null)
+                    goal = (int)goalField.GetValue(null);
+            }
+            catch { }
+
+            // Overall days completed (for day goal)
+            int overallDaysCompleted = 0;
+            if (goal == 1)
+            {
+                try
+                {
+                    var odcField = typeof(Mod).GetField("overallDaysCompleted", BindingFlags.NonPublic | BindingFlags.Static);
+                    if (odcField != null)
+                        overallDaysCompleted = (int)odcField.GetValue(null);
+                }
+                catch { }
+            }
+
+            // Active franchise index (timesFranchised starts at 1 before any completion)
+            int franchiseIndex = 1;
+            try
+            {
+                if (Mod.Instance != null)
+                {
+                    var tfField = typeof(Mod).GetField("timesFranchised", BindingFlags.NonPublic | BindingFlags.Instance);
+                    if (tfField != null && tfField.GetValue(Mod.Instance) is int val)
+                        franchiseIndex = val;
+                }
+            }
+            catch { }
+
+            // Count lease items obtained
             int leaseCount = ArchipelagoConnectionManager.Session.Items.AllItemsReceived
-                                 .Count(item => (int)item.ItemId == 15);
+                .Count(item => (int)item.ItemId == 15);
 
-            // Determine franchise tier (how many franchises completed)
-            int franchiseTier = 1;
-            if (Mod.Instance != null)
+            // Fetch Day Lease Interval from Mod (default 5 if not available)
+            int interval = 5;
+            try
             {
-                var field = typeof(Mod).GetField("timesFranchised", BindingFlags.NonPublic | BindingFlags.Instance);
-                if (field != null && field.GetValue(Mod.Instance) is int val)
-                    franchiseTier = val;
+                var intField = typeof(Mod).GetField("dayLeaseInterval", BindingFlags.NonPublic | BindingFlags.Static);
+                if (intField != null)
+                {
+                    int read = (int)intField.GetValue(null);
+                    interval = Math.Max(1, Math.Min(30, read));
+                }
             }
-            int franchisesDone = Math.Max(0, franchiseTier - 1);
+            catch { }
 
-            // Calculate required leases for this day and franchise
-            int requiredLeases;
-            if (currentDay > 15)
+            int requiredLeases = 0;
+
+            if (goal == 0)
             {
-                requiredLeases = 0;
-            }
-            else if (currentDay <= 5 && franchisesDone == 0)
-            {
-                requiredLeases = 0; // No leases required in first 5 days of first franchise
-            }
-            else if (currentDay <= 5)
-            {
-                requiredLeases = 1 + 3 * franchisesDone;
-            }
-            else if (currentDay <= 10)
-            {
-                requiredLeases = 2 + 3 * franchisesDone;
+                // Franchise goal: apply interval within a 15-day run.
+                // currentDay > 15 => no further lease gating (overtime)
+                if (currentDay > 15)
+                {
+                    requiredLeases = 0;
+                }
+                else
+                {
+                    // Number of lease segments per franchise run, with the given interval
+                    int segmentsPerFranchise = (int)Math.Ceiling(15.0 / interval);
+
+                    // Total segments completed in prior franchises
+                    int baseOffset = segmentsPerFranchise * Math.Max(0, franchiseIndex - 1);
+
+                    // Current segment (0-based) within this franchise run
+                    int withinRun = Math.Min(segmentsPerFranchise - 1, (currentDay - 1) / interval);
+
+                    // Preserve original behavior where the first segment of the very first franchise is 0
+                    if (franchiseIndex == 1 && currentDay <= interval)
+                    {
+                        requiredLeases = 0;
+                    }
+                    else
+                    {
+                        requiredLeases = baseOffset + withinRun;
+                    }
+                }
             }
             else
             {
-                requiredLeases = 3 + 3 * franchisesDone;
+                // Day goal: cumulative requirement; every 'interval' overall days adds one required lease.
+                int nextOverallDay = Math.Max(1, overallDaysCompleted + 1);
+                requiredLeases = (nextOverallDay - 1) / interval;
             }
 
-            // Update start-day warnings to block or allow day start
             var warnings = GetSingleton<SStartDayWarnings>();
             warnings.SellingRequiredAppliance = (requiredLeases > 0 && leaseCount < requiredLeases)
-                                               ? WarningLevel.Error
-                                               : WarningLevel.Safe;
+                ? WarningLevel.Error
+                : WarningLevel.Safe;
             SetSingleton(warnings);
+
+            forceRefresh = false;
         }
     }
 }

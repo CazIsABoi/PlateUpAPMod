@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Text;
 using UnityEngine;
@@ -129,83 +129,54 @@ namespace KitchenPlateupAP
             float contentX = 5f;
             float contentY = 5f;
             float contentWidth = chatWidth - 10f;
-
-            float inputHeight = 30f;
-            float inputY = chatRect.height - inputHeight - 5f;
-            float inputWidth = chatWidth - 70f;
-            Rect inputRect = new Rect(contentX, inputY, inputWidth, inputHeight);
-
-            // Helper to build display text with color tags
-            string BuildDisplayText(ChatMessageEntry entry)
-            {
-                if (entry.Segments != null)
-                {
-                    var sbLocal = new StringBuilder();
-                    foreach (var seg in entry.Segments)
-                    {
-                        if (seg.Color.HasValue)
-                        {
-                            UnityColor c = seg.Color.Value;
-                            string hex = ColorUtility.ToHtmlStringRGBA(new UnityColor(c.r, c.g, c.b, opacity));
-                            sbLocal.Append("<color=#").Append(hex).Append(">").Append(seg.Text).Append("</color>");
-                        }
-                        else
-                        {
-                            sbLocal.Append(seg.Text);
-                        }
-                    }
-                    return sbLocal.ToString();
-                }
-                else
-                {
-                    UnityColor plain = entry.PlainColor;
-                    string hex = ColorUtility.ToHtmlStringRGBA(new UnityColor(plain.r, plain.g, plain.b, opacity));
-                    return "<color=#" + hex + ">" + entry.PlainText + "</color>";
-                }
-            }
-
-            // Compute which recent messages fit above the input box
             lock (messagesLock)
             {
-                float availableHeight = inputY - contentY - 5f; // reserve spacing above input
-                var indices = new List<int>();
-                float used = 0f;
-                for (int i = messages.Count - 1; i >= 0; i--)
+                int startIndex = Math.Max(0, messages.Count - 15);
+                for (int i = startIndex; i < messages.Count; i++)
                 {
-                    ChatMessageEntry e = messages[i];
-                    var style = e.category == ChatCategory.System ? styleSystem : styleNormal;
-                    string text = BuildDisplayText(e);
-                    float h = style.CalcHeight(new GUIContent(text), contentWidth);
-                    if (indices.Count == 0 || used + h <= availableHeight)
+                    ChatMessageEntry entry = messages[i];
+                    var style = entry.category == ChatCategory.System ? styleSystem : styleNormal;
+                    style.normal.textColor = new UnityColor(1f, 1f, 1f, opacity); // base color (unused for colored segments)
+
+                    string displayText;
+                    if (entry.Segments != null)
                     {
-                        indices.Add(i);
-                        used += h;
+                        var sb = new StringBuilder();
+                        foreach (var seg in entry.Segments)
+                        {
+                            if (seg.Color.HasValue)
+                            {
+                                UnityColor c = seg.Color.Value;
+                                // apply opacity to segment color
+                                string hex = ColorUtility.ToHtmlStringRGBA(new UnityColor(c.r, c.g, c.b, opacity));
+                                sb.Append("<color=#").Append(hex).Append(">").Append(seg.Text).Append("</color>");
+                            }
+                            else
+                            {
+                                sb.Append(seg.Text);
+                            }
+                        }
+                        displayText = sb.ToString();
                     }
                     else
                     {
-                        break;
+                        // Plain path: apply opacity through style color only
+                        UnityColor plain = entry.PlainColor;
+                        string hex = ColorUtility.ToHtmlStringRGBA(new UnityColor(plain.r, plain.g, plain.b, opacity));
+                        displayText = "<color=#" + hex + ">" + entry.PlainText + "</color>";
                     }
-                }
-                if (indices.Count == 0 && messages.Count > 0)
-                {
-                    // Ensure we at least show the most recent line
-                    indices.Add(messages.Count - 1);
-                }
-                indices.Reverse();
 
-                foreach (int idx in indices)
-                {
-                    ChatMessageEntry entry = messages[idx];
-                    var style = entry.category == ChatCategory.System ? styleSystem : styleNormal;
-                    style.normal.textColor = new UnityColor(1f, 1f, 1f, opacity);
-
-                    string displayText = BuildDisplayText(entry);
                     GUIContent msgContent = new GUIContent(displayText);
                     float msgHeight = style.CalcHeight(msgContent, contentWidth);
                     GUI.Label(new Rect(contentX, contentY, contentWidth, msgHeight), msgContent, style);
                     contentY += msgHeight;
                 }
             }
+
+            float inputHeight = 30f;
+            float inputY = chatRect.height - inputHeight - 5f;
+            float inputWidth = chatWidth - 70f;
+            Rect inputRect = new Rect(contentX, inputY, inputWidth, inputHeight);
 
             GUI.color = new UnityColor(1f, 1f, 1f, 0.4f * opacity);
             GUI.DrawTexture(inputRect, inputBackgroundTex);

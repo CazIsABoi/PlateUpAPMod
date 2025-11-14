@@ -44,7 +44,7 @@ namespace KitchenPlateupAP
     {
         public const string MOD_GUID = "com.caz.plateupap";
         public const string MOD_NAME = "PlateupAP";
-        public const string MOD_VERSION = "0.2.1.2";
+        public const string MOD_VERSION = "0.2.1.1";
         public const string MOD_AUTHOR = "Caz";
         public const string MOD_GAMEVERSION = ">=1.1.9";
         public static int TOTAL_SCENES_LOADED = 0;
@@ -85,7 +85,7 @@ namespace KitchenPlateupAP
         private static int lastDay = 0;
         private int dayID = 100000;
         private int stars = 0;
-        private int timesFranchised = 0; // number of completed franchises so far
+        private int timesFranchised = 1;
         private int DishId;
         private bool firstCycleCompleted = false;
         private bool previousWasDay = false;
@@ -597,22 +597,6 @@ namespace KitchenPlateupAP
             }
         }
 
-        // Helper: compute base offset for a run (runIndex: 0 = initial run, 1 = after 1 franchise, ...)
-        private static int ComputeRunBaseOffset(int runIndex)
-        {
-            if (runIndex < 10)
-                return (runIndex + 1) * 100000;
-            return (runIndex + 11) * 100000; // skip dish range after 10
-        }
-
-        // Helper: compute the location ID for "Franchise N times" (n: 1..50)
-        private static int ComputeFranchiseTimesLocationId(int n)
-        {
-            if (n <= 10)
-                return 100000 * (n + 1);
-            return 100000 * (n + 11);
-        }
-
         private void ReconstructProgressFromLocationChecks()
         {
             if (session == null || session.Locations == null)
@@ -626,17 +610,14 @@ namespace KitchenPlateupAP
 
             if (goal == 0)
             {
-                // Franchise goal: Rebuild timesFranchised from the set of "Franchise N times" checks
-                int count = 0;
-                for (int i = 1; i <= 50; i++)
+                // Franchise goal: Only count franchise completions (ID 100000)
+                timesFranchised = 0;
+                foreach (var loc in checkedLocations)
                 {
-                    int id = ComputeFranchiseTimesLocationId(i);
-                    if (checkedLocations.Contains(id))
-                        count++;
+                    if (loc == 100000)
+                        timesFranchised++;
                 }
-                timesFranchised = count;
-                dayID = ComputeRunBaseOffset(timesFranchised);
-                Logger.LogInfo($"[Reconstruct] timesFranchised reconstructed as: {timesFranchised}, current run base offset={dayID}");
+                Logger.LogInfo($"[Reconstruct] timesFranchised reconstructed as: {timesFranchised}");
             }
             else
             {
@@ -646,12 +627,11 @@ namespace KitchenPlateupAP
                 int lastFranchiseIdx = -1;
                 int idx = 0;
 
-                // Find the last franchise index (based on lose run not applicable here)
+                // Find the last franchise index
                 foreach (var loc in checkedLocations)
                 {
-                    // Optional: could mark runs by base offsets too if needed
                     if (loc == 100000)
-                        lastFranchiseIdx = idx; // 100000 is Lose Run, just keep order marker
+                        lastFranchiseIdx = idx;
                     idx++;
                 }
 
@@ -841,12 +821,11 @@ namespace KitchenPlateupAP
             else if (goal == 0 && franchisePending)
             {
                 timesFranchised++;
-                int franchiseTimesId = ComputeFranchiseTimesLocationId(timesFranchised);
-                session.Locations.CompleteLocationChecks(franchiseTimesId);
-                dayID = ComputeRunBaseOffset(timesFranchised);
-                Logger.LogInfo($"[Franchise Goal] Franchise completion recorded. Total: {timesFranchised}, sent check ID={franchiseTimesId}, next run base={dayID}");
+                dayID = 100000 * timesFranchised;
+                session.Locations.CompleteLocationChecks(dayID);
+                Logger.LogInfo($"[Franchise Goal] Franchise completion recorded early. Total: {timesFranchised}");
 
-                if (timesFranchised >= franchiseCount && franchiseCount > 0)
+                if (timesFranchised >= franchiseCount)
                 {
                     Logger.LogInfo("Franchise goal reached! Sending goal complete.");
                     SendGoalComplete();
@@ -857,7 +836,7 @@ namespace KitchenPlateupAP
 
             else if (loseScreen && !lost)
             {
-                Logger.LogInfo("You Lost the Run! Sending loss check (ID 100000)");
+                Logger.LogInfo("You Lost the Run!");
                 HandleGameReset();
                 lastDay = 0;
                 session.Locations.CompleteLocationChecks(100000);
@@ -879,7 +858,6 @@ namespace KitchenPlateupAP
                 lost = false;
                 stars = 0;
                 lastDay = 0;
-                dayID = ComputeRunBaseOffset(timesFranchised); // ensure correct base for this run
 
                 Logger.LogInfo("[Lobby] Entered lobby. Preparing to queue items for next run...");
 
@@ -1984,10 +1962,9 @@ private void IncrementFranchiseAndCheckGoal()
     {
         if (session != null && session.Locations != null)
         {
-            int locId = ComputeFranchiseTimesLocationId(timesFranchised);
-            session.Locations.CompleteLocationChecks(locId);
-            dayID = ComputeRunBaseOffset(timesFranchised);
-            Logger.LogInfo($"[Debug] Sent franchise completion check ID {locId}; next run base offset set to {dayID}.");
+            // 100000 == franchise completion check
+            session.Locations.CompleteLocationChecks(100000);
+            Logger.LogInfo("[Debug] Sent franchise completion check (ID 100000) to Archipelago.");
         }
         else
         {

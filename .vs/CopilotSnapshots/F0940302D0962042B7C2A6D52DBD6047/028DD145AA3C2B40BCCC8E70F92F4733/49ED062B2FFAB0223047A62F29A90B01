@@ -81,10 +81,6 @@ namespace KitchenPlateupAP
         private bool dishPedestalSpawned = false;
         private static int dayLeaseInterval = 5;
 
-        // New: counts from slot data (defaults per spec = 5)
-        private static int playerSpeedUpgradeCount = 5;
-        private static int applianceSpeedUpgradeCount = 5;
-
         // Static day cycle and spawn state.
         private static int lastDay = 0;
         private int dayID = 100000;
@@ -115,8 +111,7 @@ namespace KitchenPlateupAP
         private static bool deferredItemHistoryApplied = false;
 
         //Modifying player values
-        // Build tiers dynamically from slot data: start 0.5, + (1.0 / N) per upgrade, final 1.5 at N upgrades; if N==0 -> [1.0]
-        private static float[] speedTiers = BuildPlayerSpeedTiers(playerSpeedUpgradeCount);
+        private static readonly float[] speedTiers = new float[] { 0.5f, 0.6f, 0.8f, 1f, 1.15f };
         private static int movementSpeedTier = 0;
 
         //Modifying Appliance Values
@@ -131,7 +126,7 @@ namespace KitchenPlateupAP
 
 
         // Set initial multipliers from the tiers:
-        public static float movementSpeedMod = speedTiers[0];
+        public static float movementSpeedMod = speedTiers[movementSpeedTier];
         public static float applianceSpeedMod = applianceSpeedTiers[applianceSpeedTier];
         public static float chopSpeedMod = chopSpeedTiers[chopSpeedTier];
         public static float cookSpeedMod = cookSpeedTiers[cookSpeedTier];
@@ -149,30 +144,6 @@ namespace KitchenPlateupAP
             Logger.LogWarning("Created instance");
             // Replace inline lambda with method to also warm config
             SceneManager.sceneLoaded += OnSceneLoaded;
-        }
-
-        // Compute dynamic tiers from slot data count
-        private static float[] BuildPlayerSpeedTiers(int count)
-        {
-            if (count <= 0)
-                return new[] { 1f };
-            var tiers = new float[count + 1];
-            float step = 1f / count; // 100% / count as multiplier
-            for (int i = 0; i <= count; i++)
-            {
-                tiers[i] = 0.5f + (i * step);
-            }
-            return tiers;
-        }
-
-        // Apply player speed count -> rebuild tiers and clamp current tier; update multiplier
-        private static void ApplyPlayerSpeedConfig()
-        {
-            speedTiers = BuildPlayerSpeedTiers(playerSpeedUpgradeCount);
-            movementSpeedTier = Mathf.Clamp(movementSpeedTier, 0, speedTiers.Length - 1);
-            movementSpeedMod = speedTiers[movementSpeedTier];
-            playerBaseSpeeds.Clear();
-            Logger?.LogInfo($"[PlateupAP] Player speed tiers rebuilt for count={playerSpeedUpgradeCount}. Levels={speedTiers.Length}, currentTier={movementSpeedTier}, multiplier={movementSpeedMod}");
         }
 
         // New: scene callback, warms config on main menu
@@ -352,26 +323,6 @@ namespace KitchenPlateupAP
                     Logger.LogInfo($"[PlateupAP] Day Lease Interval set to: {dayLeaseInterval}");
                     KitchenPlateupAP.LeaseRequirementSystem.TriggerRefresh();
                 }
-
-                // NEW: speed upgrade counts
-                if (slotData.TryGetValue("player_speed_upgrade_count", out object rawPlayerSpeedCount))
-                {
-                    int value = Mathf.Clamp(Convert.ToInt32(rawPlayerSpeedCount), 0, 10);
-                    playerSpeedUpgradeCount = value;
-                    Logger.LogInfo($"[PlateupAP] Player Speed Upgrade Count: {playerSpeedUpgradeCount}");
-                    ApplyPlayerSpeedConfig();
-                }
-                else
-                {
-                    // ensure tiers built with default if not sent yet
-                    ApplyPlayerSpeedConfig();
-                }
-
-                if (slotData.TryGetValue("appliance_speed_upgrade_count", out object rawApplianceSpeedCount))
-                {
-                    applianceSpeedUpgradeCount = Mathf.Clamp(Convert.ToInt32(rawApplianceSpeedCount), 0, 10);
-                    Logger.LogInfo($"[PlateupAP] Appliance Speed Upgrade Count: {applianceSpeedUpgradeCount}");
-                }
             }
 
             if (selectedDishes.Count > 0)
@@ -531,9 +482,6 @@ namespace KitchenPlateupAP
             playersWithItems = GetEntityQuery(new QueryHelper().All(typeof(CPlayer), typeof(CItemHolder)));
             playerSpeedQuery = GetEntityQuery(new QueryHelper().All(typeof(CPlayer)));
             applianceSpeedQuery = GetEntityQuery(new QueryHelper().All(typeof(CApplianceSpeedModifier)));
-
-            // Ensure player tiers are initialized on boot (before slot data), using defaults
-            ApplyPlayerSpeedConfig();
         }
 
         public void OnSuccessfulConnect()
@@ -603,7 +551,6 @@ namespace KitchenPlateupAP
                         World.GetOrCreateSystem<ApplyCleanSpeedSystem>().Enabled = false;
                         World.GetOrCreateSystem<ApplyChopSpeedSystem>().Enabled = false;
                         World.GetOrCreateSystem<ApplyCookSpeedSystem>().Enabled = false;
-                        World.GetOrCreateSystem<ApplyKneadSpeedSystem>().Enabled = false;
                         Logger.LogInfo("[OnSuccessfulConnect] Grouped mode enabled, separate-mode disabled.");
                     }
                     else
@@ -613,7 +560,6 @@ namespace KitchenPlateupAP
                         World.GetOrCreateSystem<ApplyCleanSpeedSystem>().Enabled = true;
                         World.GetOrCreateSystem<ApplyChopSpeedSystem>().Enabled = true;
                         World.GetOrCreateSystem<ApplyCookSpeedSystem>().Enabled = true;
-                        World.GetOrCreateSystem<ApplyKneadSpeedSystem>().Enabled = true;
                         Logger.LogInfo("[OnSuccessfulConnect] Separate mode enabled, grouped mode disabled.");
                     }
                 }
@@ -2005,22 +1951,9 @@ private PlateupAPConfig LoadConfigIsolated(string json)
 // Forces the movement speed mod to 1.0 and persists the new tier.
 private void ForcePlayerSpeedToOne()
 {
-    // Rebuild tiers if needed so 1.0 exists (it always will: either N==0 -> [1.0], or 0.5..1.5 includes 1.0)
-    ApplyPlayerSpeedConfig();
-    // Find nearest tier to 1.0
-    int closest = 0;
-    float bestDiff = float.MaxValue;
-    for (int i = 0; i < speedTiers.Length; i++)
-    {
-        float d = Math.Abs(speedTiers[i] - 1f);
-        if (d < bestDiff)
-        {
-            bestDiff = d;
-            closest = i;
-        }
-    }
-    movementSpeedTier = closest;
-    movementSpeedMod = speedTiers[movementSpeedTier];
+    int idx = Array.IndexOf(speedTiers, 1f);
+    movementSpeedTier = idx >= 0 ? idx : 3; // fall back to the known 1.0 tier index
+    movementSpeedMod = 1f;
 
     // Clear cached bases to be safe; next ApplySpeedModifiers will re-cache and apply 1x
     playerBaseSpeeds.Clear();

@@ -603,7 +603,6 @@ namespace KitchenPlateupAP
                         World.GetOrCreateSystem<ApplyCleanSpeedSystem>().Enabled = false;
                         World.GetOrCreateSystem<ApplyChopSpeedSystem>().Enabled = false;
                         World.GetOrCreateSystem<ApplyCookSpeedSystem>().Enabled = false;
-                        World.GetOrCreateSystem<ApplyKneadSpeedSystem>().Enabled = false;
                         Logger.LogInfo("[OnSuccessfulConnect] Grouped mode enabled, separate-mode disabled.");
                     }
                     else
@@ -613,7 +612,6 @@ namespace KitchenPlateupAP
                         World.GetOrCreateSystem<ApplyCleanSpeedSystem>().Enabled = true;
                         World.GetOrCreateSystem<ApplyChopSpeedSystem>().Enabled = true;
                         World.GetOrCreateSystem<ApplyCookSpeedSystem>().Enabled = true;
-                        World.GetOrCreateSystem<ApplyKneadSpeedSystem>().Enabled = true;
                         Logger.LogInfo("[OnSuccessfulConnect] Separate mode enabled, grouped mode disabled.");
                     }
                 }

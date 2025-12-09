@@ -281,7 +281,16 @@ namespace KitchenPlateupAP
             string message = inputBuffer.Trim();
             if (message.Length > 0)
             {
-                SendMessageToArchipelago(message);
+                // Debug command: /randomizeupgrades
+                if (string.Equals(message, "/randomizeupgrades", StringComparison.OrdinalIgnoreCase))
+                {
+                    AddSystemMessage("Triggering upgrade randomization...");
+                    KitchenPlateupAP.Mod.Instance?.TriggerUpgradeRandomizationForDebug();
+                }
+                else
+                {
+                    SendMessageToArchipelago(message);
+                }
                 inputBuffer = string.Empty;
             }
             defocusRequested = true;

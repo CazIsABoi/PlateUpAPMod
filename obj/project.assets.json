@@ -132,24 +132,19 @@
     ]
   },
   "packageFolders": {
-    "C:\\Users\\cazpe\\.nuget\\packages\\": {},
-    "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages": {}
+    "C:\\Users\\cazpe\\.nuget\\packages\\": {}
   },
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "C:\\My Mods\\PlateupAP\\PlateupAP.csproj",
+      "projectUniqueName": "C:\\Mods\\PlateUpAPMod\\PlateupAP.csproj",
       "projectName": "PlateupAP",
-      "projectPath": "C:\\My Mods\\PlateupAP\\PlateupAP.csproj",
+      "projectPath": "C:\\Mods\\PlateUpAPMod\\PlateupAP.csproj",
       "packagesPath": "C:\\Users\\cazpe\\.nuget\\packages\\",
-      "outputPath": "C:\\My Mods\\PlateupAP\\obj\\",
+      "outputPath": "C:\\Mods\\PlateUpAPMod\\obj\\",
       "projectStyle": "PackageReference",
-      "fallbackFolders": [
-        "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
-      ],
       "configFilePaths": [
         "C:\\Users\\cazpe\\AppData\\Roaming\\NuGet\\NuGet.Config",
-        "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
         "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
       ],
       "originalTargetFrameworks": [
@@ -202,7 +197,7 @@
             "version": "[1.13.0, )"
           }
         },
-        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.307\\RuntimeIdentifierGraph.json"
+        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.308\\RuntimeIdentifierGraph.json"
       }
     }
   }

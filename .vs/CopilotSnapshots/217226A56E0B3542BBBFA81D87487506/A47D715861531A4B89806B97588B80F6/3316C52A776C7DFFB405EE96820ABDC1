@@ -1,0 +1,166 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using KitchenData;
+
+namespace KitchenPlateupAP
+{
+    // Experimental randomization of appliance upgrades.
+    // - Fully random: any appliance can upgrade into any other appliance
+    // - Seeded: deterministic per seed
+    // - Weighted: prefer lower-tier targets unless overridden
+    public static class RandomUpgradeMapper
+    {
+        // Optional: override weights per appliance ID (target). Higher = more likely
+        private static readonly Dictionary<int, float> TargetWeightsOverride = new Dictionary<int, float>()
+        {
+            // Example: make Teleporter rare and Table common
+            // { ApplianceReferences.Teleporter, 0.1f },
+            // { ApplianceReferences.TableLarge, 2.0f },
+        };
+
+        public static void Apply(GameData data, int seed)
+        {
+            if (data == null) return;
+
+            // Collect all appliances
+            List<Appliance> all = data.Get<Appliance>().ToList();
+            if (all.Count == 0) return;
+
+            var rng = new Random(seed);
+
+            // Build weighted pool of upgrade targets
+            var weightedTargets = BuildWeightedTargets(all);
+            if (weightedTargets.Count == 0) return;
+
+            // Reassign upgrades for each appliance
+            foreach (var src in all)
+            {
+                // Decide number of upgrades to assign (keep original count or at least 1 if it had any)
+                int count = Math.Max(1, src.Upgrades?.Count ?? 0);
+
+                // Sample unique targets, avoiding self
+                var targets = SampleUnique(weightedTargets, count, rng, t => t.ID != src.ID);
+
+                // Write back
+                src.Upgrades = targets;
+                // Ensure IsAnUpgrade for targets (mirrors SetupFinal side-effect)
+                foreach (var t in targets)
+                    t.IsAnUpgrade = true;
+            }
+        }
+
+        private static List<Appliance> BuildWeightedTargets(List<Appliance> all)
+        {
+            var pool = new List<Appliance>();
+            foreach (var a in all)
+            {
+                float w = GetBaseWeight(a);
+                if (w <= 0f) continue;
+                int copies = Math.Max(1, (int)Math.Round(w));
+                for (int i = 0; i < copies; i++)
+                    pool.Add(a);
+            }
+            return pool;
+        }
+
+        private static float GetBaseWeight(Appliance a)
+        {
+            // Start with price tier as inverse desirability (cheaper => higher weight)
+            float tierWeight = PriceTierToWeight(a.PriceTier);
+
+            // Adjust by rarity (rarer => lower weight)
+            float rarityWeight = RarityToWeight(a.RarityTier);
+
+            float baseW = tierWeight * rarityWeight;
+
+            // Overrides
+            if (TargetWeightsOverride.TryGetValue(a.ID, out var overrideW))
+                baseW = overrideW;
+
+            // Guard against non-purchasable/oddities becoming too common
+            if (!a.IsPurchasable && !a.IsPurchasableAsUpgrade)
+                baseW *= 0.25f;
+
+            // Prevent selecting blueprint/admin-only utilities too often
+            if (a.ShoppingTags.HasFlag(ShoppingTags.))
+                baseW *= 0.5f;
+
+            // Ensure positive
+            return Math.Max(0.01f, baseW);
+        }
+
+        private static float PriceTierToWeight(PriceTier tier)
+        {
+            switch (tier)
+            {
+                case PriceTier.Free: return 5f;
+                case PriceTier.VeryCheap: return 4f;
+                case PriceTier.Cheap: return 3f;
+                case PriceTier.MediumCheap: return 2.5f;
+                case PriceTier.Medium: return 2f;
+                case PriceTier.DecoCheap: return 2.5f;
+                case PriceTier.DecoMediumCheap: return 2f;
+                case PriceTier.DecoMedium: return 1.5f;
+                case PriceTier.DecoExpensive: return 1.25f;
+                case PriceTier.Expensive: return 1f;
+                case PriceTier.VeryExpensive: return 0.6f;
+                case PriceTier.ExtremelyExpensive: return 0.3f;
+                default: return 1f;
+            }
+        }
+
+        private static float RarityToWeight(RarityTier rarity)
+        {
+            switch (rarity)
+            {
+                case RarityTier.Common: return 2f;
+                case RarityTier.Uncommon: return 1.5f;
+                case RarityTier.Rare: return 1f;
+                case RarityTier.Special: return 0.5f;
+                default: return 1f;
+            }
+        }
+
+        private static List<Appliance> SampleUnique(List<Appliance> pool, int count, Random rng, Func<Appliance, bool> predicate)
+        {
+            var result = new List<Appliance>(count);
+            if (pool.Count == 0 || count <= 0) return result;
+
+            // Simple reservoir-like unique sampling using shuffle
+            // Filter by predicate first
+            var filtered = pool.Where(predicate).ToList();
+            if (filtered.Count == 0) return result;
+
+            // Fisher-Yates shuffle on indices to keep deterministic with seed
+            for (int i = filtered.Count - 1; i > 0; i--)
+            {
+                int j = rng.Next(i + 1);
+                var tmp = filtered[i];
+                filtered[i] = filtered[j];
+                filtered[j] = tmp;
+            }
+
+            foreach (var a in filtered)
+            {
+                if (result.Count >= count) break;
+                if (!result.Any(x => x.ID == a.ID))
+                    result.Add(a);
+            }
+
+            // If duplicates were heavy and we still need more, top-up from full set excluding self/duplicates
+            if (result.Count < count)
+            {
+                var uniques = pool.Select(p => p).DistinctBy(p => p.ID).Where(predicate).ToList();
+                foreach (var u in uniques)
+                {
+                    if (result.Count >= count) break;
+                    if (!result.Any(x => x.ID == u.ID))
+                        result.Add(u);
+                }
+            }
+
+            return result;
+        }
+    }
+}

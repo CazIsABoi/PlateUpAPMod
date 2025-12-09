@@ -4,6 +4,7 @@ using System.IO;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Threading.Tasks;
+using System.Diagnostics;
 using UnityEngine;
 using Unity.Entities;
 using Unity.Collections;
@@ -44,10 +45,13 @@ namespace KitchenPlateupAP
     {
         public const string MOD_GUID = "com.caz.plateupap";
         public const string MOD_NAME = "PlateupAP";
-        public const string MOD_VERSION = "0.2.1.3";
+        public const string MOD_VERSION = "0.2.2.1";
         public const string MOD_AUTHOR = "Caz";
         public const string MOD_GAMEVERSION = ">=1.1.9";
         public static int TOTAL_SCENES_LOADED = 0;
+
+        // Minimal addition: track whether upgrades have been randomized this boot
+        private static bool upgradesRandomized = false;
 
         internal static AssetBundle Bundle = null;
         internal static KitchenLib.Logging.KitchenLogger Logger;
@@ -418,7 +422,7 @@ namespace KitchenPlateupAP
             try
             {
                 if (World == null)
-                    Mod.Logger.LogError("World is null in OnPostActivate!");
+                    Logger.LogError("World is null in OnPostActivate!");
 
                 if (PrefManager == null)
                     PrefManager = new PreferenceSystemManager(MOD_GUID, MOD_NAME);
@@ -431,7 +435,7 @@ namespace KitchenPlateupAP
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[PlateupAP] Error in OnPostActivate: {ex.Message}\n{ex.StackTrace}");
+                Logger.LogError($"[PlateupAP] Error in OnPostActivate: {ex.Message}\n{ex.StackTrace}");
             }
 
             PrefManager = new PreferenceSystemManager(MOD_GUID, MOD_NAME);
@@ -441,7 +445,10 @@ namespace KitchenPlateupAP
                 .AddInfo(@"Config is found in \AppData\LocalLow\It's Happening\PlateUp")
                 .AddButton("Create Config", (int _) =>
                 {
-                    string folder = Path.Combine(Application.persistentDataPath, "PlateUpAPConfig");
+                    // Explicitly target LocalLow path: %appdata%\..\LocalLow\It's Happening\PlateUp\PlateUpAPConfig
+                    string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData); // %APPDATA%
+                    string folder = Path.GetFullPath(Path.Combine(appData, "..", "LocalLow", "It's Happening", "PlateUp", "PlateUpAPConfig"));
+
                     if (!Directory.Exists(folder))
                         Directory.CreateDirectory(folder);
 
@@ -455,7 +462,45 @@ namespace KitchenPlateupAP
                     };
                     string json = JsonConvert.SerializeObject(defaultConfig, Formatting.Indented);
                     File.WriteAllText(path, json);
-                    Debug.Log("Created config file at: " + path);
+                    Logger.LogInfo("Created config file at: " + path);
+
+                    try
+                    {
+                        if (Application.platform == RuntimePlatform.WindowsPlayer || Application.platform == RuntimePlatform.WindowsEditor)
+                        {
+                            var psi = new ProcessStartInfo
+                            {
+                                FileName = "explorer.exe",
+                                Arguments = $"/select,\"{path}\"",
+                                UseShellExecute = true
+                            };
+                            System.Diagnostics.Process.Start(psi);
+                        }
+                        else if (Application.platform == RuntimePlatform.OSXPlayer || Application.platform == RuntimePlatform.OSXEditor)
+                        {
+                            var psi = new ProcessStartInfo
+                            {
+                                FileName = "open",
+                                Arguments = $"-R \"{path}\"",
+                                UseShellExecute = true
+                            };
+                            System.Diagnostics.Process.Start(psi);
+                        }
+                        else
+                        {
+                            // Generic fallback: open the containing folder
+                            var psi = new ProcessStartInfo
+                            {
+                                FileName = folder,
+                                UseShellExecute = true
+                            };
+                            System.Diagnostics.Process.Start(psi);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogWarning($"Could not open file explorer for path '{path}': {ex.Message}");
+                    }
                 })
                 .AddButton("Connect", (int _) =>
                 {
@@ -467,7 +512,7 @@ namespace KitchenPlateupAP
                         string path = Path.Combine(folder, "archipelago_config.json");
                         if (!File.Exists(path))
                         {
-                            Debug.LogError("Config file not found at: " + path);
+                            Logger.LogError("Config file not found at: " + path);
                             return;
                         }
 
@@ -485,19 +530,19 @@ namespace KitchenPlateupAP
                         }
                         catch (Exception ex)
                         {
-                            Debug.LogError("[PlateupAP][Config] Manual parse failed: " + ex);
-                            Debug.LogError("JSON: " + json);
+                            Logger.LogError("[PlateupAP][Config] Manual parse failed: " + ex);
+                            Logger.LogError("JSON: " + json);
                             return;
                         }
                     }
 
                     if (string.IsNullOrWhiteSpace(config.address))
                     {
-                        Debug.LogError("[PlateupAP][Config] Invalid address.");
+                        Logger.LogError("[PlateupAP][Config] Invalid address.");
                         return;
                     }
 
-                    Debug.Log($"[PlateupAP][Config] Using server={config.address}:{config.port} player={config.playername}");
+                    Logger.LogInfo($"[PlateupAP][Config] Using server={config.address}:{config.port} player={config.playername}");
                     UpdateArchipelagoConfig(config);
                 })
                 // NEW: Debug utilities
@@ -534,12 +579,17 @@ namespace KitchenPlateupAP
 
             // Ensure player tiers are initialized on boot (before slot data), using defaults
             ApplyPlayerSpeedConfig();
+
+            // Do not randomize here to avoid interfering with normal play when offline
         }
 
         public void OnSuccessfulConnect()
         {
             if (ArchipelagoConnectionManager.ConnectionSuccessful)
             {
+                // Run seeded randomization now that we are connected
+                TryRandomizeUpgradesOnce();
+
                 RetrieveSlotData(); // Fetch slot data
 
                 // Load persistence once per connection (before applying past items)
@@ -551,17 +601,17 @@ namespace KitchenPlateupAP
                         var speedState = PersistenceManager.LoadSpeedState(currentIdentity);
                         if (speedState != null)
                         {
-                            movementSpeedTier   = Mathf.Clamp(speedState.MovementTier,   0, speedTiers.Length - 1);
-                            applianceSpeedTier  = Mathf.Clamp(speedState.ApplianceTier, 0, applianceSpeedTiers.Length - 1);
-                            cookSpeedTier       = Mathf.Clamp(speedState.CookTier,      0, cookSpeedTiers.Length - 1);
-                            chopSpeedTier       = Mathf.Clamp(speedState.ChopTier,      0, chopSpeedTiers.Length - 1);
-                            cleanSpeedTier      = Mathf.Clamp(speedState.CleanTier,     0, cleanSpeedTiers.Length - 1);
+                            movementSpeedTier = Mathf.Clamp(speedState.MovementTier, 0, speedTiers.Length - 1);
+                            applianceSpeedTier = Mathf.Clamp(speedState.ApplianceTier, 0, applianceSpeedTiers.Length - 1);
+                            cookSpeedTier = Mathf.Clamp(speedState.CookTier, 0, cookSpeedTiers.Length - 1);
+                            chopSpeedTier = Mathf.Clamp(speedState.ChopTier, 0, chopSpeedTiers.Length - 1);
+                            cleanSpeedTier = Mathf.Clamp(speedState.CleanTier, 0, cleanSpeedTiers.Length - 1);
 
-                            movementSpeedMod    = speedTiers[movementSpeedTier];
-                            applianceSpeedMod   = applianceSpeedTiers[applianceSpeedTier];
-                            cookSpeedMod        = cookSpeedTiers[cookSpeedTier];
-                            chopSpeedMod        = chopSpeedTiers[chopSpeedTier];
-                            cleanSpeedMod       = cleanSpeedTiers[cleanSpeedTier];
+                            movementSpeedMod = speedTiers[movementSpeedTier];
+                            applianceSpeedMod = applianceSpeedTiers[applianceSpeedTier];
+                            cookSpeedMod = cookSpeedTiers[cookSpeedTier];
+                            chopSpeedMod = chopSpeedTiers[chopSpeedTier];
+                            cleanSpeedMod = cleanSpeedTiers[cleanSpeedTier];
 
                             Logger.LogInfo($"[Persistence] Loaded speed tiers: M={movementSpeedTier} A={applianceSpeedTier} Cook={cookSpeedTier} Chop={chopSpeedTier} Clean={cleanSpeedTier}");
                         }
@@ -1201,20 +1251,20 @@ namespace KitchenPlateupAP
 
             // Dish unlock logic
             if (!string.IsNullOrEmpty(itemName) && itemName.StartsWith("Unlock: "))
-    {
-        string dishName = itemName.Substring("Unlock: ".Length).Trim();
-        if (ProgressionMapping.dish_id_lookup.TryGetValue(dishName, out int newDishId))
-        {
-            PersistUnlockedDish(newDishId);
-            LockedDishes.SetUnlockedDishes(new[] { newDishId });
-            Logger.LogInfo($"Unlocked new dish: {dishName} (ID: {newDishId})");
-        }
-        else
-        {
-            Logger.LogWarning($"Received unknown dish unlock: {dishName}");
-        }
-        return;
-    }
+            {
+                string dishName = itemName.Substring("Unlock: ".Length).Trim();
+                if (ProgressionMapping.dish_id_lookup.TryGetValue(dishName, out int newDishId))
+                {
+                    PersistUnlockedDish(newDishId);
+                    LockedDishes.SetUnlockedDishes(new[] { newDishId });
+                    Logger.LogInfo($"Unlocked new dish: {dishName} (ID: {newDishId})");
+                }
+                else
+                {
+                    Logger.LogWarning($"Received unknown dish unlock: {dishName}");
+                }
+                return;
+            }
         }
 
         private ItemInfo CreateItemInfoForQueue(int itemId)
@@ -1360,7 +1410,7 @@ namespace KitchenPlateupAP
 
             lastDay = 0;
             stars = 0;
-            
+
 
             Logger.LogInfo("[PlateupAP] Game reset complete. Ready for a new run.");
         }
@@ -1731,7 +1781,7 @@ namespace KitchenPlateupAP
                     if (lastDay < 15)
                     {
                         lastDay++;
-                        DoDishChecks(lastDay); 
+                        DoDishChecks(lastDay);
                     }
 
                     if (overallDaysCompleted % 3 == 0 && overallStarsEarned < 33)
@@ -1851,11 +1901,11 @@ namespace KitchenPlateupAP
                 applianceSpeedTier++;
                 applianceSpeedMod = applianceSpeedTiers[applianceSpeedTier];
 
-                Debug.Log($"[Mod] Appliance speed upgraded to tier {applianceSpeedTier}, new speed multiplier = {applianceSpeedMod}");
+                Logger.LogInfo($"[Mod] Appliance speed upgraded to tier {applianceSpeedTier}, new speed multiplier = {applianceSpeedMod}");
             }
             else
             {
-                Debug.LogWarning("[Mod] Appliance speed is already at maximum tier.");
+                Logger.LogWarning("[Mod] Appliance speed is already at maximum tier.");
             }
         }
 
@@ -1900,177 +1950,241 @@ namespace KitchenPlateupAP
 
         private const string UnlockedDishFile = "unlocked_dish.txt";
 
-private int? LoadPersistedUnlockedDish()
-{
-    string path = Path.Combine(Application.persistentDataPath, UnlockedDishFile);
-    if (File.Exists(path) && int.TryParse(File.ReadAllText(path), out int id))
-        return id;
-    return null;
-}
-
-private void PersistUnlockedDish(int dishId)
-{
-    string path = Path.Combine(Application.persistentDataPath, UnlockedDishFile);
-    File.WriteAllText(path, dishId.ToString());
-}
-
-private const string LastSelectedDishesFile = "last_selected_dishes.txt";
-
-private List<string> LoadLastSelectedDishes()
-{
-    string path = Path.Combine(Application.persistentDataPath, LastSelectedDishesFile);
-    if (File.Exists(path))
-        return File.ReadAllLines(path).ToList();
-    return new List<string>();
-}
-
-private void PersistLastSelectedDishes(List<string> dishes)
-{
-    string path = Path.Combine(Application.persistentDataPath, LastSelectedDishesFile);
-    File.WriteAllLines(path, dishes);
-}
-
-private PlateupAPConfig LoadConfigIsolated(string json)
-{
-    // 1. Raw dump of currently registered global converters (if any)
-    try
-    {
-        var global = JsonConvert.DefaultSettings?.Invoke();
-        if (global != null && global.Converters != null)
+        private int? LoadPersistedUnlockedDish()
         {
-            Debug.Log("[PlateupAP][ConfigDebug] Global Converters:");
-            for (int i = 0; i < global.Converters.Count; i++)
+            string path = Path.Combine(Application.persistentDataPath, UnlockedDishFile);
+            if (File.Exists(path) && int.TryParse(File.ReadAllText(path), out int id))
+                return id;
+            return null;
+        }
+
+        private void PersistUnlockedDish(int dishId)
+        {
+            string path = Path.Combine(Application.persistentDataPath, UnlockedDishFile);
+            File.WriteAllText(path, dishId.ToString());
+        }
+
+        private const string LastSelectedDishesFile = "last_selected_dishes.txt";
+
+        private List<string> LoadLastSelectedDishes()
+        {
+            string path = Path.Combine(Application.persistentDataPath, LastSelectedDishesFile);
+            if (File.Exists(path))
+                return File.ReadAllLines(path).ToList();
+            return new List<string>();
+        }
+
+        private void PersistLastSelectedDishes(List<string> dishes)
+        {
+            string path = Path.Combine(Application.persistentDataPath, LastSelectedDishesFile);
+            File.WriteAllLines(path, dishes);
+        }
+
+        private PlateupAPConfig LoadConfigIsolated(string json)
+        {
+            // 1. Raw dump of currently registered global converters (if any)
+            try
             {
-                var c = global.Converters[i];
-                Debug.Log($"[PlateupAP][ConfigDebug]   #{i}: {c.GetType().FullName}");
+                var global = JsonConvert.DefaultSettings?.Invoke();
+                if (global != null && global.Converters != null)
+                {
+                    Logger.LogInfo("[PlateupAP][ConfigDebug] Global Converters:");
+                    for (int i = 0; i < global.Converters.Count; i++)
+                    {
+                        var c = global.Converters[i];
+                        Logger.LogInfo($"[PlateupAP][ConfigDebug]   #{i}: {c.GetType().FullName}");
+                    }
+                }
+                else
+                {
+                    Logger.LogInfo("[PlateupAP][ConfigDebug] No global DefaultSettings or no converters.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogInfo($"[PlateupAP][ConfigDebug] Failed dumping global converters: {ex.Message}");
+            }
+
+            // 2. Attempt strict clean deserialization (NO converters)
+            try
+            {
+                var cleanSettings = new JsonSerializerSettings
+                {
+                    Converters = new List<JsonConverter>(), // force empty
+                    MetadataPropertyHandling = MetadataPropertyHandling.Ignore,
+                    MissingMemberHandling = MissingMemberHandling.Ignore,
+                    NullValueHandling = NullValueHandling.Include
+                };
+                var clean = JsonConvert.DeserializeObject<PlateupAPConfig>(json, cleanSettings);
+                if (clean != null)
+                {
+                    Logger.LogInfo("[PlateupAP][ConfigDebug] Clean settings deserialization succeeded.");
+                    return clean;
+                }
+                Logger.LogInfo("[PlateupAP][ConfigDebug] Clean settings deserialization returned null – falling back to manual parse.");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogInfo($"[PlateupAP][ConfigDebug] Clean deserialization path failed: {ex}");
+            }
+
+            // 3. Manual parse fallback (completely bypass converters)
+            try
+            {
+                var jo = Newtonsoft.Json.Linq.JObject.Parse(json);
+                var manual = new PlateupAPConfig
+                {
+                    address = (string)jo["address"],
+                    port = (int?)jo["port"] ?? 0,
+                    playername = (string)jo["playername"],
+                    password = (string)jo["password"]
+                };
+                if (string.IsNullOrWhiteSpace(manual.address))
+                    throw new Exception("Manual parse produced empty address.");
+                Logger.LogInfo("[PlateupAP][ConfigDebug] Manual parse succeeded.");
+                return manual;
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"[PlateupAP][ConfigDebug] Manual parse failed: {ex}");
+            }
+
+            return null;
+        }
+
+        // Forces the movement speed mod to 1.0 and persists the new tier.
+        private void ForcePlayerSpeedToOne()
+        {
+            // Rebuild tiers if needed so 1.0 exists (it always will: either N==0 -> [1.0], or 0.5..1.5 includes 1.0)
+            ApplyPlayerSpeedConfig();
+            // Find nearest tier to 1.0
+            int closest = 0;
+            float bestDiff = float.MaxValue;
+            for (int i = 0; i < speedTiers.Length; i++)
+            {
+                float d = Math.Abs(speedTiers[i] - 1f);
+                if (d < bestDiff)
+                {
+                    bestDiff = d;
+                    closest = i;
+                }
+            }
+            movementSpeedTier = closest;
+            movementSpeedMod = speedTiers[movementSpeedTier];
+
+            // Clear cached bases to be safe; next ApplySpeedModifiers will re-cache and apply 1x
+            playerBaseSpeeds.Clear();
+
+            Logger.LogWarning("[Debug] Forced player movement speed to 1x.");
+
+            if (currentIdentity != null)
+            {
+                var state = new SpeedUpgradeState
+                {
+                    MovementTier = movementSpeedTier,
+                    ApplianceTier = applianceSpeedTier,
+                    CookTier = cookSpeedTier,
+                    ChopTier = chopSpeedTier,
+                    CleanTier = cleanSpeedTier
+                };
+                PersistenceManager.SaveSpeedState(currentIdentity, state);
             }
         }
-        else
+
+        // Increments the franchise completion count and sends the franchise location check.
+        private void IncrementFranchiseAndCheckGoal()
         {
-            Debug.Log("[PlateupAP][ConfigDebug] No global DefaultSettings or no converters.");
+            timesFranchised++;
+            Logger.LogWarning("[Debug] Manually incremented franchise counter to " + timesFranchised + ".");
+
+            try
+            {
+                if (session != null && session.Locations != null)
+                {
+                    int locId = ComputeFranchiseTimesLocationId(timesFranchised);
+                    session.Locations.CompleteLocationChecks(locId);
+                    dayID = ComputeRunBaseOffset(timesFranchised);
+                    Logger.LogInfo($"[Debug] Sent franchise completion check ID {locId}; next run base offset set to {dayID}.");
+                }
+                else
+                {
+                    Logger.LogWarning("[Debug] Session or Locations unavailable; will not send location check.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning("[Debug] Failed to send franchise completion check: " + ex.Message);
+            }
+
+            if (goal == 0 && franchiseCount > 0 && timesFranchised >= franchiseCount)
+            {
+                Logger.LogInfo("[Debug] Franchise goal reached via manual increment. Sending goal complete.");
+                SendGoalComplete();
+            }
         }
-    }
-    catch (Exception ex)
-    {
-        Debug.Log($"[PlateupAP][ConfigDebug] Failed dumping global converters: {ex.Message}");
-    }
 
-    // 2. Attempt strict clean deserialization (NO converters)
-    try
-    {
-        var cleanSettings = new JsonSerializerSettings
+        // Add inside class Mod (near other methods)
+        private void TryRandomizeUpgradesOnce()
         {
-            Converters = new List<JsonConverter>(), // force empty
-            MetadataPropertyHandling = MetadataPropertyHandling.Ignore,
-            MissingMemberHandling = MissingMemberHandling.Ignore,
-            NullValueHandling = NullValueHandling.Include
-        };
-        var clean = JsonConvert.DeserializeObject<PlateupAPConfig>(json, cleanSettings);
-        if (clean != null)
-        {
-            Debug.Log("[PlateupAP][ConfigDebug] Clean settings deserialization succeeded.");
-            return clean;
+            if (upgradesRandomized)
+                return;
+
+            if (!ArchipelagoConnectionManager.ConnectionSuccessful)
+            {
+                Logger.LogInfo("[Randomizer] Skipping upgrade randomization: not connected to Archipelago.");
+                return;
+            }
+
+            var data = KitchenData.GameData.Main;
+            if (data == null)
+            {
+                Logger.LogWarning("[Randomizer] GameData.Main not ready; skipping upgrade randomization.");
+                return;
+            }
+
+            int seed = ComputeDeterministicSeed();
+            try
+            {
+                RandomUpgradeMapper.Apply(data, seed);
+                upgradesRandomized = true;
+                Logger.LogInfo($"[Randomizer] Applied experimental upgrade randomization with seed={seed}.");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning("[Randomizer] Failed to apply upgrade randomization: " + ex.Message);
+            }
         }
-        Debug.Log("[PlateupAP][ConfigDebug] Clean settings deserialization returned null – falling back to manual parse.");
-    }
-    catch (Exception ex)
-    {
-        Debug.Log($"[PlateupAP][ConfigDebug] Clean deserialization path failed: {ex}");
-    }
 
-    // 3. Manual parse fallback (completely bypass converters)
-    try
-    {
-        var jo = Newtonsoft.Json.Linq.JObject.Parse(json);
-        var manual = new PlateupAPConfig
+        private int ComputeDeterministicSeed()
         {
-            address = (string)jo["address"],
-            port = (int?)jo["port"] ?? 0,
-            playername = (string)jo["playername"],
-            password = (string)jo["password"]
-        };
-        if (string.IsNullOrWhiteSpace(manual.address))
-            throw new Exception("Manual parse produced empty address.");
-        Debug.Log("[PlateupAP][ConfigDebug] Manual parse succeeded.");
-        return manual;
-    }
-    catch (Exception ex)
-    {
-        Debug.LogError($"[PlateupAP][ConfigDebug] Manual parse failed: {ex}");
-    }
-
-    return null;
-}
-
-// Forces the movement speed mod to 1.0 and persists the new tier.
-private void ForcePlayerSpeedToOne()
-{
-    // Rebuild tiers if needed so 1.0 exists (it always will: either N==0 -> [1.0], or 0.5..1.5 includes 1.0)
-    ApplyPlayerSpeedConfig();
-    // Find nearest tier to 1.0
-    int closest = 0;
-    float bestDiff = float.MaxValue;
-    for (int i = 0; i < speedTiers.Length; i++)
-    {
-        float d = Math.Abs(speedTiers[i] - 1f);
-        if (d < bestDiff)
-        {
-            bestDiff = d;
-            closest = i;
+            try
+            {
+                string a = CachedConfig?.address ?? string.Empty;
+                string p = (CachedConfig?.port ?? 0).ToString();
+                string u = CachedConfig?.playername ?? string.Empty;
+                string key = $"{a}|{p}|{u}";
+                int h = key.GetHashCode();
+                if (h == 0) h = Environment.TickCount;
+                return h;
+            }
+            catch
+            {
+                return Environment.TickCount;
+            }
         }
-    }
-    movementSpeedTier = closest;
-    movementSpeedMod = speedTiers[movementSpeedTier];
 
-    // Clear cached bases to be safe; next ApplySpeedModifiers will re-cache and apply 1x
-    playerBaseSpeeds.Clear();
-
-    Logger.LogWarning("[Debug] Forced player movement speed to 1x.");
-
-    if (currentIdentity != null)
-    {
-        var state = new SpeedUpgradeState
+        // Optional: only needed if something still calls this from elsewhere
+        public void TriggerUpgradeRandomizationForDebug()
         {
-            MovementTier = movementSpeedTier,
-            ApplianceTier = applianceSpeedTier,
-            CookTier = cookSpeedTier,
-            ChopTier = chopSpeedTier,
-            CleanTier = cleanSpeedTier
-        };
-        PersistenceManager.SaveSpeedState(currentIdentity, state);
-    }
-}
-
-// Increments the franchise completion count and sends the franchise location check.
-private void IncrementFranchiseAndCheckGoal()
-{
-    timesFranchised++;
-    Logger.LogWarning("[Debug] Manually incremented franchise counter to " + timesFranchised + ".");
-
-    try
-    {
-        if (session != null && session.Locations != null)
-        {
-            int locId = ComputeFranchiseTimesLocationId(timesFranchised);
-            session.Locations.CompleteLocationChecks(locId);
-            dayID = ComputeRunBaseOffset(timesFranchised);
-            Logger.LogInfo($"[Debug] Sent franchise completion check ID {locId}; next run base offset set to {dayID}.");
+            Logger.LogInfo("[Randomizer] Debug trigger requested.");
+            try
+            {
+                TryRandomizeUpgradesOnce();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning("[Randomizer] Debug trigger failed: " + ex.Message);
+            }
         }
-        else
-        {
-            Logger.LogWarning("[Debug] Session or Locations unavailable; will not send location check.");
-        }
-    }
-    catch (Exception ex)
-    {
-        Logger.LogWarning("[Debug] Failed to send franchise completion check: " + ex.Message);
-    }
-
-    if (goal == 0 && franchiseCount > 0 && timesFranchised >= franchiseCount)
-    {
-        Logger.LogInfo("[Debug] Franchise goal reached via manual increment. Sending goal complete.");
-        SendGoalComplete();
-    }
-}
     }
 }

@@ -1,0 +1,2793 @@
+﻿using System;
+using System.Linq;
+using System.IO;
+using System.Collections.Generic;
+using System.Reflection;
+using System.Threading.Tasks;
+using System.Diagnostics;
+using UnityEngine;
+using Unity.Entities;
+using Unity.Collections;
+using HarmonyLib;
+using Kitchen;
+using KitchenLib;
+using KitchenLib.Logging;
+using KitchenLib.Utils;
+using KitchenLib.References;
+using KitchenMods;
+using Newtonsoft.Json;
+using KitchenData;
+using Archipelago.MultiClient.Net;
+using Archipelago.MultiClient.Net.Models;
+using Archipelago.MultiClient.Net.Enums;
+using Archipelago.MultiClient.Net.Helpers;
+using Archipelago.MultiClient.Net.Packets;
+using Archipelago.MultiClient.Net.BounceFeatures.DeathLink;
+using PreferenceSystem;
+using PreferenceSystem.Event;
+using PreferenceSystem.Menus;
+using UnityEngine.SceneManagement;
+using Newtonsoft.Json.Linq;
+using KitchenPlateupAP.Spawning;
+
+namespace KitchenPlateupAP
+{
+    public class PlateupAPConfig
+    {
+        [JsonProperty] public string address { get; set; }
+        [JsonProperty] public int port { get; set; }
+        [JsonProperty] public string playername { get; set; }
+        [JsonProperty] public string password { get; set; }
+
+    }
+
+    public class Mod : BaseMod, IModSystem
+    {
+        public const string MOD_GUID = "com.caz.plateupap";
+        public const string MOD_NAME = "PlateupAP";
+        public const string MOD_VERSION = "0.2.2.1";
+        public const string MOD_AUTHOR = "Caz";
+        public const string MOD_GAMEVERSION = ">=1.1.9";
+        public static int TOTAL_SCENES_LOADED = 0;
+
+        internal static AssetBundle Bundle = null;
+        internal static KitchenLib.Logging.KitchenLogger Logger;
+        private EntityQuery playersWithItems;
+        private EntityQuery playerSpeedQuery;
+        private EntityQuery applianceSpeedQuery;
+        private static RunIdentity currentIdentity;
+        private static PendingSpawnState pendingSpawnState = new PendingSpawnState();
+        private static bool persistenceLoaded = false;
+
+        public static Mod Instance { get; private set; }
+        internal static PlateupAPConfig CachedConfig;
+        private static bool _configWarmed;
+
+        private static ArchipelagoSession session => ArchipelagoConnectionManager.Session;
+        private Archipelago.MultiClient.Net.BounceFeatures.DeathLink.DeathLinkService deathLinkService;
+        private int deathLinkBehavior = 0; // Default to "Reset Run"
+        private bool suppressNextDeathLink = false;
+        private static int goal = 0;             // 0 = franchise_x_times, 1 = complete_x_days
+        private static int franchiseCount = 0;   // how many times to franchise
+        private static int dayCount = 1;        // how many days to complete
+        private static List<string> selectedDishes = new List<string>();
+        object rawGoal = null;
+        private static bool dishesMessageSent = false;
+        private bool itemsQueuedThisLobby = false;
+        int itemsKeptPerRun = 5;
+        public static int RandomTrapCardCount = 0;
+        bool deathLinkResetToLastStarPending = false;
+        public static int applianceSpeedMode = 0;
+        private static bool checksDisabled = false;
+        private bool dishPedestalSpawned = false;
+        private static int dayLeaseInterval = 5;
+
+        // New: counts from slot data (defaults per spec = 5)
+        private static int playerSpeedUpgradeCount = 5;
+        private static int applianceSpeedUpgradeCount = 5;
+
+        // Static day cycle and spawn state.
+        private static int lastDay = 0;
+        private int dayID = 100000;
+        private int stars = 0;
+        private int timesFranchised = 0; // number of completed franchises so far
+        private int DishId;
+        private bool firstCycleCompleted = false;
+        private bool previousWasDay = false;
+        bool inLobby = true;
+        bool loseScreen = false;
+        bool franchiseScreen = false;
+        bool lost = false;
+        bool franchised = false;
+        private bool dayTransitionProcessed = false;
+        private static int overallDaysCompleted = 0;
+        private static int overallStarsEarned = 0;
+        public static int TotalLeaseItemsReceived = 0;
+        private static bool itemsEventSubscribed = false;
+        private static Queue<ItemInfo> spawnQueue = new Queue<ItemInfo>();
+        private bool franchisePending = false;
+
+        // Flag to prevent repeated logging during a cycle.
+        private static bool loggedCardThisCycle = false;
+        private static bool prepLogDone = false;
+        private static bool sessionNotInitLogged = false;
+        private bool itemsSpawnedThisRun = false;
+        private static Dictionary<int, float> playerBaseSpeeds = new Dictionary<int, float>();
+        private static bool deferredItemHistoryApplied = false;
+
+        //Modifying player values
+        // Build tiers dynamically from slot data: start 0.5, + (1.0 / N) per upgrade, final 1.5 at N upgrades; if N==0 -> [1.0]
+        private static float[] speedTiers = BuildPlayerSpeedTiers(playerSpeedUpgradeCount);
+        private static int movementSpeedTier = 0;
+
+        //Modifying Appliance Values
+        public static readonly float[] applianceSpeedTiers = { -0.25f, -0.15f, 0f, 0.1f, 0.2f };
+        public static int applianceSpeedTier = 0;
+        public static readonly float[] chopSpeedTiers = { -0.25f, -0.15f, 0f, 0.1f, 0.2f };
+        public static int chopSpeedTier = 0;
+        public static readonly float[] cleanSpeedTiers = { -0.25f, -0.15f, 0f, 0.1f, 0.2f };
+        public static int cleanSpeedTier = 0;
+        public static readonly float[] cookSpeedTiers = { -0.25f, -0.15f, 0f, 0.1f, 0.2f };
+        public static int cookSpeedTier = 0;
+
+
+        // Set initial multipliers from the tiers:
+        public static float movementSpeedMod = speedTiers[0];
+        public static float applianceSpeedMod = applianceSpeedTiers[applianceSpeedTier];
+        public static float chopSpeedMod = chopSpeedTiers[chopSpeedTier];
+        public static float cookSpeedMod = cookSpeedTiers[cookSpeedTier];
+        public static float cleanSpeedMod = cleanSpeedTiers[cleanSpeedTier];
+
+        public static class InputSourceIdentifier
+        {
+            public static int Identifier = 0;
+        }
+
+        public Mod() : base(MOD_GUID, MOD_NAME, MOD_AUTHOR, MOD_VERSION, MOD_GAMEVERSION, Assembly.GetExecutingAssembly())
+        {
+            Instance = this;
+            Logger = InitLogger();
+            Logger.LogWarning("Created instance");
+            // Replace inline lambda with method to also warm config
+            SceneManager.sceneLoaded += OnSceneLoaded;
+        }
+
+        // Compute dynamic tiers from slot data count
+        private static float[] BuildPlayerSpeedTiers(int count)
+        {
+            if (count <= 0)
+                return new[] { 1f };
+            var tiers = new float[count + 1];
+            float step = 1f / count; // 100% / count as multiplier
+            for (int i = 0; i <= count; i++)
+            {
+                tiers[i] = 0.5f + (i * step);
+            }
+            return tiers;
+        }
+
+        // Apply player speed count -> rebuild tiers and clamp current tier; update multiplier
+        private static void ApplyPlayerSpeedConfig()
+        {
+            speedTiers = BuildPlayerSpeedTiers(playerSpeedUpgradeCount);
+            movementSpeedTier = Mathf.Clamp(movementSpeedTier, 0, speedTiers.Length - 1);
+            movementSpeedMod = speedTiers[movementSpeedTier];
+            playerBaseSpeeds.Clear();
+            Logger?.LogInfo($"[PlateupAP] Player speed tiers rebuilt for count={playerSpeedUpgradeCount}. Levels={speedTiers.Length}, currentTier={movementSpeedTier}, multiplier={movementSpeedMod}");
+        }
+
+        // New: scene callback, warms config on main menu
+        private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+        {
+            Logger.LogInfo($"{TOTAL_SCENES_LOADED} Loaded Scene: {scene.name}");
+            TOTAL_SCENES_LOADED++;
+
+            // Main menu scene appears to be "Scene" from your logs
+            if (!_configWarmed && string.Equals(scene.name, "Scene", StringComparison.OrdinalIgnoreCase))
+            {
+                _configWarmed = true;
+                TryWarmupConfig();
+            }
+        }
+
+        private static RunIdentity BuildIdentity()
+        {
+            if (CachedConfig == null)
+                return null;
+            return new RunIdentity
+            {
+                Address = CachedConfig.address ?? "",
+                Port = CachedConfig.port,
+                Player = CachedConfig.playername ?? ""
+            };
+        }
+
+        public void UpdateArchipelagoConfig(PlateupAPConfig config)
+        {
+            CachedConfig = config;
+            currentIdentity = BuildIdentity();
+            if (currentIdentity != null)
+            {
+                bool reset = PersistenceManager.ShouldResetForIdentity(currentIdentity);
+                if (reset)
+                {
+                    Logger.LogInfo("[Persistence] Identity changed (port/address/player). Resetting stored speed upgrades and pending items.");
+                    PersistenceManager.ResetForNewRun(currentIdentity);
+                }
+                PersistenceManager.SaveIdentity(currentIdentity);
+            }
+            ArchipelagoConnectionManager.TryConnect(config.address, config.port, config.playername, config.password);
+        }
+
+
+        // New: read and cache config early
+        private void TryWarmupConfig()
+        {
+            try
+            {
+                string folder = Path.Combine(Application.persistentDataPath, "PlateUpAPConfig");
+                string path = Path.Combine(folder, "archipelago_config.json");
+                if (!File.Exists(path))
+                {
+                    Logger.LogWarning($"[PlateupAP][ConfigWarmup] No config at: {path}");
+                    return;
+                }
+
+                var json = File.ReadAllText(path);
+                // Use isolated manual parse to avoid converter interference
+                var jo = JObject.Parse(json);
+                var cfg = new PlateupAPConfig
+                {
+                    address = (string)jo["address"],
+                    port = (int?)jo["port"] ?? 0,
+                    playername = (string)jo["playername"],
+                    password = (string)jo["password"]
+                };
+
+                if (string.IsNullOrWhiteSpace(cfg.address))
+                {
+                    Logger.LogWarning("[PlateupAP][ConfigWarmup] Address is empty in config; will not cache.");
+                    return;
+                }
+
+                CachedConfig = cfg;
+                Logger.LogInfo($"[PlateupAP][ConfigWarmup] Cached config for {CachedConfig.address}:{CachedConfig.port} user={CachedConfig.playername}");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("[PlateupAP][ConfigWarmup] Failed: " + ex.Message);
+            }
+        }
+        private void RetrieveSlotData()
+        {
+            if (session == null)
+                return; // Not connected
+
+            var slotData = ArchipelagoConnectionManager.SlotData;
+
+            if (slotData != null)
+            {
+                Logger.LogInfo($"[PlateupAP] Full Slot Data: {JsonConvert.SerializeObject(slotData, Formatting.Indented)}");
+
+                if (slotData.TryGetValue("selected_dishes", out object rawDishes))
+                {
+                    Logger.LogInfo($"[PlateupAP] Found selected_dishes in slot data: {rawDishes}");
+
+                    try
+                    {
+                        selectedDishes = JsonConvert.DeserializeObject<List<string>>(rawDishes.ToString());
+
+                        if (selectedDishes.Count > 0)
+                        {
+                            string dishName = selectedDishes[0];
+                            if (ProgressionMapping.dish_id_lookup.TryGetValue(dishName, out int dishId))
+                            {
+                                LockedDishes.SetUnlockedDishes(new[] { dishId });
+                                PersistUnlockedDish(dishId);
+                                PersistLastSelectedDishes(selectedDishes);
+                                Logger.LogInfo($"[PlateupAP] Unlocked dish set to '{dishName}' (ID: {dishId})");
+                            }
+                            else
+                            {
+                                Logger.LogWarning($"[PlateupAP] Dish name '{dishName}' not found in dish_id_lookup!");
+                            }
+                        }
+
+                    }
+                    catch (JsonReaderException ex)
+                    {
+                        Logger.LogError($"[PlateupAP] Error parsing selected_dishes JSON: {ex.Message}");
+                    }
+                }
+
+                if (slotData.TryGetValue("goal", out object rawGoal))
+                {
+                    goal = Convert.ToInt32(rawGoal);
+                    Logger.LogInfo($"[PlateupAP] Goal set to: {goal} (0=franchise_x_times, 1=complete_x_days)");
+                }
+
+                if (slotData.TryGetValue("franchise_count", out object rawFranchiseCount))
+                {
+                    franchiseCount = Convert.ToInt32(rawFranchiseCount);
+                    Logger.LogInfo($"[PlateupAP] Franchise count goal: {franchiseCount}");
+                }
+
+                if (slotData.TryGetValue("day_count", out object rawDayCount))
+                {
+                    dayCount = Convert.ToInt32(rawDayCount);
+                    Logger.LogInfo($"[PlateupAP] Day count goal: {dayCount}");
+                }
+
+                if (slotData.TryGetValue("death_link", out object rawDeathLink))
+                {
+                    bool deathLinkEnabled = Convert.ToBoolean(rawDeathLink);
+                    Logger.LogInfo($"[PlateupAP] DeathLink enabled: {deathLinkEnabled}");
+
+                    if (deathLinkEnabled)
+                    {
+                        EnableDeathLink();
+                    }
+                }
+
+                if (slotData.TryGetValue("death_link_behavior", out object rawBehavior))
+                {
+                    deathLinkBehavior = Convert.ToInt32(rawBehavior);
+                    Logger.LogInfo($"[PlateupAP] DeathLink Behavior Set To: {deathLinkBehavior}");
+                }
+
+                if (slotData.TryGetValue("items_kept", out object rawItemsKept))
+                {
+                    itemsKeptPerRun = Convert.ToInt32(rawItemsKept);
+                    Logger.LogInfo($"[PlateupAP] Items Kept Per Run: {itemsKeptPerRun}");
+                }
+
+                if (slotData.TryGetValue("appliance_speed_mode", out object rawApplianceSpeedMode))
+                {
+                    applianceSpeedMode = Convert.ToInt32(rawApplianceSpeedMode);
+                    Logger.LogInfo($"[PlateupAP] Appliance Speed Mode set to {applianceSpeedMode} (0=grouped, 1=separate)");
+                }
+
+                if (slotData.TryGetValue("day_lease_interval", out object rawLeaseInterval))
+                {
+                    dayLeaseInterval = Mathf.Clamp(Convert.ToInt32(rawLeaseInterval), 1, 30);
+                    Logger.LogInfo($"[PlateupAP] Day Lease Interval set to: {dayLeaseInterval}");
+                    KitchenPlateupAP.LeaseRequirementSystem.TriggerRefresh();
+                }
+
+                // NEW: speed upgrade counts
+                if (slotData.TryGetValue("player_speed_upgrade_count", out object rawPlayerSpeedCount))
+                {
+                    int value = Mathf.Clamp(Convert.ToInt32(rawPlayerSpeedCount), 0, 10);
+                    playerSpeedUpgradeCount = value;
+                    Logger.LogInfo($"[PlateupAP] Player Speed Upgrade Count: {playerSpeedUpgradeCount}");
+                    ApplyPlayerSpeedConfig();
+                }
+                else
+                {
+                    // ensure tiers built with default if not sent yet
+                    ApplyPlayerSpeedConfig();
+                }
+
+                if (slotData.TryGetValue("appliance_speed_upgrade_count", out object rawApplianceSpeedCount))
+                {
+                    applianceSpeedUpgradeCount = Mathf.Clamp(Convert.ToInt32(rawApplianceSpeedCount), 0, 10);
+                    Logger.LogInfo($"[PlateupAP] Appliance Speed Upgrade Count: {applianceSpeedUpgradeCount}");
+                }
+            }
+
+            if (selectedDishes.Count > 0)
+            {
+                string dishName = selectedDishes[0];
+                int dishGdoId = ProgressionMapping.dishDictionary
+                    .FirstOrDefault(kv => kv.Value == dishName).Key;
+
+                if (dishGdoId != 0 && KitchenData.GameData.Main.TryGet<Dish>(dishGdoId, out var dish))
+                {
+                    LockedDishes.SetUnlockedDishes(new[] { dishGdoId });
+                    PersistUnlockedDish(dishGdoId);
+                    PersistLastSelectedDishes(selectedDishes);
+                    Logger.LogInfo($"[PlateupAP] Unlocked dish set to '{dishName}' (GDO ID: {dishGdoId})");
+                }
+                else
+                {
+                    Logger.LogWarning($"[PlateupAP] Dish name '{dishName}' not found in dishDictionary or not a valid GDO!");
+                }
+            }
+            else
+            {
+                Logger.LogWarning("[PlateupAP] selectedDishes is empty, no dish to unlock.");
+            }
+        }
+
+        private void SendSelectedDishesMessage()
+        {
+            if (session == null || selectedDishes == null || selectedDishes.Count == 0)
+            {
+                Logger.LogWarning("Session is null or selected dishes list is empty. Not sending.");
+                return;
+            }
+
+            string message = $"Selected Dishes: {string.Join(", ", selectedDishes)}";
+            Logger.LogInfo($"Sending message: {message}");
+            ChatManager.AddSystemMessage("Selected Dishes: " + string.Join(", ", selectedDishes));
+        }
+
+        static PreferenceSystemManager PrefManager;
+
+        protected override void OnPostActivate(KitchenMods.Mod mod)
+        {
+            try
+            {
+                if (World == null)
+                    Logger.LogError("World is null in OnPostActivate!");
+
+                if (PrefManager == null)
+                    PrefManager = new PreferenceSystemManager(MOD_GUID, MOD_NAME);
+
+                if (ArchipelagoConnectionManager.ConnectionSuccessful)
+                {
+                    RetrieveSlotData();
+                    ProcessAllReceivedItems();
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"[PlateupAP] Error in OnPostActivate: {ex.Message}\n{ex.StackTrace}");
+            }
+
+            PrefManager = new PreferenceSystemManager(MOD_GUID, MOD_NAME);
+            PrefManager
+                .AddLabel("Archipelago Configuration")
+                .AddInfo("Create or load configuration for the Archipelago connection")
+                .AddInfo(@"Config is found in \AppData\LocalLow\It's Happening\PlateUp")
+                .AddButton("Create Config", (int _) =>
+                {
+                    // Explicitly target LocalLow path: %appdata%\..\LocalLow\It's Happening\PlateUp\PlateUpAPConfig
+                    string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData); // %APPDATA%
+                    string folder = Path.GetFullPath(Path.Combine(appData, "..", "LocalLow", "It's Happening", "PlateUp", "PlateUpAPConfig"));
+
+                    if (!Directory.Exists(folder))
+                        Directory.CreateDirectory(folder);
+
+                    string path = Path.Combine(folder, "archipelago_config.json");
+                    PlateupAPConfig defaultConfig = new PlateupAPConfig
+                    {
+                        address = "archipelago.gg",
+                        port = 0,
+                        playername = "",
+                        password = ""
+                    };
+                    string json = JsonConvert.SerializeObject(defaultConfig, Formatting.Indented);
+                    File.WriteAllText(path, json);
+                    Logger.LogInfo("Created config file at: " + path);
+
+                    try
+                    {
+                        if (Application.platform == RuntimePlatform.WindowsPlayer || Application.platform == RuntimePlatform.WindowsEditor)
+                        {
+                            var psi = new ProcessStartInfo
+                            {
+                                FileName = "explorer.exe",
+                                Arguments = $"/select,\"{path}\"",
+                                UseShellExecute = true
+                            };
+                            System.Diagnostics.Process.Start(psi);
+                        }
+                        else if (Application.platform == RuntimePlatform.OSXPlayer || Application.platform == RuntimePlatform.OSXEditor)
+                        {
+                            var psi = new ProcessStartInfo
+                            {
+                                FileName = "open",
+                                Arguments = $"-R \"{path}\"",
+                                UseShellExecute = true
+                            };
+                            System.Diagnostics.Process.Start(psi);
+                        }
+                        else
+                        {
+                            // Generic fallback: open the containing folder
+                            var psi = new ProcessStartInfo
+                            {
+                                FileName = folder,
+                                UseShellExecute = true
+                            };
+                            System.Diagnostics.Process.Start(psi);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogWarning($"Could not open file explorer for path '{path}': {ex.Message}");
+                    }
+                })
+                .AddButton("Connect", (int _) =>
+                {
+                    // Prefer cached config warmed in main menu; fallback to file
+                    PlateupAPConfig config = CachedConfig;
+                    if (config == null)
+                    {
+                        string folder = Path.Combine(Application.persistentDataPath, "PlateUpAPConfig");
+                        string path = Path.Combine(folder, "archipelago_config.json");
+                        if (!File.Exists(path))
+                        {
+                            Logger.LogError("Config file not found at: " + path);
+                            return;
+                        }
+
+                        string json = File.ReadAllText(path);
+                        try
+                        {
+                            var jo = Newtonsoft.Json.Linq.JObject.Parse(json);
+                            config = new PlateupAPConfig
+                            {
+                                address = (string)jo["address"],
+                                port = (int?)jo["port"] ?? 0,
+                                playername = (string)jo["playername"],
+                                password = (string)jo["password"]
+                            };
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.LogError("[PlateupAP][Config] Manual parse failed: " + ex);
+                            Logger.LogError("JSON: " + json);
+                            return;
+                        }
+                    }
+
+                    if (string.IsNullOrWhiteSpace(config.address))
+                    {
+                        Logger.LogError("[PlateupAP][Config] Invalid address.");
+                        return;
+                    }
+
+                        Logger.LogInfo($"[PlateupAP][Config] Using server={config.address}:{config.port} player={config.playername}");
+                    UpdateArchipelagoConfig(config);
+                })
+                // NEW: Debug utilities
+                .AddLabel("Debug Utilities")
+                .AddInfo("Quick fixes during a run")
+                .AddButton("Set Player Speed to 1x", (int _) => { ForcePlayerSpeedToOne(); })
+                .AddButton("Increment Franchise Count", (int _) => { IncrementFranchiseAndCheckGoal(); })
+                .AddButton("Spawn Queued Items Now", (int _) => { ForceSpawnAllQueuedItems(); });
+
+            PrefManager.RegisterMenu(PreferenceSystemManager.MenuType.MainMenu);
+            PrefManager.RegisterMenu(PreferenceSystemManager.MenuType.PauseMenu);
+
+            if (GameObject.FindObjectOfType<ChatManager>() == null)
+            {
+                var obj = new GameObject("ChatManager");
+                obj.AddComponent<ChatManager>();
+                UnityEngine.Object.DontDestroyOnLoad(obj);
+            }
+
+            ChatManager.AddSystemMessage("PlateUp Archipelago loaded.");
+        }
+
+        protected override void OnInitialise()
+        {
+            Logger = InitLogger();
+            Logger.LogWarning($"{MOD_GUID} v{MOD_VERSION} in use!");
+            var harmony = new Harmony("com.caz.plateupap.patch");
+            harmony.PatchAll(Assembly.GetExecutingAssembly());
+            JsonConvert.DefaultSettings = null;
+            Mod.Logger.LogInfo("DishCardReadingSystem initialised.");
+            playersWithItems = GetEntityQuery(new QueryHelper().All(typeof(CPlayer), typeof(CItemHolder)));
+            playerSpeedQuery = GetEntityQuery(new QueryHelper().All(typeof(CPlayer)));
+            applianceSpeedQuery = GetEntityQuery(new QueryHelper().All(typeof(CApplianceSpeedModifier)));
+
+            // Ensure player tiers are initialized on boot (before slot data), using defaults
+            ApplyPlayerSpeedConfig();
+
+            // Experimental: randomize appliance upgrade targets once per boot
+            TryRandomizeUpgradesOnce();
+        }
+
+        private void TryRandomizeUpgradesOnce()
+        {
+            if (upgradesRandomized) return;
+            var data = KitchenData.GameData.Main;
+            if (data == null)
+            {
+                Logger.LogWarning("[Randomizer] GameData.Main not ready; skipping upgrade randomization.");
+                return;
+            }
+
+            int seed = ComputeDeterministicSeed();
+            try
+            {
+                RandomUpgradeMapper.Apply(data, seed);
+                upgradesRandomized = true;
+                Logger.LogInfo($"[Randomizer] Applied experimental upgrade randomization with seed={seed}.");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning("[Randomizer] Failed to apply upgrade randomization: " + ex.Message);
+            }
+        }
+
+        private int ComputeDeterministicSeed()
+        {
+            // Prefer identity-based deterministic seed
+            try
+            {
+                string a = CachedConfig?.address ?? string.Empty;
+                string p = (CachedConfig?.port ?? 0).ToString();
+                string u = CachedConfig?.playername ?? string.Empty;
+                string key = $"{a}|{p}|{u}";
+                int h = key.GetHashCode();
+                if (h == 0) h = Environment.TickCount;
+                return h;
+            }
+            catch
+            {
+                return Environment.TickCount;
+            }
+        }
+        
+        private static RunIdentity BuildIdentity()
+        {
+            if (CachedConfig == null)
+                return null;
+            return new RunIdentity
+            {
+                Address = CachedConfig.address ?? "",
+                Port = CachedConfig.port,
+                Player = CachedConfig.playername ?? ""
+            };
+        }
+
+        public void UpdateArchipelagoConfig(PlateupAPConfig config)
+        {
+            CachedConfig = config;
+            currentIdentity = BuildIdentity();
+            if (currentIdentity != null)
+            {
+                bool reset = PersistenceManager.ShouldResetForIdentity(currentIdentity);
+                if (reset)
+                {
+                    Logger.LogInfo("[Persistence] Identity changed (port/address/player). Resetting stored speed upgrades and pending items.");
+                    PersistenceManager.ResetForNewRun(currentIdentity);
+                }
+                PersistenceManager.SaveIdentity(currentIdentity);
+            }
+            ArchipelagoConnectionManager.TryConnect(config.address, config.port, config.playername, config.password);
+        }
+
+
+        // New: read and cache config early
+        private void TryWarmupConfig()
+        {
+            try
+            {
+                string folder = Path.Combine(Application.persistentDataPath, "PlateUpAPConfig");
+                string path = Path.Combine(folder, "archipelago_config.json");
+                if (!File.Exists(path))
+                {
+                    Logger.LogWarning($"[PlateupAP][ConfigWarmup] No config at: {path}");
+                    return;
+                }
+
+                var json = File.ReadAllText(path);
+                // Use isolated manual parse to avoid converter interference
+                var jo = JObject.Parse(json);
+                var cfg = new PlateupAPConfig
+                {
+                    address = (string)jo["address"],
+                    port = (int?)jo["port"] ?? 0,
+                    playername = (string)jo["playername"],
+                    password = (string)jo["password"]
+                };
+
+                if (string.IsNullOrWhiteSpace(cfg.address))
+                {
+                    Logger.LogWarning("[PlateupAP][ConfigWarmup] Address is empty in config; will not cache.");
+                    return;
+                }
+
+                CachedConfig = cfg;
+                Logger.LogInfo($"[PlateupAP][ConfigWarmup] Cached config for {CachedConfig.address}:{CachedConfig.port} user={CachedConfig.playername}");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("[PlateupAP][ConfigWarmup] Failed: " + ex.Message);
+            }
+        }
+        private void RetrieveSlotData()
+        {
+            if (session == null)
+                return; // Not connected
+
+            var slotData = ArchipelagoConnectionManager.SlotData;
+
+            if (slotData != null)
+            {
+                Logger.LogInfo($"[PlateupAP] Full Slot Data: {JsonConvert.SerializeObject(slotData, Formatting.Indented)}");
+
+                if (slotData.TryGetValue("selected_dishes", out object rawDishes))
+                {
+                    Logger.LogInfo($"[PlateupAP] Found selected_dishes in slot data: {rawDishes}");
+
+                    try
+                    {
+                        selectedDishes = JsonConvert.DeserializeObject<List<string>>(rawDishes.ToString());
+
+                        if (selectedDishes.Count > 0)
+                        {
+                            string dishName = selectedDishes[0];
+                            if (ProgressionMapping.dish_id_lookup.TryGetValue(dishName, out int dishId))
+                            {
+                                LockedDishes.SetUnlockedDishes(new[] { dishId });
+                                PersistUnlockedDish(dishId);
+                                PersistLastSelectedDishes(selectedDishes);
+                                Logger.LogInfo($"[PlateupAP] Unlocked dish set to '{dishName}' (ID: {dishId})");
+                            }
+                            else
+                            {
+                                Logger.LogWarning($"[PlateupAP] Dish name '{dishName}' not found in dish_id_lookup!");
+                            }
+                        }
+
+                    }
+                    catch (JsonReaderException ex)
+                    {
+                        Logger.LogError($"[PlateupAP] Error parsing selected_dishes JSON: {ex.Message}");
+                    }
+                }
+
+                if (slotData.TryGetValue("goal", out object rawGoal))
+                {
+                    goal = Convert.ToInt32(rawGoal);
+                    Logger.LogInfo($"[PlateupAP] Goal set to: {goal} (0=franchise_x_times, 1=complete_x_days)");
+                }
+
+                if (slotData.TryGetValue("franchise_count", out object rawFranchiseCount))
+                {
+                    franchiseCount = Convert.ToInt32(rawFranchiseCount);
+                    Logger.LogInfo($"[PlateupAP] Franchise count goal: {franchiseCount}");
+                }
+
+                if (slotData.TryGetValue("day_count", out object rawDayCount))
+                {
+                    dayCount = Convert.ToInt32(rawDayCount);
+                    Logger.LogInfo($"[PlateupAP] Day count goal: {dayCount}");
+                }
+
+                if (slotData.TryGetValue("death_link", out object rawDeathLink))
+                {
+                    bool deathLinkEnabled = Convert.ToBoolean(rawDeathLink);
+                    Logger.LogInfo($"[PlateupAP] DeathLink enabled: {deathLinkEnabled}");
+
+                    if (deathLinkEnabled)
+                    {
+                        EnableDeathLink();
+                    }
+                }
+
+                if (slotData.TryGetValue("death_link_behavior", out object rawBehavior))
+                {
+                    deathLinkBehavior = Convert.ToInt32(rawBehavior);
+                    Logger.LogInfo($"[PlateupAP] DeathLink Behavior Set To: {deathLinkBehavior}");
+                }
+
+                if (slotData.TryGetValue("items_kept", out object rawItemsKept))
+                {
+                    itemsKeptPerRun = Convert.ToInt32(rawItemsKept);
+                    Logger.LogInfo($"[PlateupAP] Items Kept Per Run: {itemsKeptPerRun}");
+                }
+
+                if (slotData.TryGetValue("appliance_speed_mode", out object rawApplianceSpeedMode))
+                {
+                    applianceSpeedMode = Convert.ToInt32(rawApplianceSpeedMode);
+                    Logger.LogInfo($"[PlateupAP] Appliance Speed Mode set to {applianceSpeedMode} (0=grouped, 1=separate)");
+                }
+
+                if (slotData.TryGetValue("day_lease_interval", out object rawLeaseInterval))
+                {
+                    dayLeaseInterval = Mathf.Clamp(Convert.ToInt32(rawLeaseInterval), 1, 30);
+                    Logger.LogInfo($"[PlateupAP] Day Lease Interval set to: {dayLeaseInterval}");
+                    KitchenPlateupAP.LeaseRequirementSystem.TriggerRefresh();
+                }
+
+                // NEW: speed upgrade counts
+                if (slotData.TryGetValue("player_speed_upgrade_count", out object rawPlayerSpeedCount))
+                {
+                    int value = Mathf.Clamp(Convert.ToInt32(rawPlayerSpeedCount), 0, 10);
+                    playerSpeedUpgradeCount = value;
+                    Logger.LogInfo($"[PlateupAP] Player Speed Upgrade Count: {playerSpeedUpgradeCount}");
+                    ApplyPlayerSpeedConfig();
+                }
+                else
+                {
+                    // ensure tiers built with default if not sent yet
+                    ApplyPlayerSpeedConfig();
+                }
+
+                if (slotData.TryGetValue("appliance_speed_upgrade_count", out object rawApplianceSpeedCount))
+                {
+                    applianceSpeedUpgradeCount = Mathf.Clamp(Convert.ToInt32(rawApplianceSpeedCount), 0, 10);
+                    Logger.LogInfo($"[PlateupAP] Appliance Speed Upgrade Count: {applianceSpeedUpgradeCount}");
+                }
+            }
+
+            if (selectedDishes.Count > 0)
+            {
+                string dishName = selectedDishes[0];
+                int dishGdoId = ProgressionMapping.dishDictionary
+                    .FirstOrDefault(kv => kv.Value == dishName).Key;
+
+                if (dishGdoId != 0 && KitchenData.GameData.Main.TryGet<Dish>(dishGdoId, out var dish))
+                {
+                    LockedDishes.SetUnlockedDishes(new[] { dishGdoId });
+                    PersistUnlockedDish(dishGdoId);
+                    PersistLastSelectedDishes(selectedDishes);
+                    Logger.LogInfo($"[PlateupAP] Unlocked dish set to '{dishName}' (GDO ID: {dishGdoId})");
+                }
+                else
+                {
+                    Logger.LogWarning($"[PlateupAP] Dish name '{dishName}' not found in dishDictionary or not a valid GDO!");
+                }
+            }
+            else
+            {
+                Logger.LogWarning("[PlateupAP] selectedDishes is empty, no dish to unlock.");
+            }
+        }
+
+        private void SendSelectedDishesMessage()
+        {
+            if (session == null || selectedDishes == null || selectedDishes.Count == 0)
+            {
+                Logger.LogWarning("Session is null or selected dishes list is empty. Not sending.");
+                return;
+            }
+
+            string message = $"Selected Dishes: {string.Join(", ", selectedDishes)}";
+            Logger.LogInfo($"Sending message: {message}");
+            ChatManager.AddSystemMessage("Selected Dishes: " + string.Join(", ", selectedDishes));
+        }
+
+        static PreferenceSystemManager PrefManager;
+
+        protected override void OnPostActivate(KitchenMods.Mod mod)
+        {
+            try
+            {
+                if (World == null)
+                    Logger.LogError("World is null in OnPostActivate!");
+
+                if (PrefManager == null)
+                    PrefManager = new PreferenceSystemManager(MOD_GUID, MOD_NAME);
+
+                if (ArchipelagoConnectionManager.ConnectionSuccessful)
+                {
+                    RetrieveSlotData();
+                    ProcessAllReceivedItems();
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"[PlateupAP] Error in OnPostActivate: {ex.Message}\n{ex.StackTrace}");
+            }
+
+            PrefManager = new PreferenceSystemManager(MOD_GUID, MOD_NAME);
+            PrefManager
+                .AddLabel("Archipelago Configuration")
+                .AddInfo("Create or load configuration for the Archipelago connection")
+                .AddInfo(@"Config is found in \AppData\LocalLow\It's Happening\PlateUp")
+                .AddButton("Create Config", (int _) =>
+                {
+                    // Explicitly target LocalLow path: %appdata%\..\LocalLow\It's Happening\PlateUp\PlateUpAPConfig
+                    string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData); // %APPDATA%
+                    string folder = Path.GetFullPath(Path.Combine(appData, "..", "LocalLow", "It's Happening", "PlateUp", "PlateUpAPConfig"));
+
+                    if (!Directory.Exists(folder))
+                        Directory.CreateDirectory(folder);
+
+                    string path = Path.Combine(folder, "archipelago_config.json");
+                    PlateupAPConfig defaultConfig = new PlateupAPConfig
+                    {
+                        address = "archipelago.gg",
+                        port = 0,
+                        playername = "",
+                        password = ""
+                    };
+                    string json = JsonConvert.SerializeObject(defaultConfig, Formatting.Indented);
+                    File.WriteAllText(path, json);
+                    Logger.LogInfo("Created config file at: " + path);
+
+                    try
+                    {
+                        if (Application.platform == RuntimePlatform.WindowsPlayer || Application.platform == RuntimePlatform.WindowsEditor)
+                        {
+                            var psi = new ProcessStartInfo
+                            {
+                                FileName = "explorer.exe",
+                                Arguments = $"/select,\"{path}\"",
+                                UseShellExecute = true
+                            };
+                            System.Diagnostics.Process.Start(psi);
+                        }
+                        else if (Application.platform == RuntimePlatform.OSXPlayer || Application.platform == RuntimePlatform.OSXEditor)
+                        {
+                            var psi = new ProcessStartInfo
+                            {
+                                FileName = "open",
+                                Arguments = $"-R \"{path}\"",
+                                UseShellExecute = true
+                            };
+                            System.Diagnostics.Process.Start(psi);
+                        }
+                        else
+                        {
+                            // Generic fallback: open the containing folder
+                            var psi = new ProcessStartInfo
+                            {
+                                FileName = folder,
+                                UseShellExecute = true
+                            };
+                            System.Diagnostics.Process.Start(psi);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogWarning($"Could not open file explorer for path '{path}': {ex.Message}");
+                    }
+                })
+                .AddButton("Connect", (int _) =>
+                {
+                    // Prefer cached config warmed in main menu; fallback to file
+                    PlateupAPConfig config = CachedConfig;
+                    if (config == null)
+                    {
+                        string folder = Path.Combine(Application.persistentDataPath, "PlateUpAPConfig");
+                        string path = Path.Combine(folder, "archipelago_config.json");
+                        if (!File.Exists(path))
+                        {
+                            Logger.LogError("Config file not found at: " + path);
+                            return;
+                        }
+
+                        string json = File.ReadAllText(path);
+                        try
+                        {
+                            var jo = Newtonsoft.Json.Linq.JObject.Parse(json);
+                            config = new PlateupAPConfig
+                            {
+                                address = (string)jo["address"],
+                                port = (int?)jo["port"] ?? 0,
+                                playername = (string)jo["playername"],
+                                password = (string)jo["password"]
+                            };
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.LogError("[PlateupAP][Config] Manual parse failed: " + ex);
+                            Logger.LogError("JSON: " + json);
+                            return;
+                        }
+                    }
+
+                    if (string.IsNullOrWhiteSpace(config.address))
+                    {
+                        Logger.LogError("[PlateupAP][Config] Invalid address.");
+                        return;
+                    }
+
+                        Logger.LogInfo($"[PlateupAP][Config] Using server={config.address}:{config.port} player={config.playername}");
+                    UpdateArchipelagoConfig(config);
+                })
+                // NEW: Debug utilities
+                .AddLabel("Debug Utilities")
+                .AddInfo("Quick fixes during a run")
+                .AddButton("Set Player Speed to 1x", (int _) => { ForcePlayerSpeedToOne(); })
+                .AddButton("Increment Franchise Count", (int _) => { IncrementFranchiseAndCheckGoal(); })
+                .AddButton("Spawn Queued Items Now", (int _) => { ForceSpawnAllQueuedItems(); });
+
+            PrefManager.RegisterMenu(PreferenceSystemManager.MenuType.MainMenu);
+            PrefManager.RegisterMenu(PreferenceSystemManager.MenuType.PauseMenu);
+
+            if (GameObject.FindObjectOfType<ChatManager>() == null)
+            {
+                var obj = new GameObject("ChatManager");
+                obj.AddComponent<ChatManager>();
+                UnityEngine.Object.DontDestroyOnLoad(obj);
+            }
+
+            ChatManager.AddSystemMessage("PlateUp Archipelago loaded.");
+        }
+
+        protected override void OnInitialise()
+        {
+            Logger = InitLogger();
+            Logger.LogWarning($"{MOD_GUID} v{MOD_VERSION} in use!");
+            var harmony = new Harmony("com.caz.plateupap.patch");
+            harmony.PatchAll(Assembly.GetExecutingAssembly());
+            JsonConvert.DefaultSettings = null;
+            Mod.Logger.LogInfo("DishCardReadingSystem initialised.");
+            playersWithItems = GetEntityQuery(new QueryHelper().All(typeof(CPlayer), typeof(CItemHolder)));
+            playerSpeedQuery = GetEntityQuery(new QueryHelper().All(typeof(CPlayer)));
+            applianceSpeedQuery = GetEntityQuery(new QueryHelper().All(typeof(CApplianceSpeedModifier)));
+
+            // Ensure player tiers are initialized on boot (before slot data), using defaults
+            ApplyPlayerSpeedConfig();
+
+            // Experimental: randomize appliance upgrade targets once per boot
+            TryRandomizeUpgradesOnce();
+        }
+
+        private void TryRandomizeUpgradesOnce()
+        {
+            if (upgradesRandomized) return;
+            var data = KitchenData.GameData.Main;
+            if (data == null)
+            {
+                Logger.LogWarning("[Randomizer] GameData.Main not ready; skipping upgrade randomization.");
+                return;
+            }
+
+            int seed = ComputeDeterministicSeed();
+            try
+            {
+                RandomUpgradeMapper.Apply(data, seed);
+                upgradesRandomized = true;
+                Logger.LogInfo($"[Randomizer] Applied experimental upgrade randomization with seed={seed}.");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning("[Randomizer] Failed to apply upgrade randomization: " + ex.Message);
+            }
+        }
+
+        private int ComputeDeterministicSeed()
+        {
+            // Prefer identity-based deterministic seed
+            try
+            {
+                string a = CachedConfig?.address ?? string.Empty;
+                string p = (CachedConfig?.port ?? 0).ToString();
+                string u = CachedConfig?.playername ?? string.Empty;
+                string key = $"{a}|{p}|{u}";
+                int h = key.GetHashCode();
+                if (h == 0) h = Environment.TickCount;
+                return h;
+            }
+            catch
+            {
+                return Environment.TickCount;
+            }
+        }
+        
+        private static RunIdentity BuildIdentity()
+        {
+            if (CachedConfig == null)
+                return null;
+            return new RunIdentity
+            {
+                Address = CachedConfig.address ?? "",
+                Port = CachedConfig.port,
+                Player = CachedConfig.playername ?? ""
+            };
+        }
+
+        public void UpdateArchipelagoConfig(PlateupAPConfig config)
+        {
+            CachedConfig = config;
+            currentIdentity = BuildIdentity();
+            if (currentIdentity != null)
+            {
+                bool reset = PersistenceManager.ShouldResetForIdentity(currentIdentity);
+                if (reset)
+                {
+                    Logger.LogInfo("[Persistence] Identity changed (port/address/player). Resetting stored speed upgrades and pending items.");
+                    PersistenceManager.ResetForNewRun(currentIdentity);
+                }
+                PersistenceManager.SaveIdentity(currentIdentity);
+            }
+            ArchipelagoConnectionManager.TryConnect(config.address, config.port, config.playername, config.password);
+        }
+
+
+        // New: read and cache config early
+        private void TryWarmupConfig()
+        {
+            try
+            {
+                string folder = Path.Combine(Application.persistentDataPath, "PlateUpAPConfig");
+                string path = Path.Combine(folder, "archipelago_config.json");
+                if (!File.Exists(path))
+                {
+                    Logger.LogWarning($"[PlateupAP][ConfigWarmup] No config at: {path}");
+                    return;
+                }
+
+                var json = File.ReadAllText(path);
+                // Use isolated manual parse to avoid converter interference
+                var jo = JObject.Parse(json);
+                var cfg = new PlateupAPConfig
+                {
+                    address = (string)jo["address"],
+                    port = (int?)jo["port"] ?? 0,
+                    playername = (string)jo["playername"],
+                    password = (string)jo["password"]
+                };
+
+                if (string.IsNullOrWhiteSpace(cfg.address))
+                {
+                    Logger.LogWarning("[PlateupAP][ConfigWarmup] Address is empty in config; will not cache.");
+                    return;
+                }
+
+                CachedConfig = cfg;
+                Logger.LogInfo($"[PlateupAP][ConfigWarmup] Cached config for {CachedConfig.address}:{CachedConfig.port} user={CachedConfig.playername}");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("[PlateupAP][ConfigWarmup] Failed: " + ex.Message);
+            }
+        }
+        private void RetrieveSlotData()
+        {
+            if (session == null)
+                return; // Not connected
+
+            var slotData = ArchipelagoConnectionManager.SlotData;
+
+            if (slotData != null)
+            {
+                Logger.LogInfo($"[PlateupAP] Full Slot Data: {JsonConvert.SerializeObject(slotData, Formatting.Indented)}");
+
+                if (slotData.TryGetValue("selected_dishes", out object rawDishes))
+                {
+                    Logger.LogInfo($"[PlateupAP] Found selected_dishes in slot data: {rawDishes}");
+
+                    try
+                    {
+                        selectedDishes = JsonConvert.DeserializeObject<List<string>>(rawDishes.ToString());
+
+                        if (selectedDishes.Count > 0)
+                        {
+                            string dishName = selectedDishes[0];
+                            if (ProgressionMapping.dish_id_lookup.TryGetValue(dishName, out int dishId))
+                            {
+                                LockedDishes.SetUnlockedDishes(new[] { dishId });
+                                PersistUnlockedDish(dishId);
+                                PersistLastSelectedDishes(selectedDishes);
+                                Logger.LogInfo($"[PlateupAP] Unlocked dish set to '{dishName}' (ID: {dishId})");
+                            }
+                            else
+                            {
+                                Logger.LogWarning($"[PlateupAP] Dish name '{dishName}' not found in dish_id_lookup!");
+                            }
+                        }
+
+                    }
+                    catch (JsonReaderException ex)
+                    {
+                        Logger.LogError($"[PlateupAP] Error parsing selected_dishes JSON: {ex.Message}");
+                    }
+                }
+
+                if (slotData.TryGetValue("goal", out object rawGoal))
+                {
+                    goal = Convert.ToInt32(rawGoal);
+                    Logger.LogInfo($"[PlateupAP] Goal set to: {goal} (0=franchise_x_times, 1=complete_x_days)");
+                }
+
+                if (slotData.TryGetValue("franchise_count", out object rawFranchiseCount))
+                {
+                    franchiseCount = Convert.ToInt32(rawFranchiseCount);
+                    Logger.LogInfo($"[PlateupAP] Franchise count goal: {franchiseCount}");
+                }
+
+                if (slotData.TryGetValue("day_count", out object rawDayCount))
+                {
+                    dayCount = Convert.ToInt32(rawDayCount);
+                    Logger.LogInfo($"[PlateupAP] Day count goal: {dayCount}");
+                }
+
+                if (slotData.TryGetValue("death_link", out object rawDeathLink))
+                {
+                    bool deathLinkEnabled = Convert.ToBoolean(rawDeathLink);
+                    Logger.LogInfo($"[PlateupAP] DeathLink enabled: {deathLinkEnabled}");
+
+                    if (deathLinkEnabled)
+                    {
+                        EnableDeathLink();
+                    }
+                }
+
+                if (slotData.TryGetValue("death_link_behavior", out object rawBehavior))
+                {
+                    deathLinkBehavior = Convert.ToInt32(rawBehavior);
+                    Logger.LogInfo($"[PlateupAP] DeathLink Behavior Set To: {deathLinkBehavior}");
+                }
+
+                if (slotData.TryGetValue("items_kept", out object rawItemsKept))
+                {
+                    itemsKeptPerRun = Convert.ToInt32(rawItemsKept);
+                    Logger.LogInfo($"[PlateupAP] Items Kept Per Run: {itemsKeptPerRun}");
+                }
+
+                if (slotData.TryGetValue("appliance_speed_mode", out object rawApplianceSpeedMode))
+                {
+                    applianceSpeedMode = Convert.ToInt32(rawApplianceSpeedMode);
+                    Logger.LogInfo($"[PlateupAP] Appliance Speed Mode set to {applianceSpeedMode} (0=grouped, 1=separate)");
+                }
+
+                if (slotData.TryGetValue("day_lease_interval", out object rawLeaseInterval))
+                {
+                    dayLeaseInterval = Mathf.Clamp(Convert.ToInt32(rawLeaseInterval), 1, 30);
+                    Logger.LogInfo($"[PlateupAP] Day Lease Interval set to: {dayLeaseInterval}");
+                    KitchenPlateupAP.LeaseRequirementSystem.TriggerRefresh();
+                }
+
+                // NEW: speed upgrade counts
+                if (slotData.TryGetValue("player_speed_upgrade_count", out object rawPlayerSpeedCount))
+                {
+                    int value = Mathf.Clamp(Convert.ToInt32(rawPlayerSpeedCount), 0, 10);
+                    playerSpeedUpgradeCount = value;
+                    Logger.LogInfo($"[PlateupAP] Player Speed Upgrade Count: {playerSpeedUpgradeCount}");
+                    ApplyPlayerSpeedConfig();
+                }
+                else
+                {
+                    // ensure tiers built with default if not sent yet
+                    ApplyPlayerSpeedConfig();
+                }
+
+                if (slotData.TryGetValue("appliance_speed_upgrade_count", out object rawApplianceSpeedCount))
+                {
+                    applianceSpeedUpgradeCount = Mathf.Clamp(Convert.ToInt32(rawApplianceSpeedCount), 0, 10);
+                    Logger.LogInfo($"[PlateupAP] Appliance Speed Upgrade Count: {applianceSpeedUpgradeCount}");
+                }
+            }
+
+            if (selectedDishes.Count > 0)
+            {
+                string dishName = selectedDishes[0];
+                int dishGdoId = ProgressionMapping.dishDictionary
+                    .FirstOrDefault(kv => kv.Value == dishName).Key;
+
+                if (dishGdoId != 0 && KitchenData.GameData.Main.TryGet<Dish>(dishGdoId, out var dish))
+                {
+                    LockedDishes.SetUnlockedDishes(new[] { dishGdoId });
+                    PersistUnlockedDish(dishGdoId);
+                    PersistLastSelectedDishes(selectedDishes);
+                    Logger.LogInfo($"[PlateupAP] Unlocked dish set to '{dishName}' (GDO ID: {dishGdoId})");
+                }
+                else
+                {
+                    Logger.LogWarning($"[PlateupAP] Dish name '{dishName}' not found in dishDictionary or not a valid GDO!");
+                }
+            }
+            else
+            {
+                Logger.LogWarning("[PlateupAP] selectedDishes is empty, no dish to unlock.");
+            }
+        }
+
+        private void SendSelectedDishesMessage()
+        {
+            if (session == null || selectedDishes == null || selectedDishes.Count == 0)
+            {
+                Logger.LogWarning("Session is null or selected dishes list is empty. Not sending.");
+                return;
+            }
+
+            string message = $"Selected Dishes: {string.Join(", ", selectedDishes)}";
+            Logger.LogInfo($"Sending message: {message}");
+            ChatManager.AddSystemMessage("Selected Dishes: " + string.Join(", ", selectedDishes));
+        }
+
+        static PreferenceSystemManager PrefManager;
+
+        protected override void OnPostActivate(KitchenMods.Mod mod)
+        {
+            try
+            {
+                if (World == null)
+                    Logger.LogError("World is null in OnPostActivate!");
+
+                if (PrefManager == null)
+                    PrefManager = new PreferenceSystemManager(MOD_GUID, MOD_NAME);
+
+                if (ArchipelagoConnectionManager.ConnectionSuccessful)
+                {
+                    RetrieveSlotData();
+                    ProcessAllReceivedItems();
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"[PlateupAP] Error in OnPostActivate: {ex.Message}\n{ex.StackTrace}");
+            }
+
+            PrefManager = new PreferenceSystemManager(MOD_GUID, MOD_NAME);
+            PrefManager
+                .AddLabel("Archipelago Configuration")
+                .AddInfo("Create or load configuration for the Archipelago connection")
+                .AddInfo(@"Config is found in \AppData\LocalLow\It's Happening\PlateUp")
+                .AddButton("Create Config", (int _) =>
+                {
+                    // Explicitly target LocalLow path: %appdata%\..\LocalLow\It's Happening\PlateUp\PlateUpAPConfig
+                    string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData); // %APPDATA%
+                    string folder = Path.GetFullPath(Path.Combine(appData, "..", "LocalLow", "It's Happening", "PlateUp", "PlateUpAPConfig"));
+
+                    if (!Directory.Exists(folder))
+                        Directory.CreateDirectory(folder);
+
+                    string path = Path.Combine(folder, "archipelago_config.json");
+                    PlateupAPConfig defaultConfig = new PlateupAPConfig
+                    {
+                        address = "archipelago.gg",
+                        port = 0,
+                        playername = "",
+                        password = ""
+                    };
+                    string json = JsonConvert.SerializeObject(defaultConfig, Formatting.Indented);
+                    File.WriteAllText(path, json);
+                    Logger.LogInfo("Created config file at: " + path);
+
+                    try
+                    {
+                        if (Application.platform == RuntimePlatform.WindowsPlayer || Application.platform == RuntimePlatform.WindowsEditor)
+                        {
+                            var psi = new ProcessStartInfo
+                            {
+                                FileName = "explorer.exe",
+                                Arguments = $"/select,\"{path}\"",
+                                UseShellExecute = true
+                            };
+                            System.Diagnostics.Process.Start(psi);
+                        }
+                        else if (Application.platform == RuntimePlatform.OSXPlayer || Application.platform == RuntimePlatform.OSXEditor)
+                        {
+                            var psi = new ProcessStartInfo
+                            {
+                                FileName = "open",
+                                Arguments = $"-R \"{path}\"",
+                                UseShellExecute = true
+                            };
+                            System.Diagnostics.Process.Start(psi);
+                        }
+                        else
+                        {
+                            // Generic fallback: open the containing folder
+                            var psi = new ProcessStartInfo
+                            {
+                                FileName = folder,
+                                UseShellExecute = true
+                            };
+                            System.Diagnostics.Process.Start(psi);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogWarning($"Could not open file explorer for path '{path}': {ex.Message}");
+                    }
+                })
+                .AddButton("Connect", (int _) =>
+                {
+                    // Prefer cached config warmed in main menu; fallback to file
+                    PlateupAPConfig config = CachedConfig;
+                    if (config == null)
+                    {
+                        string folder = Path.Combine(Application.persistentDataPath, "PlateUpAPConfig");
+                        string path = Path.Combine(folder, "archipelago_config.json");
+                        if (!File.Exists(path))
+                        {
+                            Logger.LogError("Config file not found at: " + path);
+                            return;
+                        }
+
+                        string json = File.ReadAllText(path);
+                        try
+                        {
+                            var jo = Newtonsoft.Json.Linq.JObject.Parse(json);
+                            config = new PlateupAPConfig
+                            {
+                                address = (string)jo["address"],
+                                port = (int?)jo["port"] ?? 0,
+                                playername = (string)jo["playername"],
+                                password = (string)jo["password"]
+                            };
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.LogError("[PlateupAP][Config] Manual parse failed: " + ex);
+                            Logger.LogError("JSON: " + json);
+                            return;
+                        }
+                    }
+
+                    if (string.IsNullOrWhiteSpace(config.address))
+                    {
+                        Logger.LogError("[PlateupAP][Config] Invalid address.");
+                        return;
+                    }
+
+                        Logger.LogInfo($"[PlateupAP][Config] Using server={config.address}:{config.port} player={config.playername}");
+                    UpdateArchipelagoConfig(config);
+                })
+                // NEW: Debug utilities
+                .AddLabel("Debug Utilities")
+                .AddInfo("Quick fixes during a run")
+                .AddButton("Set Player Speed to 1x", (int _) => { ForcePlayerSpeedToOne(); })
+                .AddButton("Increment Franchise Count", (int _) => { IncrementFranchiseAndCheckGoal(); })
+                .AddButton("Spawn Queued Items Now", (int _) => { ForceSpawnAllQueuedItems(); });
+
+            PrefManager.RegisterMenu(PreferenceSystemManager.MenuType.MainMenu);
+            PrefManager.RegisterMenu(PreferenceSystemManager.MenuType.PauseMenu);
+
+            if (GameObject.FindObjectOfType<ChatManager>() == null)
+            {
+                var obj = new GameObject("ChatManager");
+                obj.AddComponent<ChatManager>();
+                UnityEngine.Object.DontDestroyOnLoad(obj);
+            }
+
+            ChatManager.AddSystemMessage("PlateUp Archipelago loaded.");
+        }
+
+        protected override void OnInitialise()
+        {
+            Logger = InitLogger();
+            Logger.LogWarning($"{MOD_GUID} v{MOD_VERSION} in use!");
+            var harmony = new Harmony("com.caz.plateupap.patch");
+            harmony.PatchAll(Assembly.GetExecutingAssembly());
+            JsonConvert.DefaultSettings = null;
+            Mod.Logger.LogInfo("DishCardReadingSystem initialised.");
+            playersWithItems = GetEntityQuery(new QueryHelper().All(typeof(CPlayer), typeof(CItemHolder)));
+            playerSpeedQuery = GetEntityQuery(new QueryHelper().All(typeof(CPlayer)));
+            applianceSpeedQuery = GetEntityQuery(new QueryHelper().All(typeof(CApplianceSpeedModifier)));
+
+            // Ensure player tiers are initialized on boot (before slot data), using defaults
+            ApplyPlayerSpeedConfig();
+
+            // Experimental: randomize appliance upgrade targets once per boot
+            TryRandomizeUpgradesOnce();
+        }
+
+        private void TryRandomizeUpgradesOnce()
+        {
+            if (upgradesRandomized) return;
+            var data = KitchenData.GameData.Main;
+            if (data == null)
+            {
+                Logger.LogWarning("[Randomizer] GameData.Main not ready; skipping upgrade randomization.");
+                return;
+            }
+
+            int seed = ComputeDeterministicSeed();
+            try
+            {
+                RandomUpgradeMapper.Apply(data, seed);
+                upgradesRandomized = true;
+                Logger.LogInfo($"[Randomizer] Applied experimental upgrade randomization with seed={seed}.");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning("[Randomizer] Failed to apply upgrade randomization: " + ex.Message);
+            }
+        }
+
+        private int ComputeDeterministicSeed()
+        {
+            // Prefer identity-based deterministic seed
+            try
+            {
+                string a = CachedConfig?.address ?? string.Empty;
+                string p = (CachedConfig?.port ?? 0).ToString();
+                string u = CachedConfig?.playername ?? string.Empty;
+                string key = $"{a}|{p}|{u}";
+                int h = key.GetHashCode();
+                if (h == 0) h = Environment.TickCount;
+                return h;
+            }
+            catch
+            {
+                return Environment.TickCount;
+            }
+        }
+        
+        private static RunIdentity BuildIdentity()
+        {
+            if (CachedConfig == null)
+                return null;
+            return new RunIdentity
+            {
+                Address = CachedConfig.address ?? "",
+                Port = CachedConfig.port,
+                Player = CachedConfig.playername ?? ""
+            };
+        }
+
+        public void UpdateArchipelagoConfig(PlateupAPConfig config)
+        {
+            CachedConfig = config;
+            currentIdentity = BuildIdentity();
+            if (currentIdentity != null)
+            {
+                bool reset = PersistenceManager.ShouldResetForIdentity(currentIdentity);
+                if (reset)
+                {
+                    Logger.LogInfo("[Persistence] Identity changed (port/address/player). Resetting stored speed upgrades and pending items.");
+                    PersistenceManager.ResetForNewRun(currentIdentity);
+                }
+                PersistenceManager.SaveIdentity(currentIdentity);
+            }
+            ArchipelagoConnectionManager.TryConnect(config.address, config.port, config.playername, config.password);
+        }
+
+
+        // New: read and cache config early
+        private void TryWarmupConfig()
+        {
+            try
+            {
+                string folder = Path.Combine(Application.persistentDataPath, "PlateUpAPConfig");
+                string path = Path.Combine(folder, "archipelago_config.json");
+                if (!File.Exists(path))
+                {
+                    Logger.LogWarning($"[PlateupAP][ConfigWarmup] No config at: {path}");
+                    return;
+                }
+
+                var json = File.ReadAllText(path);
+                // Use isolated manual parse to avoid converter interference
+                var jo = JObject.Parse(json);
+                var cfg = new PlateupAPConfig
+                {
+                    address = (string)jo["address"],
+                    port = (int?)jo["port"] ?? 0,
+                    playername = (string)jo["playername"],
+                    password = (string)jo["password"]
+                };
+
+                if (string.IsNullOrWhiteSpace(cfg.address))
+                {
+                    Logger.LogWarning("[PlateupAP][ConfigWarmup] Address is empty in config; will not cache.");
+                    return;
+                }
+
+                CachedConfig = cfg;
+                Logger.LogInfo($"[PlateupAP][ConfigWarmup] Cached config for {CachedConfig.address}:{CachedConfig.port} user={CachedConfig.playername}");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("[PlateupAP][ConfigWarmup] Failed: " + ex.Message);
+            }
+        }
+        private void RetrieveSlotData()
+        {
+            if (session == null)
+                return; // Not connected
+
+            var slotData = ArchipelagoConnectionManager.SlotData;
+
+            if (slotData != null)
+            {
+                Logger.LogInfo($"[PlateupAP] Full Slot Data: {JsonConvert.SerializeObject(slotData, Formatting.Indented)}");
+
+                if (slotData.TryGetValue("selected_dishes", out object rawDishes))
+                {
+                    Logger.LogInfo($"[PlateupAP] Found selected_dishes in slot data: {rawDishes}");
+
+                    try
+                    {
+                        selectedDishes = JsonConvert.DeserializeObject<List<string>>(rawDishes.ToString());
+
+                        if (selectedDishes.Count > 0)
+                        {
+                            string dishName = selectedDishes[0];
+                            if (ProgressionMapping.dish_id_lookup.TryGetValue(dishName, out int dishId))
+                            {
+                                LockedDishes.SetUnlockedDishes(new[] { dishId });
+                                PersistUnlockedDish(dishId);
+                                PersistLastSelectedDishes(selectedDishes);
+                                Logger.LogInfo($"[PlateupAP] Unlocked dish set to '{dishName}' (ID: {dishId})");
+                            }
+                            else
+                            {
+                                Logger.LogWarning($"[PlateupAP] Dish name '{dishName}' not found in dish_id_lookup!");
+                            }
+                        }
+
+                    }
+                    catch (JsonReaderException ex)
+                    {
+                        Logger.LogError($"[PlateupAP] Error parsing selected_dishes JSON: {ex.Message}");
+                    }
+                }
+
+                if (slotData.TryGetValue("goal", out object rawGoal))
+                {
+                    goal = Convert.ToInt32(rawGoal);
+                    Logger.LogInfo($"[PlateupAP] Goal set to: {goal} (0=franchise_x_times, 1=complete_x_days)");
+                }
+
+                if (slotData.TryGetValue("franchise_count", out object rawFranchiseCount))
+                {
+                    franchiseCount = Convert.ToInt32(rawFranchiseCount);
+                    Logger.LogInfo($"[PlateupAP] Franchise count goal: {franchiseCount}");
+                }
+
+                if (slotData.TryGetValue("day_count", out object rawDayCount))
+                {
+                    dayCount = Convert.ToInt32(rawDayCount);
+                    Logger.LogInfo($"[PlateupAP] Day count goal: {dayCount}");
+                }
+
+                if (slotData.TryGetValue("death_link", out object rawDeathLink))
+                {
+                    bool deathLinkEnabled = Convert.ToBoolean(rawDeathLink);
+                    Logger.LogInfo($"[PlateupAP] DeathLink enabled: {deathLinkEnabled}");
+
+                    if (deathLinkEnabled)
+                    {
+                        EnableDeathLink();
+                    }
+                }
+
+                if (slotData.TryGetValue("death_link_behavior", out object rawBehavior))
+                {
+                    deathLinkBehavior = Convert.ToInt32(rawBehavior);
+                    Logger.LogInfo($"[PlateupAP] DeathLink Behavior Set To: {deathLinkBehavior}");
+                }
+
+                if (slotData.TryGetValue("items_kept", out object rawItemsKept))
+                {
+                    itemsKeptPerRun = Convert.ToInt32(rawItemsKept);
+                    Logger.LogInfo($"[PlateupAP] Items Kept Per Run: {itemsKeptPerRun}");
+                }
+
+                if (slotData.TryGetValue("appliance_speed_mode", out object rawApplianceSpeedMode))
+                {
+                    applianceSpeedMode = Convert.ToInt32(rawApplianceSpeedMode);
+                    Logger.LogInfo($"[PlateupAP] Appliance Speed Mode set to {applianceSpeedMode} (0=grouped, 1=separate)");
+                }
+
+                if (slotData.TryGetValue("day_lease_interval", out object rawLeaseInterval))
+                {
+                    dayLeaseInterval = Mathf.Clamp(Convert.ToInt32(rawLeaseInterval), 1, 30);
+                    Logger.LogInfo($"[PlateupAP] Day Lease Interval set to: {dayLeaseInterval}");
+                    KitchenPlateupAP.LeaseRequirementSystem.TriggerRefresh();
+                }
+
+                // NEW: speed upgrade counts
+                if (slotData.TryGetValue("player_speed_upgrade_count", out object rawPlayerSpeedCount))
+                {
+                    int value = Mathf.Clamp(Convert.ToInt32(rawPlayerSpeedCount), 0, 10);
+                    playerSpeedUpgradeCount = value;
+                    Logger.LogInfo($"[PlateupAP] Player Speed Upgrade Count: {playerSpeedUpgradeCount}");
+                    ApplyPlayerSpeedConfig();
+                }
+                else
+                {
+                    // ensure tiers built with default if not sent yet
+                    ApplyPlayerSpeedConfig();
+                }
+
+                if (slotData.TryGetValue("appliance_speed_upgrade_count", out object rawApplianceSpeedCount))
+                {
+                    applianceSpeedUpgradeCount = Mathf.Clamp(Convert.ToInt32(rawApplianceSpeedCount), 0, 10);
+                    Logger.LogInfo($"[PlateupAP] Appliance Speed Upgrade Count: {applianceSpeedUpgradeCount}");
+                }
+            }
+
+            if (selectedDishes.Count > 0)
+            {
+                string dishName = selectedDishes[0];
+                int dishGdoId = ProgressionMapping.dishDictionary
+                    .FirstOrDefault(kv => kv.Value == dishName).Key;
+
+                if (dishGdoId != 0 && KitchenData.GameData.Main.TryGet<Dish>(dishGdoId, out var dish))
+                {
+                    LockedDishes.SetUnlockedDishes(new[] { dishGdoId });
+                    PersistUnlockedDish(dishGdoId);
+                    PersistLastSelectedDishes(selectedDishes);
+                    Logger.LogInfo($"[PlateupAP] Unlocked dish set to '{dishName}' (GDO ID: {dishGdoId})");
+                }
+                else
+                {
+                    Logger.LogWarning($"[PlateupAP] Dish name '{dishName}' not found in dishDictionary or not a valid GDO!");
+                }
+            }
+            else
+            {
+                Logger.LogWarning("[PlateupAP] selectedDishes is empty, no dish to unlock.");
+            }
+        }
+
+        private void SendSelectedDishesMessage()
+        {
+            if (session == null || selectedDishes == null || selectedDishes.Count == 0)
+            {
+                Logger.LogWarning("Session is null or selected dishes list is empty. Not sending.");
+                return;
+            }
+
+            string message = $"Selected Dishes: {string.Join(", ", selectedDishes)}";
+            Logger.LogInfo($"Sending message: {message}");
+            ChatManager.AddSystemMessage("Selected Dishes: " + string.Join(", ", selectedDishes));
+        }
+
+        static PreferenceSystemManager PrefManager;
+
+        protected override void OnPostActivate(KitchenMods.Mod mod)
+        {
+            try
+            {
+                if (World == null)
+                    Logger.LogError("World is null in OnPostActivate!");
+
+                if (PrefManager == null)
+                    PrefManager = new PreferenceSystemManager(MOD_GUID, MOD_NAME);
+
+                if (ArchipelagoConnectionManager.ConnectionSuccessful)
+                {
+                    RetrieveSlotData();
+                    ProcessAllReceivedItems();
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"[PlateupAP] Error in OnPostActivate: {ex.Message}\n{ex.StackTrace}");
+            }
+
+            PrefManager = new PreferenceSystemManager(MOD_GUID, MOD_NAME);
+            PrefManager
+                .AddLabel("Archipelago Configuration")
+                .AddInfo("Create or load configuration for the Archipelago connection")
+                .AddInfo(@"Config is found in \AppData\LocalLow\It's Happening\PlateUp")
+                .AddButton("Create Config", (int _) =>
+                {
+                    // Explicitly target LocalLow path: %appdata%\..\LocalLow\It's Happening\PlateUp\PlateUpAPConfig
+                    string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData); // %APPDATA%
+                    string folder = Path.GetFullPath(Path.Combine(appData, "..", "LocalLow", "It's Happening", "PlateUp", "PlateUpAPConfig"));
+
+                    if (!Directory.Exists(folder))
+                        Directory.CreateDirectory(folder);
+
+                    string path = Path.Combine(folder, "archipelago_config.json");
+                    PlateupAPConfig defaultConfig = new PlateupAPConfig
+                    {
+                        address = "archipelago.gg",
+                        port = 0,
+                        playername = "",
+                        password = ""
+                    };
+                    string json = JsonConvert.SerializeObject(defaultConfig, Formatting.Indented);
+                    File.WriteAllText(path, json);
+                    Logger.LogInfo("Created config file at: " + path);
+
+                    try
+                    {
+                        if (Application.platform == RuntimePlatform.WindowsPlayer || Application.platform == RuntimePlatform.WindowsEditor)
+                        {
+                            var psi = new ProcessStartInfo
+                            {
+                                FileName = "explorer.exe",
+                                Arguments = $"/select,\"{path}\"",
+                                UseShellExecute = true
+                            };
+                            System.Diagnostics.Process.Start(psi);
+                        }
+                        else if (Application.platform == RuntimePlatform.OSXPlayer || Application.platform == RuntimePlatform.OSXEditor)
+                        {
+                            var psi = new ProcessStartInfo
+                            {
+                                FileName = "open",
+                                Arguments = $"-R \"{path}\"",
+                                UseShellExecute = true
+                            };
+                            System.Diagnostics.Process.Start(psi);
+                        }
+                        else
+                        {
+                            // Generic fallback: open the containing folder
+                            var psi = new ProcessStartInfo
+                            {
+                                FileName = folder,
+                                UseShellExecute = true
+                            };
+                            System.Diagnostics.Process.Start(psi);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogWarning($"Could not open file explorer for path '{path}': {ex.Message}");
+                    }
+                })
+                .AddButton("Connect", (int _) =>
+                {
+                    // Prefer cached config warmed in main menu; fallback to file
+                    PlateupAPConfig config = CachedConfig;
+                    if (config == null)
+                    {
+                        string folder = Path.Combine(Application.persistentDataPath, "PlateUpAPConfig");
+                        string path = Path.Combine(folder, "archipelago_config.json");
+                        if (!File.Exists(path))
+                        {
+                            Logger.LogError("Config file not found at: " + path);
+                            return;
+                        }
+
+                        string json = File.ReadAllText(path);
+                        try
+                        {
+                            var jo = Newtonsoft.Json.Linq.JObject.Parse(json);
+                            config = new PlateupAPConfig
+                            {
+                                address = (string)jo["address"],
+                                port = (int?)jo["port"] ?? 0,
+                                playername = (string)jo["playername"],
+                                password = (string)jo["password"]
+                            };
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.LogError("[PlateupAP][Config] Manual parse failed: " + ex);
+                            Logger.LogError("JSON: " + json);
+                            return;
+                        }
+                    }
+
+                    if (string.IsNullOrWhiteSpace(config.address))
+                    {
+                        Logger.LogError("[PlateupAP][Config] Invalid address.");
+                        return;
+                    }
+
+                        Logger.LogInfo($"[PlateupAP][Config] Using server={config.address}:{config.port} player={config.playername}");
+                    UpdateArchipelagoConfig(config);
+                })
+                // NEW: Debug utilities
+                .AddLabel("Debug Utilities")
+                .AddInfo("Quick fixes during a run")
+                .AddButton("Set Player Speed to 1x", (int _) => { ForcePlayerSpeedToOne(); })
+                .AddButton("Increment Franchise Count", (int _) => { IncrementFranchiseAndCheckGoal(); })
+                .AddButton("Spawn Queued Items Now", (int _) => { ForceSpawnAllQueuedItems(); });
+
+            PrefManager.RegisterMenu(PreferenceSystemManager.MenuType.MainMenu);
+            PrefManager.RegisterMenu(PreferenceSystemManager.MenuType.PauseMenu);
+
+            if (GameObject.FindObjectOfType<ChatManager>() == null)
+            {
+                var obj = new GameObject("ChatManager");
+                obj.AddComponent<ChatManager>();
+                UnityEngine.Object.DontDestroyOnLoad(obj);
+            }
+
+            ChatManager.AddSystemMessage("PlateUp Archipelago loaded.");
+        }
+
+        protected override void OnInitialise()
+        {
+            Logger = InitLogger();
+            Logger.LogWarning($"{MOD_GUID} v{MOD_VERSION} in use!");
+            var harmony = new Harmony("com.caz.plateupap.patch");
+            harmony.PatchAll(Assembly.GetExecutingAssembly());
+            JsonConvert.DefaultSettings = null;
+            Mod.Logger.LogInfo("DishCardReadingSystem initialised.");
+            playersWithItems = GetEntityQuery(new QueryHelper().All(typeof(CPlayer), typeof(CItemHolder)));
+            playerSpeedQuery = GetEntityQuery(new QueryHelper().All(typeof(CPlayer)));
+            applianceSpeedQuery = GetEntityQuery(new QueryHelper().All(typeof(CApplianceSpeedModifier)));
+
+            // Ensure player tiers are initialized on boot (before slot data), using defaults
+            ApplyPlayerSpeedConfig();
+
+            // Experimental: randomize appliance upgrade targets once per boot
+            TryRandomizeUpgradesOnce();
+        }
+
+        private void TryRandomizeUpgradesOnce()
+        {
+            if (upgradesRandomized) return;
+            var data = KitchenData.GameData.Main;
+            if (data == null)
+            {
+                Logger.LogWarning("[Randomizer] GameData.Main not ready; skipping upgrade randomization.");
+                return;
+            }
+
+            int seed = ComputeDeterministicSeed();
+            try
+            {
+                RandomUpgradeMapper.Apply(data, seed);
+                upgradesRandomized = true;
+                Logger.LogInfo($"[Randomizer] Applied experimental upgrade randomization with seed={seed}.");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning("[Randomizer] Failed to apply upgrade randomization: " + ex.Message);
+            }
+        }
+
+        private int ComputeDeterministicSeed()
+        {
+            // Prefer identity-based deterministic seed
+            try
+            {
+                string a = CachedConfig?.address ?? string.Empty;
+                string p = (CachedConfig?.port ?? 0).ToString();
+                string u = CachedConfig?.playername ?? string.Empty;
+                string key = $"{a}|{p}|{u}";
+                int h = key.GetHashCode();
+                if (h == 0) h = Environment.TickCount;
+                return h;
+            }
+            catch
+            {
+                return Environment.TickCount;
+            }
+        }
+        
+        private static RunIdentity BuildIdentity()
+        {
+            if (CachedConfig == null)
+                return null;
+            return new RunIdentity
+            {
+                Address = CachedConfig.address ?? "",
+                Port = CachedConfig.port,
+                Player = CachedConfig.playername ?? ""
+            };
+        }
+
+        public void UpdateArchipelagoConfig(PlateupAPConfig config)
+        {
+            CachedConfig = config;
+            currentIdentity = BuildIdentity();
+            if (currentIdentity != null)
+            {
+                bool reset = PersistenceManager.ShouldResetForIdentity(currentIdentity);
+                if (reset)
+                {
+                    Logger.LogInfo("[Persistence] Identity changed (port/address/player). Resetting stored speed upgrades and pending items.");
+                    PersistenceManager.ResetForNewRun(currentIdentity);
+                }
+                PersistenceManager.SaveIdentity(currentIdentity);
+            }
+            ArchipelagoConnectionManager.TryConnect(config.address, config.port, config.playername, config.password);
+        }
+
+
+        // New: read and cache config early
+        private void TryWarmupConfig()
+        {
+            try
+            {
+                string folder = Path.Combine(Application.persistentDataPath, "PlateUpAPConfig");
+                string path = Path.Combine(folder, "archipelago_config.json");
+                if (!File.Exists(path))
+                {
+                    Logger.LogWarning($"[PlateupAP][ConfigWarmup] No config at: {path}");
+                    return;
+                }
+
+                var json = File.ReadAllText(path);
+                // Use isolated manual parse to avoid converter interference
+                var jo = JObject.Parse(json);
+                var cfg = new PlateupAPConfig
+                {
+                    address = (string)jo["address"],
+                    port = (int?)jo["port"] ?? 0,
+                    playername = (string)jo["playername"],
+                    password = (string)jo["password"]
+                };
+
+                if (string.IsNullOrWhiteSpace(cfg.address))
+                {
+                    Logger.LogWarning("[PlateupAP][ConfigWarmup] Address is empty in config; will not cache.");
+                    return;
+                }
+
+                CachedConfig = cfg;
+                Logger.LogInfo($"[PlateupAP][ConfigWarmup] Cached config for {CachedConfig.address}:{CachedConfig.port} user={CachedConfig.playername}");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("[PlateupAP][ConfigWarmup] Failed: " + ex.Message);
+            }
+        }
+        private void RetrieveSlotData()
+        {
+            if (session == null)
+                return; // Not connected
+
+            var slotData = ArchipelagoConnectionManager.SlotData;
+
+            if (slotData != null)
+            {
+                Logger.LogInfo($"[PlateupAP] Full Slot Data: {JsonConvert.SerializeObject(slotData, Formatting.Indented)}");
+
+                if (slotData.TryGetValue("selected_dishes", out object rawDishes))
+                {
+                    Logger.LogInfo($"[PlateupAP] Found selected_dishes in slot data: {rawDishes}");
+
+                    try
+                    {
+                        selectedDishes = JsonConvert.DeserializeObject<List<string>>(rawDishes.ToString());
+
+                        if (selectedDishes.Count > 0)
+                        {
+                            string dishName = selectedDishes[0];
+                            if (ProgressionMapping.dish_id_lookup.TryGetValue(dishName, out int dishId))
+                            {
+                                LockedDishes.SetUnlockedDishes(new[] { dishId });
+                                PersistUnlockedDish(dishId);
+                                PersistLastSelectedDishes(selectedDishes);
+                                Logger.LogInfo($"[PlateupAP] Unlocked dish set to '{dishName}' (ID: {dishId})");
+                            }
+                            else
+                            {
+                                Logger.LogWarning($"[PlateupAP] Dish name '{dishName}' not found in dish_id_lookup!");
+                            }
+                        }
+
+                    }
+                    catch (JsonReaderException ex)
+                    {
+                        Logger.LogError($"[PlateupAP] Error parsing selected_dishes JSON: {ex.Message}");
+                    }
+                }
+
+                if (slotData.TryGetValue("goal", out object rawGoal))
+                {
+                    goal = Convert.ToInt32(rawGoal);
+                    Logger.LogInfo($"[PlateupAP] Goal set to: {goal} (0=franchise_x_times, 1=complete_x_days)");
+                }
+
+                if (slotData.TryGetValue("franchise_count", out object rawFranchiseCount))
+                {
+                    franchiseCount = Convert.ToInt32(rawFranchiseCount);
+                    Logger.LogInfo($"[PlateupAP] Franchise count goal: {franchiseCount}");
+                }
+
+                if (slotData.TryGetValue("day_count", out object rawDayCount))
+                {
+                    dayCount = Convert.ToInt32(rawDayCount);
+                    Logger.LogInfo($"[PlateupAP] Day count goal: {dayCount}");
+                }
+
+                if (slotData.TryGetValue("death_link", out object rawDeathLink))
+                {
+                    bool deathLinkEnabled = Convert.ToBoolean(rawDeathLink);
+                    Logger.LogInfo($"[PlateupAP] DeathLink enabled: {deathLinkEnabled}");
+
+                    if (deathLinkEnabled)
+                    {
+                        EnableDeathLink();
+                    }
+                }
+
+                if (slotData.TryGetValue("death_link_behavior", out object rawBehavior))
+                {
+                    deathLinkBehavior = Convert.ToInt32(rawBehavior);
+                    Logger.LogInfo($"[PlateupAP] DeathLink Behavior Set To: {deathLinkBehavior}");
+                }
+
+                if (slotData.TryGetValue("items_kept", out object rawItemsKept))
+                {
+                    itemsKeptPerRun = Convert.ToInt32(rawItemsKept);
+                    Logger.LogInfo($"[PlateupAP] Items Kept Per Run: {itemsKeptPerRun}");
+                }
+
+                if (slotData.TryGetValue("appliance_speed_mode", out object rawApplianceSpeedMode))
+                {
+                    applianceSpeedMode = Convert.ToInt32(rawApplianceSpeedMode);
+                    Logger.LogInfo($"[PlateupAP] Appliance Speed Mode set to {applianceSpeedMode} (0=grouped, 1=separate)");
+                }
+
+                if (slotData.TryGetValue("day_lease_interval", out object rawLeaseInterval))
+                {
+                    dayLeaseInterval = Mathf.Clamp(Convert.ToInt32(rawLeaseInterval), 1, 30);
+                    Logger.LogInfo($"[PlateupAP] Day Lease Interval set to: {dayLeaseInterval}");
+                    KitchenPlateupAP.LeaseRequirementSystem.TriggerRefresh();
+                }
+
+                // NEW: speed upgrade counts
+                if (slotData.TryGetValue("player_speed_upgrade_count", out object rawPlayerSpeedCount))
+                {
+                    int value = Mathf.Clamp(Convert.ToInt32(rawPlayerSpeedCount), 0, 10);
+                    playerSpeedUpgradeCount = value;
+                    Logger.LogInfo($"[PlateupAP] Player Speed Upgrade Count: {playerSpeedUpgradeCount}");
+                    ApplyPlayerSpeedConfig();
+                }
+                else
+                {
+                    // ensure tiers built with default if not sent yet
+                    ApplyPlayerSpeedConfig();
+                }
+
+                if (slotData.TryGetValue("appliance_speed_upgrade_count", out object rawApplianceSpeedCount))
+                {
+                    applianceSpeedUpgradeCount = Mathf.Clamp(Convert.ToInt32(rawApplianceSpeedCount), 0, 10);
+                    Logger.LogInfo($"[PlateupAP] Appliance Speed Upgrade Count: {applianceSpeedUpgradeCount}");
+                }
+            }
+
+            if (selectedDishes.Count > 0)
+            {
+                string dishName = selectedDishes[0];
+                int dishGdoId = ProgressionMapping.dishDictionary
+                    .FirstOrDefault(kv => kv.Value == dishName).Key;
+
+                if (dishGdoId != 0 && KitchenData.GameData.Main.TryGet<Dish>(dishGdoId, out var dish))
+                {
+                    LockedDishes.SetUnlockedDishes(new[] { dishGdoId });
+                    PersistUnlockedDish(dishGdoId);
+                    PersistLastSelectedDishes(selectedDishes);
+                    Logger.LogInfo($"[PlateupAP] Unlocked dish set to '{dishName}' (GDO ID: {dishGdoId})");
+                }
+                else
+                {
+                    Logger.LogWarning($"[PlateupAP] Dish name '{dishName}' not found in dishDictionary or not a valid GDO!");
+                }
+            }
+            else
+            {
+                Logger.LogWarning("[PlateupAP] selectedDishes is empty, no dish to unlock.");
+            }
+        }
+
+        private void SendSelectedDishesMessage()
+        {
+            if (session == null || selectedDishes == null || selectedDishes.Count == 0)
+            {
+                Logger.LogWarning("Session is null or selected dishes list is empty. Not sending.");
+                return;
+            }
+
+            string message = $"Selected Dishes: {string.Join(", ", selectedDishes)}";
+            Logger.LogInfo($"Sending message: {message}");
+            ChatManager.AddSystemMessage("Selected Dishes: " + string.Join(", ", selectedDishes));
+        }
+
+        static PreferenceSystemManager PrefManager;
+
+        protected override void OnPostActivate(KitchenMods.Mod mod)
+        {
+            try
+            {
+                if (World == null)
+                    Logger.LogError("World is null in OnPostActivate!");
+
+                if (PrefManager == null)
+                    PrefManager = new PreferenceSystemManager(MOD_GUID, MOD_NAME);
+
+                if (ArchipelagoConnectionManager.ConnectionSuccessful)
+                {
+                    RetrieveSlotData();
+                    ProcessAllReceivedItems();
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"[PlateupAP] Error in OnPostActivate: {ex.Message}\n{ex.StackTrace}");
+            }
+
+            PrefManager = new PreferenceSystemManager(MOD_GUID, MOD_NAME);
+            PrefManager
+                .AddLabel("Archipelago Configuration")
+                .AddInfo("Create or load configuration for the Archipelago connection")
+                .AddInfo(@"Config is found in \AppData\LocalLow\It's Happening\PlateUp")
+                .AddButton("Create Config", (int _) =>
+                {
+                    // Explicitly target LocalLow path: %appdata%\..\LocalLow\It's Happening\PlateUp\PlateUpAPConfig
+                    string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData); // %APPDATA%
+                    string folder = Path.GetFullPath(Path.Combine(appData, "..", "LocalLow", "It's Happening", "PlateUp", "PlateUpAPConfig"));
+
+                    if (!Directory.Exists(folder))
+                        Directory.CreateDirectory(folder);
+
+                    string path = Path.Combine(folder, "archipelago_config.json");
+                    PlateupAPConfig defaultConfig = new PlateupAPConfig
+                    {
+                        address = "archipelago.gg",
+                        port = 0,
+                        playername = "",
+                        password = ""
+                    };
+                    string json = JsonConvert.SerializeObject(defaultConfig, Formatting.Indented);
+                    File.WriteAllText(path, json);
+                    Logger.LogInfo("Created config file at: " + path);
+
+                    try
+                    {
+                        if (Application.platform == RuntimePlatform.WindowsPlayer || Application.platform == RuntimePlatform.WindowsEditor)
+                        {
+                            var psi = new ProcessStartInfo
+                            {
+                                FileName = "explorer.exe",
+                                Arguments = $"/select,\"{path}\"",
+                                UseShellExecute = true
+                            };
+                            System.Diagnostics.Process.Start(psi);
+                        }
+                        else if (Application.platform == RuntimePlatform.OSXPlayer || Application.platform == RuntimePlatform.OSXEditor)
+                        {
+                            var psi = new ProcessStartInfo
+                            {
+                                FileName = "open",
+                                Arguments = $"-R \"{path}\"",
+                                UseShellExecute = true
+                            };
+                            System.Diagnostics.Process.Start(psi);
+                        }
+                        else
+                        {
+                            // Generic fallback: open the containing folder
+                            var psi = new ProcessStartInfo
+                            {
+                                FileName = folder,
+                                UseShellExecute = true
+                            };
+                            System.Diagnostics.Process.Start(psi);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogWarning($"Could not open file explorer for path '{path}': {ex.Message}");
+                    }
+                })
+                .AddButton("Connect", (int _) =>
+                {
+                    // Prefer cached config warmed in main menu; fallback to file
+                    PlateupAPConfig config = CachedConfig;
+                    if (config == null)
+                    {
+                        string folder = Path.Combine(Application.persistentDataPath, "PlateUpAPConfig");
+                        string path = Path.Combine(folder, "archipelago_config.json");
+                        if (!File.Exists(path))
+                        {
+                            Logger.LogError("Config file not found at: " + path);
+                            return;
+                        }
+
+                        string json = File.ReadAllText(path);
+                        try
+                        {
+                            var jo = Newtonsoft.Json.Linq.JObject.Parse(json);
+                            config = new PlateupAPConfig
+                            {
+                                address = (string)jo["address"],
+                                port = (int?)jo["port"] ?? 0,
+                                playername = (string)jo["playername"],
+                                password = (string)jo["password"]
+                            };
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.LogError("[PlateupAP][Config] Manual parse failed: " + ex);
+                            Logger.LogError("JSON: " + json);
+                            return;
+                        }
+                    }
+
+                    if (string.IsNullOrWhiteSpace(config.address))
+                    {
+                        Logger.LogError("[PlateupAP][Config] Invalid address.");
+                        return;
+                    }
+
+                        Logger.LogInfo($"[PlateupAP][Config] Using server={config.address}:{config.port} player={config.playername}");
+                    UpdateArchipelagoConfig(config);
+                })
+                // NEW: Debug utilities
+                .AddLabel("Debug Utilities")
+                .AddInfo("Quick fixes during a run")
+                .AddButton("Set Player Speed to 1x", (int _) => { ForcePlayerSpeedToOne(); })
+                .AddButton("Increment Franchise Count", (int _) => { IncrementFranchiseAndCheckGoal(); })
+                .AddButton("Spawn Queued Items Now", (int _) => { ForceSpawnAllQueuedItems(); });
+
+            PrefManager.RegisterMenu(PreferenceSystemManager.MenuType.MainMenu);
+            PrefManager.RegisterMenu(PreferenceSystemManager.MenuType.PauseMenu);
+
+            if (GameObject.FindObjectOfType<ChatManager>() == null)
+            {
+                var obj = new GameObject("ChatManager");
+                obj.AddComponent<ChatManager>();
+                UnityEngine.Object.DontDestroyOnLoad(obj);
+            }
+
+            ChatManager.AddSystemMessage("PlateUp Archipelago loaded.");
+        }
+
+        protected override void OnInitialise()
+        {
+            Logger = InitLogger();
+            Logger.LogWarning($"{MOD_GUID} v{MOD_VERSION} in use!");
+            var harmony = new Harmony("com.caz.plateupap.patch");
+            harmony.PatchAll(Assembly.GetExecutingAssembly());
+            JsonConvert.DefaultSettings = null;
+            Mod.Logger.LogInfo("DishCardReadingSystem initialised.");
+            playersWithItems = GetEntityQuery(new QueryHelper().All(typeof(CPlayer), typeof(CItemHolder)));
+            playerSpeedQuery = GetEntityQuery(new QueryHelper().All(typeof(CPlayer)));
+            applianceSpeedQuery = GetEntityQuery(new QueryHelper().All(typeof(CApplianceSpeedModifier)));
+
+            // Ensure player tiers are initialized on boot (before slot data), using defaults
+            ApplyPlayerSpeedConfig();
+
+            // Experimental: randomize appliance upgrade targets once per boot
+            TryRandomizeUpgradesOnce();
+        }
+
+        private void TryRandomizeUpgradesOnce()
+        {
+            if (upgradesRandomized) return;
+            var data = KitchenData.GameData.Main;
+            if (data == null)
+            {
+                Logger.LogWarning("[Randomizer] GameData.Main not ready; skipping upgrade randomization.");
+                return;
+            }
+
+            int seed = ComputeDeterministicSeed();
+            try
+            {
+                RandomUpgradeMapper.Apply(data, seed);
+                upgradesRandomized = true;
+                Logger.LogInfo($"[Randomizer] Applied experimental upgrade randomization with seed={seed}.");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning("[Randomizer] Failed to apply upgrade randomization: " + ex.Message);
+            }
+        }
+
+        private int ComputeDeterministicSeed()
+        {
+            // Prefer identity-based deterministic seed
+            try
+            {
+                string a = CachedConfig?.address ?? string.Empty;
+                string p = (CachedConfig?.port ?? 0).ToString();
+                string u = CachedConfig?.playername ?? string.Empty;
+                string key = $"{a}|{p}|{u}";
+                int h = key.GetHashCode();
+                if (h == 0) h = Environment.TickCount;
+                return h;
+            }
+            catch
+            {
+                return Environment.TickCount;
+            }
+        }
+        
+        private static RunIdentity BuildIdentity()
+        {
+            if (CachedConfig == null)
+                return null;
+            return new RunIdentity
+            {
+                Address = CachedConfig.address ?? "",
+                Port = CachedConfig.port,
+                Player = CachedConfig.playername ?? ""
+            };
+        }
+
+        public void UpdateArchipelagoConfig(PlateupAPConfig config)
+        {
+            CachedConfig = config;
+            currentIdentity = BuildIdentity();
+            if (currentIdentity != null)
+            {
+                bool reset = PersistenceManager.ShouldResetForIdentity(currentIdentity);
+                if (reset)
+                {
+                    Logger.LogInfo("[Persistence] Identity changed (port/address/player). Resetting stored speed upgrades and pending items.");
+                    PersistenceManager.ResetForNewRun(currentIdentity);
+                }
+                PersistenceManager.SaveIdentity(currentIdentity);
+            }
+            ArchipelagoConnectionManager.TryConnect(config.address, config.port, config.playername, config.password);
+        }
+
+
+        // New: read and cache config early
+        private void TryWarmupConfig()
+        {
+            try
+            {
+                string folder = Path.Combine(Application.persistentDataPath, "PlateUpAPConfig");
+                string path = Path.Combine(folder, "archipelago_config.json");
+                if (!File.Exists(path))
+                {
+                    Logger.LogWarning($"[PlateupAP][ConfigWarmup] No config at: {path}");
+                    return;
+                }
+
+                var json = File.ReadAllText(path);
+                // Use isolated manual parse to avoid converter interference
+                var jo = JObject.Parse(json);
+                var cfg = new PlateupAPConfig
+                {
+                    address = (string)jo["address"],
+                    port = (int?)jo["port"] ?? 0,
+                    playername = (string)jo["playername"],
+                    password = (string)jo["password"]
+                };
+
+                if (string.IsNullOrWhiteSpace(cfg.address))
+                {
+                    Logger.LogWarning("[PlateupAP][ConfigWarmup] Address is empty in config; will not cache.");
+                    return;
+                }
+
+                CachedConfig = cfg;
+                Logger.LogInfo($"[PlateupAP][ConfigWarmup] Cached config for {CachedConfig.address}:{CachedConfig.port} user={CachedConfig.playername}");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("[PlateupAP][ConfigWarmup] Failed: " + ex.Message);
+            }
+        }
+        private void RetrieveSlotData()
+        {
+            if (session == null)
+                return; // Not connected
+
+            var slotData = ArchipelagoConnectionManager.SlotData;
+
+            if (slotData != null)
+            {
+                Logger.LogInfo($"[PlateupAP] Full Slot Data: {JsonConvert.SerializeObject(slotData, Formatting.Indented)}");
+
+                if (slotData.TryGetValue("selected_dishes", out object rawDishes))
+                {
+                    Logger.LogInfo($"[PlateupAP] Found selected_dishes in slot data: {rawDishes}");
+
+                    try
+                    {
+                        selectedDishes = JsonConvert.DeserializeObject<List<string>>(rawDishes.ToString());
+
+                        if (selectedDishes.Count > 0)
+                        {
+                            string dishName = selectedDishes[0];
+                            if (ProgressionMapping.dish_id_lookup.TryGetValue(dishName, out int dishId))
+                            {
+                                LockedDishes.SetUnlockedDishes(new[] { dishId });
+                                PersistUnlockedDish(dishId);
+                                PersistLastSelectedDishes(selectedDishes);
+                                Logger.LogInfo($"[PlateupAP] Unlocked dish set to '{dishName}' (ID: {dishId})");
+                            }
+                            else
+                            {
+                                Logger.LogWarning($"[PlateupAP] Dish name '{dishName}' not found in dish_id_lookup!");
+                            }
+                        }
+
+                    }
+                    catch (JsonReaderException ex)
+                    {
+                        Logger.LogError($"[PlateupAP] Error parsing selected_dishes JSON: {ex.Message}");
+                    }
+                }
+
+                if (slotData.TryGetValue("goal", out object rawGoal))
+                {
+                    goal = Convert.ToInt32(rawGoal);
+                    Logger.LogInfo($"[PlateupAP] Goal set to: {goal} (0=franchise_x_times, 1=complete_x_days)");
+                }
+
+                if (slotData.TryGetValue("franchise_count", out object rawFranchiseCount))
+                {
+                    franchiseCount = Convert.ToInt32(rawFranchiseCount);
+                    Logger.LogInfo($"[PlateupAP] Franchise count goal: {franchiseCount}");
+                }
+
+                if (slotData.TryGetValue("day_count", out object rawDayCount))
+                {
+                    dayCount = Convert.ToInt32(rawDayCount);
+                    Logger.LogInfo($"[PlateupAP] Day count goal: {dayCount}");
+                }
+
+                if (slotData.TryGetValue("death_link", out object rawDeathLink))
+                {
+                    bool deathLinkEnabled = Convert.ToBoolean(rawDeathLink);
+                    Logger.LogInfo($"[PlateupAP] DeathLink enabled: {deathLinkEnabled}");
+
+                    if (deathLinkEnabled)
+                    {
+                        EnableDeathLink();
+                    }
+                }
+
+                if (slotData.TryGetValue("death_link_behavior", out object rawBehavior))
+                {
+                    deathLinkBehavior = Convert.ToInt32(rawBehavior);
+                    Logger.LogInfo($"[PlateupAP] DeathLink Behavior Set To: {deathLinkBehavior}");
+                }
+
+                if (slotData.TryGetValue("items_kept", out object rawItemsKept))
+                {
+                    itemsKeptPerRun = Convert.ToInt32(rawItemsKept);
+                    Logger.LogInfo($"[PlateupAP] Items Kept Per Run: {itemsKeptPerRun}");
+                }
+
+                if (slotData.TryGetValue("appliance_speed_mode", out object rawApplianceSpeedMode))
+                {
+                    applianceSpeedMode = Convert.ToInt32(rawApplianceSpeedMode);
+                    Logger.LogInfo($"[PlateupAP] Appliance Speed Mode set to {applianceSpeedMode} (0=grouped, 1=separate)");
+                }
+
+                if (slotData.TryGetValue("day_lease_interval", out object rawLeaseInterval))
+                {
+                    dayLeaseInterval = Mathf.Clamp(Convert.ToInt32(rawLeaseInterval), 1, 30);
+                    Logger.LogInfo($"[PlateupAP] Day Lease Interval set to: {dayLeaseInterval}");
+                    KitchenPlateupAP.LeaseRequirementSystem.TriggerRefresh();
+                }
+
+                // NEW: speed upgrade counts
+                if (slotData.TryGetValue("player_speed_upgrade_count", out object rawPlayerSpeedCount))
+                {
+                    int value = Mathf.Clamp(Convert.ToInt32(rawPlayerSpeedCount), 0, 10);
+                    playerSpeedUpgradeCount = value;
+                    Logger.LogInfo($"[PlateupAP] Player Speed Upgrade Count: {playerSpeedUpgradeCount}");
+                    ApplyPlayerSpeedConfig();
+                }
+                else
+                {
+                    // ensure tiers built with default if not sent yet
+                    ApplyPlayerSpeedConfig();
+                }
+
+                if (slotData.TryGetValue("appliance_speed_upgrade_count", out object rawApplianceSpeedCount))
+                {
+                    applianceSpeedUpgradeCount = Mathf.Clamp(Convert.ToInt32(rawApplianceSpeedCount), 0, 10);
+                    Logger.LogInfo($"[PlateupAP] Appliance Speed Upgrade Count: {applianceSpeedUpgradeCount}");
+                }
+            }
+
+            if (selectedDishes.Count > 0)
+            {
+                string dishName = selectedDishes[0];
+                int dishGdoId = ProgressionMapping.dishDictionary
+                    .FirstOrDefault(kv => kv.Value == dishName).Key;
+
+                if (dishGdoId != 0 && KitchenData.GameData.Main.TryGet<Dish>(dishGdoId, out var dish))
+                {
+                    LockedDishes.SetUnlockedDishes(new[] { dishGdoId });
+                    PersistUnlockedDish(dishGdoId);
+                    PersistLastSelectedDishes(selectedDishes);
+                    Logger.LogInfo($"[PlateupAP] Unlocked dish set to '{dishName}' (GDO ID: {dishGdoId})");
+                }
+                else
+                {
+                    Logger.LogWarning($"[PlateupAP] Dish name '{dishName}' not found in dishDictionary or not a valid GDO!");
+                }
+            }
+            else
+            {
+                Logger.LogWarning("[PlateupAP] selectedDishes is empty, no dish to unlock.");
+            }
+        }
+
+        private void SendSelectedDishesMessage()
+        {
+            if (session == null || selectedDishes == null || selectedDishes.Count == 0)
+            {
+                Logger.LogWarning("Session is null or selected dishes list is empty. Not sending.");
+                return;
+            }
+
+            string message = $"Selected Dishes: {string.Join(", ", selectedDishes)}";
+            Logger.LogInfo($"Sending message: {message}");
+            ChatManager.AddSystemMessage("Selected Dishes: " + string.Join(", ", selectedDishes));
+        }
+
+        static PreferenceSystemManager PrefManager;
+
+        protected override void OnPostActivate(KitchenMods.Mod mod)
+        {
+            try
+            {
+                if (World == null)
+                    Logger.LogError("World is null in OnPostActivate!");
+
+                if (PrefManager == null)
+                    PrefManager = new PreferenceSystemManager(MOD_GUID, MOD_NAME);
+
+                if (ArchipelagoConnectionManager.ConnectionSuccessful)
+                {
+                    RetrieveSlotData();
+                    ProcessAllReceivedItems();
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"[PlateupAP] Error in OnPostActivate: {ex.Message}\n{ex.StackTrace}");
+            }
+
+            PrefManager = new PreferenceSystemManager(MOD_GUID, MOD_NAME);
+            PrefManager
+                .AddLabel("Archipelago Configuration")
+                .AddInfo("Create or load configuration for the Archipelago connection")
+                .AddInfo(@"Config is found in \AppData\LocalLow\It's Happening\PlateUp")
+                .AddButton("Create Config", (int _) =>
+                {
+                    // Explicitly target LocalLow path: %appdata%\..\LocalLow\It's Happening\PlateUp\PlateUpAPConfig
+                    string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData); // %APPDATA%
+                    string folder = Path.GetFullPath(Path.Combine(appData, "..", "LocalLow", "It's Happening", "PlateUp", "PlateUpAPConfig"));
+
+                    if (!Directory.Exists(folder))
+                        Directory.CreateDirectory(folder);
+
+                    string path = Path.Combine(folder, "archipelago_config.json");
+                    PlateupAPConfig defaultConfig = new PlateupAPConfig
+                    {
+                        address = "archipelago.gg",
+                        port = 0,
+                        playername = "",
+                        password = ""
+                    };
+                    string json = JsonConvert.SerializeObject(defaultConfig, Formatting.Indented);
+                    File.WriteAllText(path, json);
+                    Logger.LogInfo("Created config file at: " + path);
+
+                    try
+                    {
+                        if (Application.platform == RuntimePlatform.WindowsPlayer || Application.platform == RuntimePlatform.WindowsEditor)
+                        {
+                            var psi = new ProcessStartInfo
+                            {
+                                FileName = "explorer.exe",
+                                Arguments = $"/select,\"{path}\"",
+                                UseShellExecute = true
+                            };
+                            System.Diagnostics.Process.Start(psi);
+                        }
+                        else if (Application.platform == RuntimePlatform.OSXPlayer || Application.platform == RuntimePlatform.OSXEditor)
+                        {
+                            var psi = new ProcessStartInfo
+                            {
+                                FileName = "open",
+                                Arguments = $"-R \"{path}\"",
+                                UseShellExecute = true
+                            };
+                            System.Diagnostics.Process.Start(psi);
+                        }
+                        else
+                        {
+                            // Generic fallback: open the containing folder
+                            var psi = new ProcessStartInfo
+                            {
+                                FileName = folder,
+                                UseShellExecute = true
+                            };
+                            System.Diagnostics.Process.Start(psi);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogWarning($"Could not open file explorer for path '{path}': {ex.Message}");
+                    }
+                })
+                .AddButton("Connect", (int _) =>
+                {
+                    // Prefer cached config warmed in main menu; fallback to file
+                    PlateupAPConfig config = CachedConfig;
+                    if (config == null)
+                    {
+                        string folder = Path.Combine(Application.persistentDataPath, "PlateUpAPConfig");
+                        string path = Path.Combine(folder, "archipelago_config.json");
+                        if (!File.Exists(path))
+                        {
+                            Logger.LogError("Config file not found at: " + path);
+                            return;
+                        }
+
+                        string json = File.ReadAllText(path);
+                        try
+                        {
+                            var jo = Newtonsoft.Json.Linq.JObject.Parse(json);
+                            config = new PlateupAPConfig
+                            {
+                                address = (string)jo["address"],
+                                port = (int?)jo["port"] ?? 0,
+                                playername = (string)jo["playername"],
+                                password = (string)jo["password"]
+                            };
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.LogError("[PlateupAP][Config] Manual parse failed: " + ex);
+                            Logger.LogError("JSON: " + json);
+                            return;
+                        }
+                    }
+
+                    if (string.IsNullOrWhiteSpace(config.address))
+                    {
+                        Logger.LogError("[PlateupAP][Config] Invalid address.");
+                        return;
+                    }
+
+                        Logger.LogInfo($"[PlateupAP][Config] Using server={config.address}:{config.port} player={config.playername}");
+                    UpdateArchipelagoConfig(config);
+                })
+                // NEW: Debug utilities
+                .AddLabel("Debug Utilities")
+                .AddInfo("Quick fixes during a run")
+                .AddButton("Set Player Speed to 1x", (int _) => { ForcePlayerSpeedToOne(); })
+                .AddButton("Increment Franchise Count", (int _) => { IncrementFranchiseAndCheckGoal(); })
+                .AddButton("Spawn Queued Items Now", (int _) => { ForceSpawnAllQueuedItems(); });
+
+            PrefManager.RegisterMenu(PreferenceSystemManager.MenuType.MainMenu);
+            PrefManager.RegisterMenu(PreferenceSystemManager.MenuType.PauseMenu);
+
+            if (GameObject.FindObjectOfType<ChatManager>() == null)
+            {
+                var obj = new GameObject("ChatManager");
+                obj.AddComponent<ChatManager>();
+                UnityEngine.Object.DontDestroyOnLoad(obj);
+            }
+
+            ChatManager.AddSystemMessage("PlateUp Archipelago loaded.");
+        }
+
+        protected override void OnInitialise()
+        {
+            Logger = InitLogger();
+            Logger.LogWarning($"{MOD_GUID} v{MOD_VERSION} in use!");
+            var harmony = new Harmony("com.caz.plateupap.patch");
+            harmony.PatchAll(Assembly.GetExecutingAssembly());
+            JsonConvert.DefaultSettings = null;
+            Mod.Logger.LogInfo("DishCardReadingSystem initialised.");
+            playersWithItems = GetEntityQuery(new QueryHelper().All(typeof(CPlayer), typeof(CItemHolder)));
+            playerSpeedQuery = GetEntityQuery(new QueryHelper().All(typeof(CPlayer)));
+            applianceSpeedQuery = GetEntityQuery(new QueryHelper().All(typeof(CApplianceSpeedModifier)));
+
+            // Ensure player tiers are initialized on boot (before slot data), using defaults
+            ApplyPlayerSpeedConfig();
+
+            // Experimental: randomize appliance upgrade targets once per boot
+            TryRandomizeUpgradesOnce();
+        }
+
+        private void TryRandomizeUpgradesOnce()
+        {
+            if (upgradesRandomized) return;
+            var data = KitchenData.GameData.Main;
+            if (data == null)
+            {
+                Logger.LogWarning("[Randomizer] GameData.Main not ready; skipping upgrade randomization.");
+                return;
+            }
+
+            int seed = ComputeDeterministicSeed();
+            try
+            {
+                RandomUpgradeMapper.Apply(data, seed);
+                upgradesRandomized = true;
+                Logger.LogInfo($"[Randomizer] Applied experimental upgrade randomization with seed={seed}.");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning("[Randomizer] Failed to apply upgrade randomization: " + ex.Message);
+            }
+        }
+
+        private int ComputeDeterministicSeed()
+        {
+            // Prefer identity-based deterministic seed
+            try
+            {
+                string a = CachedConfig?.address ?? string.Empty;
+                string p = (CachedConfig?.port ?? 0).ToString();
+                string u = CachedConfig?.playername ?? string.Empty;
+                string key = $"{a}|{p}|{u}";
+                int h = key.GetHashCode();
+                if (h == 0) h = Environment.TickCount;
+                return h;
+            }
+            catch
+            {
+                return Environment.TickCount;
+            }
+        }
+        
+        // ...existing code...
+    }
+}

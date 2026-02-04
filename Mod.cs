@@ -45,7 +45,7 @@ namespace KitchenPlateupAP
     {
         public const string MOD_GUID = "com.caz.plateupap";
         public const string MOD_NAME = "PlateupAP";
-        public const string MOD_VERSION = "0.2.2.1";
+        public const string MOD_VERSION = "0.2.3.2";
         public const string MOD_AUTHOR = "Caz";
         public const string MOD_GAMEVERSION = ">=1.1.9";
         public static int TOTAL_SCENES_LOADED = 0;
@@ -84,6 +84,8 @@ namespace KitchenPlateupAP
         private static bool checksDisabled = false;
         private bool dishPedestalSpawned = false;
         private static int dayLeaseInterval = 5;
+        public static int MoneyCap = 10;
+        private const int MoneyCapIncrementStep = 10;
 
         // New: counts from slot data (defaults per spec = 5)
         private static int playerSpeedUpgradeCount = 5;
@@ -109,6 +111,8 @@ namespace KitchenPlateupAP
         private static bool itemsEventSubscribed = false;
         private static Queue<ItemInfo> spawnQueue = new Queue<ItemInfo>();
         private bool franchisePending = false;
+        private bool moneyClampedThisPrep = false;
+        private bool forceSpawnRequested = false;
 
         // Flag to prevent repeated logging during a cycle.
         private static bool loggedCardThisCycle = false;
@@ -169,6 +173,87 @@ namespace KitchenPlateupAP
             return tiers;
         }
 
+        // Add near the top of Mod class
+        private const string CustomAppliancesFileName = "custom_appliances.json";
+        private const string CustomAppliancesReadmeName = "custom_appliances.readme.txt";
+
+        private static string GetConfigFolderPath()
+        {
+            if (Application.platform == RuntimePlatform.WindowsPlayer || Application.platform == RuntimePlatform.WindowsEditor)
+            {
+                string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+                string folder = Path.GetFullPath(Path.Combine(appData, "..", "LocalLow", "It's Happening", "PlateUp", "PlateUpAPConfig"));
+                return folder;
+            }
+
+            // Fallback for macOS/Linux
+            return Path.Combine(Application.persistentDataPath, "PlateUpAPConfig");
+        }
+
+        private static string GetCustomAppliancesFilePath()
+        {
+            return Path.Combine(GetConfigFolderPath(), CustomAppliancesFileName);
+        }
+
+        private static string GetCustomAppliancesReadmePath()
+        {
+            return Path.Combine(GetConfigFolderPath(), CustomAppliancesReadmeName);
+        }
+
+        private void EnsureCustomAppliancesFileExists()
+        {
+            try
+            {
+                string folder = GetConfigFolderPath();
+                if (!Directory.Exists(folder))
+                    Directory.CreateDirectory(folder);
+
+                // Create JSON file (array of integers: GDO IDs)
+                string jsonPath = GetCustomAppliancesFilePath();
+                if (!File.Exists(jsonPath))
+                {
+                    File.WriteAllText(jsonPath, "[]");
+                    Logger.LogInfo($"[CustomAppliances] Created file at: {jsonPath}");
+                }
+
+                // Create README guidance
+                string readmePath = GetCustomAppliancesReadmePath();
+                if (!File.Exists(readmePath))
+                {
+                    var guide = string.Join(Environment.NewLine, new[]
+                    {
+                "Custom Appliances Guide",
+                "",
+                "Add Appliance GDO IDs to custom_appliances.json as a JSON array. Example:",
+                "",
+                "[",
+                "  10097,  // Mixer",
+                "  10112   // Research Desk",
+                "]",
+                "",
+                "How to find GDO IDs:",
+                "- I recommend this: https://steamcommunity.com/sharedfiles/filedetails/?id=2933828796",
+                "",
+                "How to search in the mod:",
+                "- Open with CTRL + SHIFT + T",
+                "- Go to: GDOs > KitchenData.Appliance",
+                "- Search for the custom appliance to confirm its GDO ID",
+                "",
+                "Notes:",
+                "- Invalid or unknown IDs are ignored.",
+                "- Both Appliances and Decor are supported.",
+                "- This file is for guidance only; edit the JSON file to add IDs."
+            });
+                    File.WriteAllText(readmePath, guide);
+                    Logger.LogInfo($"[CustomAppliances] Created README at: {readmePath}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning($"[CustomAppliances] Failed to ensure files exist: {ex.Message}");
+            }
+        }
+
         // Apply player speed count -> rebuild tiers and clamp current tier; update multiplier
         private static void ApplyPlayerSpeedConfig()
         {
@@ -222,12 +307,13 @@ namespace KitchenPlateupAP
             ArchipelagoConnectionManager.TryConnect(config.address, config.port, config.playername, config.password);
         }
 
-
-        // New: read and cache config early
         private void TryWarmupConfig()
         {
             try
             {
+                // Ensure the custom file exists early (main menu)
+                EnsureCustomAppliancesFileExists();
+
                 string folder = Path.Combine(Application.persistentDataPath, "PlateUpAPConfig");
                 string path = Path.Combine(folder, "archipelago_config.json");
                 if (!File.Exists(path))
@@ -272,34 +358,53 @@ namespace KitchenPlateupAP
             {
                 Logger.LogInfo($"[PlateupAP] Full Slot Data: {JsonConvert.SerializeObject(slotData, Formatting.Indented)}");
 
+                // In RetrieveSlotData(), replace the selected_dishes handling so ONLY the first dish is unlocked as baseline
                 if (slotData.TryGetValue("selected_dishes", out object rawDishes))
                 {
                     Logger.LogInfo($"[PlateupAP] Found selected_dishes in slot data: {rawDishes}");
 
                     try
                     {
-                        selectedDishes = JsonConvert.DeserializeObject<List<string>>(rawDishes.ToString());
+                        selectedDishes = JsonConvert.DeserializeObject<List<string>>(rawDishes.ToString()) ?? new List<string>();
 
                         if (selectedDishes.Count > 0)
                         {
-                            string dishName = selectedDishes[0];
-                            if (ProgressionMapping.dish_id_lookup.TryGetValue(dishName, out int dishId))
+                            string firstDishName = selectedDishes[0];
+
+                            // Resolve first dish name -> GDO Dish ID
+                            int baselineGdoId = ProgressionMapping.dishDictionary
+                                .FirstOrDefault(kv => string.Equals(kv.Value, firstDishName, StringComparison.OrdinalIgnoreCase))
+                                .Key;
+
+                            if (baselineGdoId != 0 && KitchenData.GameData.Main.TryGet<Dish>(baselineGdoId, out _))
                             {
-                                LockedDishes.SetUnlockedDishes(new[] { dishId });
-                                PersistUnlockedDish(dishId);
+                                // Set baseline and enable locking now that we are connected
+                                LockedDishes.SetUnlockedDishes(new[] { baselineGdoId });
+                                LockedDishes.EnableLocking();
+
+                                PersistUnlockedDish(baselineGdoId);
                                 PersistLastSelectedDishes(selectedDishes);
-                                Logger.LogInfo($"[PlateupAP] Unlocked dish set to '{dishName}' (ID: {dishId})");
+
+                                DishId = baselineGdoId; // default currently-selected dish
+                                Logger.LogInfo($"[PlateupAP] Baseline dish unlocked: '{firstDishName}' (GDO ID: {baselineGdoId})");
                             }
                             else
                             {
-                                Logger.LogWarning($"[PlateupAP] Dish name '{dishName}' not found in dish_id_lookup!");
+                                // Cannot resolve baseline, keep locking disabled to avoid breaking vanilla play
+                                LockedDishes.DisableLocking();
+                                Logger.LogWarning($"[PlateupAP] Could not resolve baseline dish '{firstDishName}'. Locking remains disabled.");
                             }
                         }
-
+                        else
+                        {
+                            LockedDishes.DisableLocking();
+                            Logger.LogWarning("[PlateupAP] selected_dishes is empty. Locking disabled.");
+                        }
                     }
                     catch (JsonReaderException ex)
                     {
-                        Logger.LogError($"[PlateupAP] Error parsing selected_dishes JSON: {ex.Message}");
+                        LockedDishes.DisableLocking();
+                        Logger.LogError($"[PlateupAP] Error parsing selected_dishes JSON: {ex.Message}. Locking disabled.");
                     }
                 }
 
@@ -357,7 +462,6 @@ namespace KitchenPlateupAP
                     KitchenPlateupAP.LeaseRequirementSystem.TriggerRefresh();
                 }
 
-                // NEW: speed upgrade counts
                 if (slotData.TryGetValue("player_speed_upgrade_count", out object rawPlayerSpeedCount))
                 {
                     int value = Mathf.Clamp(Convert.ToInt32(rawPlayerSpeedCount), 0, 10);
@@ -367,7 +471,6 @@ namespace KitchenPlateupAP
                 }
                 else
                 {
-                    // ensure tiers built with default if not sent yet
                     ApplyPlayerSpeedConfig();
                 }
 
@@ -376,27 +479,16 @@ namespace KitchenPlateupAP
                     applianceSpeedUpgradeCount = Mathf.Clamp(Convert.ToInt32(rawApplianceSpeedCount), 0, 10);
                     Logger.LogInfo($"[PlateupAP] Appliance Speed Upgrade Count: {applianceSpeedUpgradeCount}");
                 }
-            }
 
-            if (selectedDishes.Count > 0)
-            {
-                string dishName = selectedDishes[0];
-                int dishGdoId = ProgressionMapping.dishDictionary
-                    .FirstOrDefault(kv => kv.Value == dishName).Key;
-
-                if (dishGdoId != 0 && KitchenData.GameData.Main.TryGet<Dish>(dishGdoId, out var dish))
+                if (slotData.TryGetValue("starting_money_cap", out object rawStartingCap))
                 {
-                    LockedDishes.SetUnlockedDishes(new[] { dishGdoId });
-                    PersistUnlockedDish(dishGdoId);
-                    PersistLastSelectedDishes(selectedDishes);
-                    Logger.LogInfo($"[PlateupAP] Unlocked dish set to '{dishName}' (GDO ID: {dishGdoId})");
-                }
-                else
-                {
-                    Logger.LogWarning($"[PlateupAP] Dish name '{dishName}' not found in dishDictionary or not a valid GDO!");
+                    int startingCap = Mathf.Clamp(Convert.ToInt32(rawStartingCap), 0, 999);
+                    MoneyCap = startingCap;
+                    Logger.LogInfo($"[MoneyCap] Starting money cap from slot data set to {MoneyCap}");
                 }
             }
-            else
+
+            if (selectedDishes.Count == 0)
             {
                 Logger.LogWarning("[PlateupAP] selectedDishes is empty, no dish to unlock.");
             }
@@ -550,7 +642,94 @@ namespace KitchenPlateupAP
                 .AddInfo("Quick fixes during a run")
                 .AddButton("Set Player Speed to 1x", (int _) => { ForcePlayerSpeedToOne(); })
                 .AddButton("Increment Franchise Count", (int _) => { IncrementFranchiseAndCheckGoal(); })
-                .AddButton("Spawn Queued Items Now", (int _) => { ForceSpawnAllQueuedItems(); });
+                .AddButton("Spawn Queued Items Now", (int _) =>
+                {
+                    forceSpawnRequested = true;
+                    Logger.LogInfo("[Debug] Spawn Queued Items requested; will process in OnUpdate.");
+                })
+                .AddButton("Send All Received Checks", (int _) =>
+                {
+                    SendAllReceivedChecks();
+                })
+                .AddButton("Increase Money Cap by 10", (int _) =>
+                {
+                    int before = MoneyCap;
+                    MoneyCap = Mathf.Clamp(MoneyCap + 10, 0, 9999);
+                    Logger.LogInfo($"[MoneyCap] Cap increased from {before} to {MoneyCap}");
+                })
+                .AddButton("Uncap Money Cap", (int _) =>
+                {
+                    MoneyCap = 9999;
+                    Logger.LogInfo("[MoneyCap] Cap set to 9999");
+                })
+  .AddButton("Create/Open Custom Appliances", (int _) =>
+  {
+      try
+      {
+          EnsureCustomAppliancesFileExists();
+          string folder = GetConfigFolderPath();
+          string jsonPath = GetCustomAppliancesFilePath();
+          string readmePath = GetCustomAppliancesReadmePath();
+
+          if (Application.platform == RuntimePlatform.WindowsPlayer || Application.platform == RuntimePlatform.WindowsEditor)
+          {
+              // Open folder
+              System.Diagnostics.Process.Start(new ProcessStartInfo
+              {
+                  FileName = "explorer.exe",
+                  Arguments = $"\"{folder}\"",
+                  UseShellExecute = true
+              });
+              // Open files via shell association
+              System.Diagnostics.Process.Start(new ProcessStartInfo
+              {
+                  FileName = jsonPath,
+                  UseShellExecute = true
+              });
+              System.Diagnostics.Process.Start(new ProcessStartInfo
+              {
+                  FileName = readmePath,
+                  UseShellExecute = true
+              });
+          }
+          else if (Application.platform == RuntimePlatform.OSXPlayer || Application.platform == RuntimePlatform.OSXEditor)
+          {
+              System.Diagnostics.Process.Start(new ProcessStartInfo
+              {
+                  FileName = "open",
+                  Arguments = $"\"{folder}\"",
+                  UseShellExecute = true
+              });
+              System.Diagnostics.Process.Start(new ProcessStartInfo
+              {
+                  FileName = "open",
+                  Arguments = $"\"{jsonPath}\"",
+                  UseShellExecute = true
+              });
+              System.Diagnostics.Process.Start(new ProcessStartInfo
+              {
+                  FileName = "open",
+                  Arguments = $"\"{readmePath}\"",
+                  UseShellExecute = true
+              });
+          }
+          else
+          {
+              // Fallback: open folder only
+              System.Diagnostics.Process.Start(new ProcessStartInfo
+              {
+                  FileName = folder,
+                  UseShellExecute = true
+              });
+          }
+
+          Logger.LogInfo($"[CustomAppliances] Opened: {folder}");
+      }
+      catch (Exception ex)
+      {
+          Logger.LogWarning("[CustomAppliances] Could not open files: " + ex.Message);
+      }
+  });
 
             PrefManager.RegisterMenu(PreferenceSystemManager.MenuType.MainMenu);
             PrefManager.RegisterMenu(PreferenceSystemManager.MenuType.PauseMenu);
@@ -565,6 +744,7 @@ namespace KitchenPlateupAP
             ChatManager.AddSystemMessage("PlateUp Archipelago loaded.");
         }
 
+        // Call EnsureCustomAppliancesFileExists in startup paths
         protected override void OnInitialise()
         {
             Logger = InitLogger();
@@ -576,11 +756,9 @@ namespace KitchenPlateupAP
             playersWithItems = GetEntityQuery(new QueryHelper().All(typeof(CPlayer), typeof(CItemHolder)));
             playerSpeedQuery = GetEntityQuery(new QueryHelper().All(typeof(CPlayer)));
             applianceSpeedQuery = GetEntityQuery(new QueryHelper().All(typeof(CApplianceSpeedModifier)));
-
-            // Ensure player tiers are initialized on boot (before slot data), using defaults
             ApplyPlayerSpeedConfig();
-
-            // Do not randomize here to avoid interfering with normal play when offline
+            World.GetOrCreateSystem<MoneyCapSystem>().Enabled = true;
+            EnsureCustomAppliancesFileExists();
         }
 
         public void OnSuccessfulConnect()
@@ -941,7 +1119,6 @@ namespace KitchenPlateupAP
             {
                 return;
             }
-
             else if (goal == 0 && franchisePending)
             {
                 timesFranchised++;
@@ -958,7 +1135,6 @@ namespace KitchenPlateupAP
 
                 franchisePending = false;
             }
-
             else if (loseScreen && !lost)
             {
                 Logger.LogInfo("You Lost the Run! Sending loss check (ID 100000)");
@@ -973,7 +1149,6 @@ namespace KitchenPlateupAP
                 }
 
             }
-
             else if (inLobby && !itemsQueuedThisLobby)
             {
                 suppressNextDeathLink = false;
@@ -1102,6 +1277,21 @@ namespace KitchenPlateupAP
                     deferredItemHistoryApplied = true;
                 }
             }
+
+            // Only process when the kitchen scene marker is present (safe point)
+            if (forceSpawnRequested)
+            {
+                if (HasSingleton<SKitchenMarker>())
+                {
+                    forceSpawnRequested = false;
+                    ForceSpawnAllQueuedItems();
+                }
+                else
+                {
+                    // Still not in kitchen; keep the request pending
+                    Logger.LogWarning("[Debug] Spawn request pending; not in kitchen yet.");
+                }
+            }
         }
 
         // Spawning Items
@@ -1127,6 +1317,28 @@ namespace KitchenPlateupAP
             }
         }
 
+        private void HandleRandomApplianceItem(int checkId)
+        {
+            // Just enqueue the item; ProcessSpawn handles random selection and spawns during prep
+            if (!spawnQueue.Any(x => (int)x.ItemId == checkId))
+            {
+                spawnQueue.Enqueue(CreateItemInfoForQueue(checkId));
+
+                if (currentIdentity != null)
+                {
+                    if (!pendingSpawnState.PendingItemIDs.Contains(checkId))
+                        pendingSpawnState.PendingItemIDs.Add(checkId);
+                    PersistenceManager.SavePendingSpawn(currentIdentity, pendingSpawnState);
+                }
+
+                Logger.LogInfo($"[Random Appliance] Queued {(checkId == 1001 ? "useful" : "filler")} random appliance item for next prep.");
+            }
+            else
+            {
+                Logger.LogInfo("[Random Appliance] Item already queued; skipping.");
+            }
+        }
+
         private static List<int> receivedItemPool = new List<int>();
 
         private void OnItemReceived(IReceivedItemsHelper helper)
@@ -1142,6 +1354,26 @@ namespace KitchenPlateupAP
             string locationName = session?.Locations?.GetLocationNameFromId(locationId);
 
             Logger.LogInfo($"[OnItemReceived] Got item '{itemName}' (ID {itemIdLong}) from location '{locationName}' (ID {locationId})");
+
+            // 1) Dish unlock by ID (preferred)
+            var dishById = ProgressionMapping.dishUnlockIDs.FirstOrDefault(kv => kv.Value == checkId);
+            if (!string.IsNullOrEmpty(dishById.Key))
+            {
+                string dishName = dishById.Key;
+                int dishGdoId = ProgressionMapping.dishDictionary
+                    .FirstOrDefault(kv => string.Equals(kv.Value, dishName, StringComparison.OrdinalIgnoreCase))
+                    .Key;
+
+                if (dishGdoId != 0 && KitchenData.GameData.Main.TryGet<Dish>(dishGdoId, out _))
+                {
+                    PersistUnlockedDish(dishGdoId);
+                    LockedDishes.AddUnlockedDishes(new[] { dishGdoId }); // additive
+                    DishId = dishGdoId;
+                    Logger.LogInfo($"[DishUnlock] Unlocked dish '{dishName}' via item ID {checkId} (GDO ID: {dishGdoId}).");
+                    return;
+                }
+                Logger.LogWarning($"[DishUnlock] Could not resolve '{dishName}' to a valid GDO Dish ID.");
+            }
 
             // Lease item special case
             if (checkId == 15)
@@ -1253,16 +1485,33 @@ namespace KitchenPlateupAP
             if (!string.IsNullOrEmpty(itemName) && itemName.StartsWith("Unlock: "))
             {
                 string dishName = itemName.Substring("Unlock: ".Length).Trim();
-                if (ProgressionMapping.dish_id_lookup.TryGetValue(dishName, out int newDishId))
+
+                // Resolve to GDO Dish ID via dishDictionary (GDO ID -> name)
+                int dishGdoId = ProgressionMapping.dishDictionary
+                    .FirstOrDefault(kv => string.Equals(kv.Value, dishName, StringComparison.OrdinalIgnoreCase))
+                    .Key;
+
+                if (dishGdoId != 0 && KitchenData.GameData.Main.TryGet<Dish>(dishGdoId, out var dish))
                 {
-                    PersistUnlockedDish(newDishId);
-                    LockedDishes.SetUnlockedDishes(new[] { newDishId });
-                    Logger.LogInfo($"Unlocked new dish: {dishName} (ID: {newDishId})");
+                    PersistUnlockedDish(dishGdoId);
+                    LockedDishes.SetUnlockedDishes(new[] { dishGdoId });
+                    DishId = dishGdoId;
+                    Logger.LogInfo($"Unlocked new dish: {dishName} (GDO ID: {dishGdoId})");
                 }
                 else
                 {
-                    Logger.LogWarning($"Received unknown dish unlock: {dishName}");
+                    Logger.LogWarning($"Received unknown dish unlock: {dishName} (could not resolve to valid GDO Dish ID)");
                 }
+                return;
+            }
+
+            if (checkId == 16)
+            {
+                int before = MoneyCap;
+                MoneyCap = Mathf.Clamp(MoneyCap + MoneyCapIncrementStep, 0, 999);
+                Logger.LogInfo($"[MoneyCap] Received 'Money Cap Increase' (ID 16). Cap increased from {before} to {MoneyCap}.");
+                if (HasSingleton<SKitchenMarker>())
+                    ClampMoneyToCap();
                 return;
             }
         }
@@ -1352,6 +1601,12 @@ namespace KitchenPlateupAP
 
         private void ForceSpawnAllQueuedItems()
         {
+            if (World == null)
+            {
+                Logger.LogWarning("[Debug] World not ready. Cannot force spawn.");
+                return;
+            }
+
             if (session == null || session.Items == null)
             {
                 Logger.LogWarning("[Debug] Session or Items not ready; cannot force spawn.");
@@ -1371,7 +1626,6 @@ namespace KitchenPlateupAP
             }
 
             int count = spawnQueue.Count;
-            // Snapshot to avoid modifying during iteration
             ItemInfo[] toSpawn = spawnQueue.ToArray();
             spawnQueue.Clear();
 
@@ -1381,7 +1635,6 @@ namespace KitchenPlateupAP
                 ProcessSpawn(info);
             }
 
-            // Clean persistence entries for items we just spawned
             if (currentIdentity != null)
             {
                 bool changed = false;
@@ -1397,6 +1650,44 @@ namespace KitchenPlateupAP
             Logger.LogInfo("[Debug] Forced spawn complete.");
         }
 
+        private void SendAllReceivedChecks()
+        {
+            try
+            {
+                if (session == null || session.Items == null || session.Locations == null)
+                {
+                    Logger.LogWarning("[Debug] Session/Items/Locations not ready; cannot send checks.");
+                    return;
+                }
+
+                var alreadyChecked = new HashSet<long>(session.Locations.AllLocationsChecked.Select(id => (long)id));
+                int sent = 0;
+
+                foreach (var item in session.Items.AllItemsReceived)
+                {
+                    long locId = item.LocationId;
+                    if (locId <= 0)
+                        continue;
+
+                    if (!alreadyChecked.Contains(locId))
+                    {
+                        session.Locations.CompleteLocationChecks((int)locId);
+                        sent++;
+                        Logger.LogInfo($"[Debug] Sent location check for LocationID={locId} (from received item {item.ItemId}).");
+                    }
+                    else
+                    {
+                        Logger.LogInfo($"[Debug] LocationID={locId} already checked; skipping.");
+                    }
+                }
+
+                Logger.LogWarning($"[Debug] Finished sending checks. Total new checks sent: {sent}.");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("[Debug] Failed to send all received checks: " + ex.Message);
+            }
+        }
         private void HandleGameReset()
         {
             Logger.LogInfo("[PlateupAP] Handling game reset...");
@@ -1515,30 +1806,54 @@ namespace KitchenPlateupAP
                 return;
             }
 
-            if (!ProgressionMapping.progressionToGDO.TryGetValue(checkId, out int gdoId))
+            int gdoId = 0;
+            if (checkId == 1001)
             {
-                Logger.LogWarning("No mapping found for check id: " + checkId);
-                return;
+                var pool = ProgressionMapping.usefulApplianceDictionary.Values.ToList();
+                if (pool.Count == 0)
+                {
+                    Logger.LogWarning("[Spawn] usefulApplianceDictionary is empty; skipping.");
+                    return;
+                }
+                gdoId = pool[UnityEngine.Random.Range(0, pool.Count)];
+                Logger.LogInfo($"[Spawn] Random Useful Appliance chosen GDO={gdoId}");
+            }
+            else if (checkId == 1002)
+            {
+                var pool = ProgressionMapping.fillerApplianceDictionary.Values.ToList();
+                if (pool.Count == 0)
+                {
+                    Logger.LogWarning("[Spawn] fillerApplianceDictionary is empty; skipping.");
+                    return;
+                }
+                gdoId = pool[UnityEngine.Random.Range(0, pool.Count)];
+                Logger.LogInfo($"[Spawn] Random Filler Appliance chosen GDO={gdoId}");
+            }
+            else
+            {
+                if (!ProgressionMapping.progressionToGDO.TryGetValue(checkId, out gdoId))
+                {
+                    Logger.LogWarning("No mapping found for check id: " + checkId);
+                    return;
+                }
             }
 
-            var positionType = SpawnPositionType.Door;
-            Vector3 spawnPos = SpawnHelpers.ResolveSpawnPosition(EntityManager, positionType, InputSourceIdentifier.Identifier);
+            Vector3 spawnPos = SpawnHelpers.ResolveSpawnPosition(EntityManager, SpawnPositionType.Door, InputSourceIdentifier.Identifier);
 
             bool spawned = false;
-
             if (KitchenData.GameData.Main.TryGet<Appliance>(gdoId, out _))
             {
                 spawned = SpawnHelpers.TrySpawnApplianceBlueprint(EntityManager, gdoId, spawnPos, costMode: 0f);
             }
             else if (KitchenData.GameData.Main.TryGet<Decor>(gdoId, out _))
             {
+                // Decor.Name is not available in this SDK; spawn and log by ID
                 spawned = SpawnHelpers.TrySpawnDecor(EntityManager, gdoId, spawnPos);
             }
 
             if (spawned)
             {
                 Logger.LogInfo($"[Spawn] Spawned item ID {checkId} (GDO {gdoId}) at {spawnPos}.");
-                // Remove from persistence queue
                 if (currentIdentity != null && pendingSpawnState.PendingItemIDs.Remove(checkId))
                 {
                     PersistenceManager.SavePendingSpawn(currentIdentity, pendingSpawnState);
@@ -1690,16 +2005,18 @@ namespace KitchenPlateupAP
             bool isPrepTime = HasSingleton<SIsNightTime>();
             bool isPrepFirstUpdate = HasSingleton<SIsNightFirstUpdate>();
 
+            // Reset the clamp flag at day start
             if (!firstCycleCompleted && isDayStart)
             {
                 firstCycleCompleted = true;
                 dayTransitionProcessed = false;
                 itemsSpawnedThisRun = false;
-
+                moneyClampedThisPrep = false; // reset for this cycle
                 Logger.LogInfo("First day cycle completed; day cycle updates are now armed.");
             }
 
-            if (firstCycleCompleted && isPrepTime)
+            // During prep: spawn queued items, then clamp only AFTER the first prep update has passed
+            if (firstCycleCompleted && isPrepTime && !isPrepFirstUpdate)
             {
                 while (spawnQueue.Count > 0)
                 {
@@ -1707,40 +2024,39 @@ namespace KitchenPlateupAP
                     Logger.LogInfo($"[Prep Phase] Spawning queued item ID: {queued.ItemId}");
                     ProcessSpawn(queued);
                 }
-            }
 
-            if (firstCycleCompleted && isPrepFirstUpdate && !dayTransitionProcessed)
+                if (!moneyClampedThisPrep)
+                {
+                    ClampMoneyToCap();
+                    moneyClampedThisPrep = true;
+                }
+            }
+            else if (firstCycleCompleted && isPrepFirstUpdate && !dayTransitionProcessed)
             {
                 dayTransitionProcessed = true;
 
+                // DO NOT clamp here; emit checks safely in this frame
                 if (goal == 0)
                 {
-                    // ────────────────────────────────────────────
-                    // GOAL=0 => “Franchise X Times”
-                    // ────────────────────────────────────────────
                     lastDay++;
                     Logger.LogInfo($"[Franchise Goal] End of Day {lastDay} this run.");
-
                     int dayLocationID = dayID + lastDay;
                     session.Locations.CompleteLocationChecks(dayLocationID);
                     Logger.LogInfo($"[Franchise Goal] Completed location check => ID={dayLocationID}");
 
                     if (lastDay == 15 && !franchisePending)
                     {
-                        // Mark franchise as pending, so it will be counted even if the player exits before franchise screen
                         franchisePending = true;
                         Logger.LogInfo("[Franchise Goal] Franchise completion is now pending.");
                     }
 
                     if (lastDay <= 15)
                     {
-                        DoDishChecks(lastDay);
-
+                        DoDishChecks(lastDay);  
                         if (lastDay % 3 == 0)
                         {
                             stars++;
                             Logger.LogInfo($"[Franchise Goal] Earned star #{stars} on day {lastDay}.");
-
                             int[] franchiseStarOffsets = { 0, 31, 61, 91, 121, 151 };
                             if (stars <= 5)
                             {
@@ -1748,42 +2064,26 @@ namespace KitchenPlateupAP
                                 session.Locations.CompleteLocationChecks(starLocID);
                                 Logger.LogInfo($"[Franchise Goal] Completed star location => ID={starLocID}");
                             }
-                            else
-                            {
-                                Logger.LogWarning("[Franchise Goal] Stars exceeded expected range (1–5). No location check sent.");
-                            }
-
                             if (stars >= 5)
-                            {
-                                Logger.LogInfo("[Franchise Goal] Reached 5 stars in this run; resetting stars to 0.");
                                 stars = 0;
-                            }
                         }
                     }
                 }
-
                 else
                 {
-                    // ────────────────────────────────────────────
-                    // GOAL=1 => “Complete X Days”
-                    // ────────────────────────────────────────────
                     overallDaysCompleted++;
                     Logger.LogInfo($"[Day Goal] Overall day {overallDaysCompleted} completed.");
-
-                    // For day-based goals, do a location check up to 100 days
                     if (overallDaysCompleted <= 100)
                     {
                         int dayLocID = 110000 + overallDaysCompleted;
                         session.Locations.CompleteLocationChecks(dayLocID);
                         Logger.LogInfo($"[Day Goal] Completed location => ID={dayLocID}");
                     }
-
                     if (lastDay < 15)
                     {
                         lastDay++;
                         DoDishChecks(lastDay);
                     }
-
                     if (overallDaysCompleted % 3 == 0 && overallStarsEarned < 33)
                     {
                         overallStarsEarned++;
@@ -1791,7 +2091,6 @@ namespace KitchenPlateupAP
                         session.Locations.CompleteLocationChecks(starLocID);
                         Logger.LogInfo($"[Day Goal] Earned star #{overallStarsEarned}, location => ID={starLocID}");
                     }
-
                     if (overallDaysCompleted >= dayCount)
                     {
                         Logger.LogInfo($"[Day Goal] Reached {overallDaysCompleted} >= {dayCount}, sending goal complete.");
@@ -1883,12 +2182,17 @@ namespace KitchenPlateupAP
                     continue;
 
                 var speedMod = entityManager.GetComponentData<CApplianceSpeedModifier>(applianceEntity);
-                float originalSpeed = speedMod.Speed;
 
-                speedMod.Speed = speedMultiplier;
-                entityManager.SetComponentData(applianceEntity, speedMod);
+                // Avoid spam: only write when we actually change the speed
+                if (Math.Abs(speedMod.Speed - speedMultiplier) > 0.0001f)
+                {
+                    // var previous = speedMod.Speed; // Keep in case we need it later
+                    speedMod.Speed = speedMultiplier;
+                    entityManager.SetComponentData(applianceEntity, speedMod);
 
-                Mod.Logger.LogInfo($"[ApplyApplianceSpeedModifiers] Set appliance {applianceEntity.Index} speed to {speedMultiplier}, previous speed {originalSpeed}");
+                    // Commented to reduce log spam
+                    // Mod.Logger.LogInfo($"[ApplyApplianceSpeedModifiers] Set appliance {applianceEntity.Index} speed to {speedMultiplier}, previous speed {previous}");
+                }
             }
 
             processingAppliances.Dispose();
@@ -2123,7 +2427,42 @@ namespace KitchenPlateupAP
             }
         }
 
-        // Add inside class Mod (near other methods)
+        private void ClampMoneyToCap()
+        {
+            if (!HasSingleton<SKitchenMarker>())
+                return;
+
+            if (Require(out SMoney money))
+            {
+                int cap = Mathf.Max(0, MoneyCap);
+                if (money.Amount > cap)
+                {
+                    int before = money.Amount;
+                    money.Amount = cap;
+                    Set(money);
+                    Logger?.LogInfo($"[MoneyCap] Clamped money from {before} to {cap} during prep.");
+                }
+            }
+        }
+
+        private int ComputeDeterministicSeed()
+        {
+            try
+            {
+                string a = CachedConfig?.address ?? string.Empty;
+                string p = (CachedConfig?.port ?? 0).ToString();
+                string u = CachedConfig?.playername ?? string.Empty;
+                string key = $"{a}|{p}|{u}";
+                int h = key.GetHashCode();
+                if (h == 0) h = Environment.TickCount;
+                return h;
+            }
+            catch
+            {
+                return Environment.TickCount;
+            }
+        }
+
         private void TryRandomizeUpgradesOnce()
         {
             if (upgradesRandomized)
@@ -2152,38 +2491,6 @@ namespace KitchenPlateupAP
             catch (Exception ex)
             {
                 Logger.LogWarning("[Randomizer] Failed to apply upgrade randomization: " + ex.Message);
-            }
-        }
-
-        private int ComputeDeterministicSeed()
-        {
-            try
-            {
-                string a = CachedConfig?.address ?? string.Empty;
-                string p = (CachedConfig?.port ?? 0).ToString();
-                string u = CachedConfig?.playername ?? string.Empty;
-                string key = $"{a}|{p}|{u}";
-                int h = key.GetHashCode();
-                if (h == 0) h = Environment.TickCount;
-                return h;
-            }
-            catch
-            {
-                return Environment.TickCount;
-            }
-        }
-
-        // Optional: only needed if something still calls this from elsewhere
-        public void TriggerUpgradeRandomizationForDebug()
-        {
-            Logger.LogInfo("[Randomizer] Debug trigger requested.");
-            try
-            {
-                TryRandomizeUpgradesOnce();
-            }
-            catch (Exception ex)
-            {
-                Logger.LogWarning("[Randomizer] Debug trigger failed: " + ex.Message);
             }
         }
     }

@@ -1,0 +1,21 @@
+# Visual Studio
+.vs/
+.vscode/
+*.suo
+*.user
+
+# Build output
+bin/
+obj/
+
+# Unity
+Library/
+Temp/
+Logs/
+UserSettings/
+
+# Debug / tooling
+*.log
+*.pdb
+*.mdb
+*.cache

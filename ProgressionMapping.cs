@@ -1,6 +1,8 @@
 using KitchenData;
 using KitchenLib.References;
 using System.Collections.Generic;
+using System.IO;
+using Newtonsoft.Json;
 
 namespace KitchenPlateupAP
 {
@@ -105,6 +107,143 @@ namespace KitchenPlateupAP
             { 10164, ApplianceReferences.ExtraLife }
         };
 
+        // Existing lists kept for compatibility (not used by Mod.cs anymore)
+        public static readonly List<int> usefulApplianceGDOs = new List<int>
+        {
+            ApplianceReferences.Hob,
+            ApplianceReferences.HobSafe,
+            ApplianceReferences.HobDanger,
+            ApplianceReferences.HobStarting,
+            ApplianceReferences.Oven,
+            ApplianceReferences.Microwave,
+            ApplianceReferences.SinkNormal,
+            ApplianceReferences.SinkPower,
+            ApplianceReferences.SinkSoak,
+            ApplianceReferences.SinkStarting,
+            ApplianceReferences.DishWasher,
+            ApplianceReferences.SinkLarge,
+            ApplianceReferences.Countertop,
+            ApplianceReferences.Workstation,
+            ApplianceReferences.Freezer,
+            ApplianceReferences.PrepStation,
+            ApplianceReferences.FrozenPrepStation,
+            ApplianceReferences.BlueprintUpgradeDesk,
+            ApplianceReferences.BlueprintCopyDesk,
+            ApplianceReferences.BlueprintDiscountDesk,
+            ApplianceReferences.BlueprintOrderingDesk,
+            ApplianceReferences.Grabber,
+            ApplianceReferences.GrabberSmart,
+            ApplianceReferences.GrabberRotatable,
+            ApplianceReferences.Combiner,
+            ApplianceReferences.Portioner,
+            ApplianceReferences.Mixer,
+            ApplianceReferences.MixerPusher,
+            ApplianceReferences.MixerHeated,
+            ApplianceReferences.MixerRapid,
+            ApplianceReferences.AutoPlater,
+            ApplianceReferences.PotStack,
+            ApplianceReferences.ServingBoardStack
+        };
+
+        public static readonly List<int> fillerApplianceGDOs = new List<int>
+        {
+            ApplianceReferences.SinkStarting,
+            ApplianceReferences.IceDispenser,
+            ApplianceReferences.MilkDispenser,
+            ApplianceReferences.MopBucket,
+            ApplianceReferences.MopBucketLasting,
+            ApplianceReferences.MopBucketFast,
+            ApplianceReferences.RobotMop,
+            ApplianceReferences.FloorBufferStation,
+            ApplianceReferences.RobotBuffer,
+            ApplianceReferences.BreadstickBox,
+            ApplianceReferences.CandleBox,
+            ApplianceReferences.NapkinBox,
+            ApplianceReferences.SharpCutlery,
+            ApplianceReferences.SpecialsMenuBox,
+            ApplianceReferences.LeftoversBagStation,
+            ApplianceReferences.SupplyCabinet,
+            ApplianceReferences.HostStand,
+            ApplianceReferences.FlowerPot,
+            ApplianceReferences.CoffeeTable,
+            ApplianceReferences.FoodDisplayStand,
+            ApplianceReferences.FireExtinguisherHolder,
+            ApplianceReferences.PlateStack,
+            ApplianceReferences.PlateStackStarting
+        };
+
+        // Essential (useful) appliances by name -> GDO ID (excluding starters)
+        public static readonly Dictionary<string, int> usefulApplianceDictionary = new Dictionary<string, int>
+        {
+            { "Hob", ApplianceReferences.Hob },
+            { "Hob (Safe)", ApplianceReferences.HobSafe },
+            { "Hob (Danger)", ApplianceReferences.HobDanger },
+            { "Oven", ApplianceReferences.Oven },
+            { "Microwave", ApplianceReferences.Microwave },
+            { "Sink", ApplianceReferences.SinkNormal },
+            { "Power Sink", ApplianceReferences.SinkPower },
+            { "Soaking Sink", ApplianceReferences.SinkSoak },
+            { "Dishwasher", ApplianceReferences.DishWasher },
+            { "Large Sink", ApplianceReferences.SinkLarge },
+            { "Counter", ApplianceReferences.Countertop },
+            { "Workstation", ApplianceReferences.Workstation },
+            { "Freezer", ApplianceReferences.Freezer },
+            { "Prep Station", ApplianceReferences.PrepStation },
+            { "Frozen Prep Station", ApplianceReferences.FrozenPrepStation },
+            { "Research Desk", ApplianceReferences.BlueprintUpgradeDesk },
+            { "Copy Desk", ApplianceReferences.BlueprintCopyDesk },
+            { "Discount Desk", ApplianceReferences.BlueprintDiscountDesk },
+            { "Ordering Desk", ApplianceReferences.BlueprintOrderingDesk },
+            { "Grabber", ApplianceReferences.Grabber },
+            { "Smart Grabber", ApplianceReferences.GrabberSmart },
+            { "Rotatable Grabber", ApplianceReferences.GrabberRotatable },
+            { "Combiner", ApplianceReferences.Combiner },
+            { "Portioner", ApplianceReferences.Portioner },
+            { "Mixer", ApplianceReferences.Mixer },
+            { "Mixer (Pusher)", ApplianceReferences.MixerPusher },
+            { "Heated Mixer", ApplianceReferences.MixerHeated },
+            { "Rapid Mixer", ApplianceReferences.MixerRapid },
+            { "Auto Plater", ApplianceReferences.AutoPlater },
+            { "Pot Stack", ApplianceReferences.PotStack },
+            { "Serving Board Stack", ApplianceReferences.ServingBoardStack },
+        };
+
+        // Filler appliances by name -> GDO ID (QoL, decor, providers, etc.)
+        public static readonly Dictionary<string, int> fillerApplianceDictionary = new Dictionary<string, int>
+        {
+            { "Ice Dispenser", ApplianceReferences.IceDispenser },
+            { "Milk Dispenser", ApplianceReferences.MilkDispenser },
+            { "Mop Bucket", ApplianceReferences.MopBucket },
+            { "Lasting Mop", ApplianceReferences.MopBucketLasting },
+            { "Fast Mop", ApplianceReferences.MopBucketFast },
+            { "Robot Mop", ApplianceReferences.RobotMop },
+            { "Floor Buffer", ApplianceReferences.FloorBufferStation },
+            { "Robot Buffer", ApplianceReferences.RobotBuffer },
+            { "Breadsticks", ApplianceReferences.BreadstickBox },
+            { "Candles", ApplianceReferences.CandleBox },
+            { "Napkins", ApplianceReferences.NapkinBox },
+            { "Sharp Cutlery", ApplianceReferences.SharpCutlery },
+            { "Specials Menu", ApplianceReferences.SpecialsMenuBox },
+            { "Leftovers Bag", ApplianceReferences.LeftoversBagStation },
+            { "Supply Cabinet", ApplianceReferences.SupplyCabinet },
+            { "Host Stand", ApplianceReferences.HostStand },
+            { "Flower Pot", ApplianceReferences.FlowerPot },
+            { "Coffee Table", ApplianceReferences.CoffeeTable },
+            { "Food Display", ApplianceReferences.FoodDisplayStand },
+            { "Fire Extinguisher Holder", ApplianceReferences.FireExtinguisherHolder },
+            { "Plate Stack", ApplianceReferences.PlateStack },
+            { "Starting Plate Stack", ApplianceReferences.PlateStackStarting },
+            { "Wok Stack", ApplianceReferences.WokStack },
+            { "Lasagne Tray", ApplianceReferences.SourceLasagneTray },
+            { "Taco Tray", ApplianceReferences.ProviderTacoTray },
+            { "Mixing Bowls", ApplianceReferences.ProviderMixingBowls },
+            { "Big Cake Tin", ApplianceReferences.SourceBigCakeTin },
+            { "Brownie Tray", ApplianceReferences.SourceBrownieTray },
+            { "Cookie Tray", ApplianceReferences.SourceCookieTray },
+            { "Cupcake Tray", ApplianceReferences.SourceCupcakeTray },
+            { "Doughnut Tray", ApplianceReferences.SourceDoughnutTray },
+        };
+
         public static readonly Dictionary<int, int> customerCardDictionary = new Dictionary<int, int>()
         {
             { 1, UnlockCardReferences.Affordable },
@@ -142,7 +281,7 @@ namespace KitchenPlateupAP
             { 33, UnlockCardReferences.SlowProcesses },
             { 34, UnlockCardReferences.TippingCulture },
         };
-        //Trap Dictionary
+
         public static readonly Dictionary<int, string> trapDictionary = new Dictionary<int, string>()
         {
             { 20000, "EVERYTHING IS ON FIRE" },
@@ -167,9 +306,10 @@ namespace KitchenPlateupAP
             { DishReferences.HotdogBase, "Hot Dogs" },
             { DishReferences.BreakfastBase, "Breakfast" },
             { DishReferences.StirFryBase, "Stir Fry" },
+            { -1272159363, "Sandwiches" },
+            { 934171642, "Sundaes" },
         };
 
-        //ID comparison
         public static readonly Dictionary<string, int> dish_id_lookup = new Dictionary<string, int>
         {
             { "Salad", 101 },
@@ -186,7 +326,9 @@ namespace KitchenPlateupAP
             { "Tacos", 112 },
             { "Hot Dogs", 113 },
             { "Breakfast", 114 },
-            { "Stir Fry", 115 }
+            { "Stir Fry", 115 },
+            { "Sandwiches", 116 },
+            { "Sundaes", 117 }
         };
 
         public static readonly Dictionary<int, string> speedUpgradeMapping = new Dictionary<int, string>()
@@ -198,7 +340,6 @@ namespace KitchenPlateupAP
             { 14, "Speed Upgrade Clean" }
         };
 
-        // Dish Unlock IDs
         public static readonly Dictionary<string, int> dishUnlockIDs = new Dictionary<string, int>
         {
             { "Salad", 30101 },
@@ -215,7 +356,65 @@ namespace KitchenPlateupAP
             { "Tacos", 30112 },
             { "Hot Dogs", 30113 },
             { "Breakfast", 30114 },
-            { "Stir Fry", 30115 }
+            { "Stir Fry", 30115 },
+            { "Sandwiches", 30116 },
+            { "Sundaes", 30117 }
         };
+
+        // Static constructor ensures custom appliances are loaded as soon as the class is used.
+        static ProgressionMapping()
+        {
+            TryLoadCustomUsefulAppliances();
+        }
+
+        // Allow users to add custom GDO IDs via a JSON file next to the config.
+        // Path: Application.persistentDataPath/PlateUpAPConfig/custom_appliances.json
+        // Format: [ 123456, 654321, ... ]
+        private static void TryLoadCustomUsefulAppliances()
+        {
+            try
+            {
+                // Resolve the same folder used by Mod.TryWarmupConfig
+                string folder = Path.Combine(UnityEngine.Application.persistentDataPath, "PlateUpAPConfig");
+                string path = Path.Combine(folder, "custom_appliances.json");
+
+                if (!File.Exists(path))
+                    return;
+
+                string json = File.ReadAllText(path);
+                var ids = JsonConvert.DeserializeObject<List<int>>(json) ?? new List<int>();
+                if (ids.Count == 0)
+                    return;
+
+                // Merge into usefulApplianceDictionary (values used for random selection)
+                foreach (int gdoId in ids)
+                {
+                    // Skip invalid/zero
+                    if (gdoId == 0)
+                        continue;
+
+                    // Validate GDO exists in GameData to prevent bad entries
+                    bool exists =
+                        KitchenData.GameData.Main.TryGet<KitchenData.Appliance>(gdoId, out _) ||
+                        KitchenData.GameData.Main.TryGet<KitchenData.Decor>(gdoId, out _);
+
+                    if (!exists)
+                        continue;
+
+                    // Use a synthetic key to avoid collisions; dictionary keys are names, values are GDO IDs.
+                    string key = $"Custom_{gdoId}";
+
+                    if (!usefulApplianceDictionary.ContainsKey(key))
+                    {
+                        usefulApplianceDictionary[key] = gdoId;
+                    }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                // Do not throw on bad file; keep stock behavior.
+                UnityEngine.Debug.LogWarning($"[ProgressionMapping] Failed to load custom appliances: {ex.Message}");
+            }
+        }
     }
 }

@@ -2395,7 +2395,7 @@ namespace KitchenPlateupAP
             }
         }
 
-        // Increments the franchise completion count and sends the franchise location check.
+        // Increments the franchise completion count and sends the franchise location check
         private void IncrementFranchiseAndCheckGoal()
         {
             timesFranchised++;

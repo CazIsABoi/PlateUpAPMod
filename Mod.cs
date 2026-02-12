@@ -45,7 +45,7 @@ namespace KitchenPlateupAP
     {
         public const string MOD_GUID = "com.caz.plateupap";
         public const string MOD_NAME = "PlateupAP";
-        public const string MOD_VERSION = "0.2.3.2";
+        public const string MOD_VERSION = "0.2.3.3";
         public const string MOD_AUTHOR = "Caz";
         public const string MOD_GAMEVERSION = ">=1.1.9";
         public static int TOTAL_SCENES_LOADED = 0;
@@ -86,8 +86,9 @@ namespace KitchenPlateupAP
         private static int dayLeaseInterval = 5;
         public static int MoneyCap = 10;
         private const int MoneyCapIncrementStep = 10;
+        private bool wasInLobbyLastFrame = false;
 
-        // New: counts from slot data (defaults per spec = 5)
+        // Counts from slot data (defaults per spec = 5)
         private static int playerSpeedUpgradeCount = 5;
         private static int applianceSpeedUpgradeCount = 5;
 
@@ -765,9 +766,8 @@ namespace KitchenPlateupAP
         {
             if (ArchipelagoConnectionManager.ConnectionSuccessful)
             {
-                // Run seeded randomization now that we are connected
+                upgradesRandomized = false;
                 TryRandomizeUpgradesOnce();
-
                 RetrieveSlotData(); // Fetch slot data
 
                 // Load persistence once per connection (before applying past items)
@@ -1092,11 +1092,18 @@ namespace KitchenPlateupAP
 
             franchiseScreen = HasSingleton<SFranchiseBuilderMarker>();
             loseScreen = HasSingleton<SGameOver>();
-            inLobby = HasSingleton<SFranchiseMarker>();
-            SceneManager.sceneLoaded += (scene, loadScene) =>
+
+            bool currentLobbyState = HasSingleton<SFranchiseMarker>();
+            if (!currentLobbyState && wasInLobbyLastFrame)
             {
-                Logger.LogInfo($"Scene: {scene.name}");
-            };
+                itemsQueuedThisLobby = false;
+            }
+            inLobby = currentLobbyState;
+            wasInLobbyLastFrame = currentLobbyState;
+             SceneManager.sceneLoaded += (scene, loadScene) =>
+             {
+                 Logger.LogInfo($"Scene: {scene.name}");
+             };
 
             // Ensure dish pedestal is spawned as soon as we enter the lobby
             if (inLobby && !dishPedestalSpawned && LockedDishes.GetAvailableDishes().Any())
@@ -1151,14 +1158,7 @@ namespace KitchenPlateupAP
             }
             else if (inLobby && !itemsQueuedThisLobby)
             {
-                suppressNextDeathLink = false;
-                firstCycleCompleted = false;
-                previousWasDay = false;
-                franchised = false;
-                lost = false;
-                stars = 0;
-                lastDay = 0;
-                dayID = ComputeRunBaseOffset(timesFranchised); // ensure correct base for this run
+                ResetStateForLobbyEntry();
 
                 Logger.LogInfo("[Lobby] Entered lobby. Preparing to queue items for next run...");
 
@@ -1343,11 +1343,9 @@ namespace KitchenPlateupAP
 
         private void OnItemReceived(IReceivedItemsHelper helper)
         {
-            // Dequeue now; we persist non-speed items so they survive restarts
             ItemInfo info = helper.DequeueItem();
-
             long itemIdLong = info.ItemId;
-            int checkId = (int)itemIdLong; // our mappings use int keys
+            int checkId = (int)itemIdLong;
             long locationId = info.LocationId;
 
             string itemName = helper.GetItemName(itemIdLong);
@@ -1355,27 +1353,9 @@ namespace KitchenPlateupAP
 
             Logger.LogInfo($"[OnItemReceived] Got item '{itemName}' (ID {itemIdLong}) from location '{locationName}' (ID {locationId})");
 
-            // 1) Dish unlock by ID (preferred)
-            var dishById = ProgressionMapping.dishUnlockIDs.FirstOrDefault(kv => kv.Value == checkId);
-            if (!string.IsNullOrEmpty(dishById.Key))
-            {
-                string dishName = dishById.Key;
-                int dishGdoId = ProgressionMapping.dishDictionary
-                    .FirstOrDefault(kv => string.Equals(kv.Value, dishName, StringComparison.OrdinalIgnoreCase))
-                    .Key;
+            if (TryHandleDishUnlockFromItem(checkId, itemName))
+                return;
 
-                if (dishGdoId != 0 && KitchenData.GameData.Main.TryGet<Dish>(dishGdoId, out _))
-                {
-                    PersistUnlockedDish(dishGdoId);
-                    LockedDishes.AddUnlockedDishes(new[] { dishGdoId }); // additive
-                    DishId = dishGdoId;
-                    Logger.LogInfo($"[DishUnlock] Unlocked dish '{dishName}' via item ID {checkId} (GDO ID: {dishGdoId}).");
-                    return;
-                }
-                Logger.LogWarning($"[DishUnlock] Could not resolve '{dishName}' to a valid GDO Dish ID.");
-            }
-
-            // Lease item special case
             if (checkId == 15)
             {
                 Logger.LogInfo("[OnItemReceived] Received Day Lease");
@@ -1383,7 +1363,6 @@ namespace KitchenPlateupAP
                 return;
             }
 
-            // Traps
             if (ProgressionMapping.trapDictionary.ContainsKey(checkId))
             {
                 Logger.LogWarning($"[OnItemReceived] Received TRAP: {ProgressionMapping.trapDictionary[checkId]}!");
@@ -1595,7 +1574,11 @@ namespace KitchenPlateupAP
                             }
                             break;
                     }
+                    continue;
                 }
+
+                string itemName = session.Items.GetItemName(itemId);
+                TryHandleDishUnlockFromItem(itemId, itemName);
             }
         }
 
@@ -1698,10 +1681,12 @@ namespace KitchenPlateupAP
             itemsQueuedThisLobby = false;
             itemsSpawnedThisRun = false;
             franchisePending = false;
-
+            
             lastDay = 0;
             stars = 0;
-
+            ResetStateForLobbyEntry();
+            itemsQueuedThisLobby = false;
+            franchisePending = false;
 
             Logger.LogInfo("[PlateupAP] Game reset complete. Ready for a new run.");
         }
@@ -1796,7 +1781,7 @@ namespace KitchenPlateupAP
             string itemName = session.Items.GetItemName(checkId);
             if (string.IsNullOrEmpty(itemName))
             {
-                Logger.LogWarning("[Spawn] Skipping invalid item ID: " + checkId);
+                Logger.LogWarning("[Spawn] Skipping speed upgrade item ID: " + checkId);
                 return;
             }
 
@@ -2394,6 +2379,21 @@ namespace KitchenPlateupAP
                 PersistenceManager.SaveSpeedState(currentIdentity, state);
             }
         }
+        private void ResetStateForLobbyEntry()
+        {
+            suppressNextDeathLink = false;
+            firstCycleCompleted = false;
+            previousWasDay = false;
+            franchised = false;
+            lost = false;
+            stars = 0;
+            lastDay = 0;
+            dayTransitionProcessed = false;
+            itemsSpawnedThisRun = false;
+            moneyClampedThisPrep = false;
+            loggedCardThisCycle = false;
+            dayID = ComputeRunBaseOffset(timesFranchised);
+        }
 
         // Increments the franchise completion count and sends the franchise location check
         private void IncrementFranchiseAndCheckGoal()
@@ -2492,6 +2492,64 @@ namespace KitchenPlateupAP
             {
                 Logger.LogWarning("[Randomizer] Failed to apply upgrade randomization: " + ex.Message);
             }
+        }
+
+        public void TriggerUpgradeRandomizationForDebug()
+        {
+            var data = KitchenData.GameData.Main;
+            if (data == null)
+            {
+                ChatManager.AddSystemMessage("Upgrade randomization failed: GameData not ready.");
+                return;
+            }
+
+            int seed = ComputeDeterministicSeed();
+            try
+            {
+                RandomUpgradeMapper.Apply(data, seed);
+                upgradesRandomized = true;
+                Logger?.LogInfo($"[Randomizer][Debug] Forced upgrade randomization with seed {seed}.");
+                ChatManager.AddSystemMessage($"Upgrade pools randomized (seed {seed}).");
+            }
+            catch (Exception ex)
+            {
+                Logger?.LogWarning("[Randomizer][Debug] Randomization failed: " + ex.Message);
+                ChatManager.AddSystemMessage("Upgrade randomization failed: " + ex.Message);
+            }
+        }
+
+        private bool TryHandleDishUnlockFromItem(int checkId, string itemName)
+        {
+            string dishName = null;
+
+            var dishById = ProgressionMapping.dishUnlockIDs.FirstOrDefault(kv => kv.Value == checkId);
+            if (!string.IsNullOrEmpty(dishById.Key))
+                dishName = dishById.Key;
+
+            if (dishName == null && !string.IsNullOrWhiteSpace(itemName) &&
+                itemName.StartsWith("Unlock:", StringComparison.OrdinalIgnoreCase))
+            {
+                dishName = itemName.Substring("Unlock:".Length).Trim();
+            }
+
+            if (string.IsNullOrEmpty(dishName))
+                return false;
+
+            int dishGdoId = ProgressionMapping.dishDictionary
+                .FirstOrDefault(kv => string.Equals(kv.Value, dishName, StringComparison.OrdinalIgnoreCase))
+                .Key;
+
+            if (dishGdoId == 0 || !KitchenData.GameData.Main.TryGet<Dish>(dishGdoId, out _))
+            {
+                Logger.LogWarning($"[DishUnlock] Could not resolve '{dishName}' to a valid GDO Dish ID.");
+                return false;
+            }
+
+            PersistUnlockedDish(dishGdoId);
+            LockedDishes.AddUnlockedDishes(new[] { dishGdoId });
+            DishId = dishGdoId;
+            Logger.LogInfo($"[DishUnlock] Unlocked dish '{dishName}' via item ID {checkId} (GDO ID: {dishGdoId}).");
+            return true;
         }
     }
 }

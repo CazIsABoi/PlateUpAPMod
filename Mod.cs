@@ -45,7 +45,7 @@ namespace KitchenPlateupAP
     {
         public const string MOD_GUID = "com.caz.plateupap";
         public const string MOD_NAME = "PlateupAP";
-        public const string MOD_VERSION = "0.2.3.3";
+        public const string MOD_VERSION = "0.2.4.4";
         public const string MOD_AUTHOR = "Caz";
         public const string MOD_GAMEVERSION = ">=1.1.9";
         public static int TOTAL_SCENES_LOADED = 0;
@@ -114,6 +114,8 @@ namespace KitchenPlateupAP
         private bool franchisePending = false;
         private bool moneyClampedThisPrep = false;
         private bool forceSpawnRequested = false;
+        private bool wallLastDaySyncedThisKitchen = false;
+        private bool moneyClampPending = false;
 
         // Flag to prevent repeated logging during a cycle.
         private static bool loggedCardThisCycle = false;
@@ -122,6 +124,8 @@ namespace KitchenPlateupAP
         private bool itemsSpawnedThisRun = false;
         private static Dictionary<int, float> playerBaseSpeeds = new Dictionary<int, float>();
         private static bool deferredItemHistoryApplied = false;
+        private int currentDishDayCount = 0;
+        private int dishIdTrackedForDayCount = 0;
 
         //Modifying player values
         // Build tiers dynamically from slot data: start 0.5, + (1.0 / N) per upgrade, final 1.5 at N upgrades; if N==0 -> [1.0]
@@ -387,6 +391,7 @@ namespace KitchenPlateupAP
                                 PersistLastSelectedDishes(selectedDishes);
 
                                 DishId = baselineGdoId; // default currently-selected dish
+                                ResetDishDayCounter(DishId);
                                 Logger.LogInfo($"[PlateupAP] Baseline dish unlocked: '{firstDishName}' (GDO ID: {baselineGdoId})");
                             }
                             else
@@ -802,15 +807,21 @@ namespace KitchenPlateupAP
                         if (pendingSpawnState.PendingItemIDs.Count > 0)
                         {
                             Logger.LogInfo($"[Persistence] Restored {pendingSpawnState.PendingItemIDs.Count} pending items to spawn queue.");
-                            foreach (int id in pendingSpawnState.PendingItemIDs)
+                            var dishUnlockIds = new HashSet<int>(ProgressionMapping.dishUnlockIDs.Values);
+                            foreach (int id in pendingSpawnState.PendingItemIDs.ToList())
                             {
+                                if (id == 15 || id == 16 || dishUnlockIds.Contains(id))
+                                {
+                                    pendingSpawnState.PendingItemIDs.Remove(id);
+                                    continue;
+                                }
                                 if (!spawnQueue.Any(x => (int)x.ItemId == id))
                                     spawnQueue.Enqueue(CreateItemInfoForQueue(id));
                             }
                         }
-                    }
-                    persistenceLoaded = true;
-                }
+                     }
+                     persistenceLoaded = true;
+                 }
 
                 // Re-apply upgrades from session history (will clamp; persistence prevents over-increment)
                 Logger.LogInfo("[Archipelago] Re-processing all previously received items...");
@@ -1118,179 +1129,93 @@ namespace KitchenPlateupAP
 
             if (HasSingleton<SKitchenMarker>())
             {
-                UpdateDayCycle();
-                CheckReceivedItems();
-            }
+                 if (!wallLastDaySyncedThisKitchen)
+                 {
+                     SyncLastDayWithWall();
+                 }
+                 if (moneyClampPending)
+                 {
+                     ClampMoneyToCap();
+                     moneyClampPending = false;
+                 }
+                 UpdateDayCycle();
+                 CheckReceivedItems();
+             }
+             else
+             {
+                 wallLastDaySyncedThisKitchen = false;
+             }
 
-            if (session == null || session.Locations == null)
-            {
-                return;
-            }
-            else if (goal == 0 && franchisePending)
-            {
-                timesFranchised++;
-                int franchiseTimesId = ComputeFranchiseTimesLocationId(timesFranchised);
-                session.Locations.CompleteLocationChecks(franchiseTimesId);
-                dayID = ComputeRunBaseOffset(timesFranchised);
-                Logger.LogInfo($"[Franchise Goal] Franchise completion recorded. Total: {timesFranchised}, sent check ID={franchiseTimesId}, next run base={dayID}");
+             if (session == null || session.Locations == null)
+             {
+                 return;
+             }
+             else if (goal == 0 && franchisePending)
+             {
+                 timesFranchised++;
+                 int franchiseTimesId = ComputeFranchiseTimesLocationId(timesFranchised);
+                 session.Locations.CompleteLocationChecks(franchiseTimesId);
+                 dayID = ComputeRunBaseOffset(timesFranchised);
+                 Logger.LogInfo($"[Franchise Goal] Franchise completion recorded. Total: {timesFranchised}, sent check ID={franchiseTimesId}, next run base={dayID}");
 
-                if (timesFranchised >= franchiseCount && franchiseCount > 0)
-                {
-                    Logger.LogInfo("Franchise goal reached! Sending goal complete.");
-                    SendGoalComplete();
-                }
+                 if (timesFranchised >= franchiseCount && franchiseCount > 0)
+                 {
+                     Logger.LogInfo("Franchise goal reached! Sending goal complete.");
+                     SendGoalComplete();
+                 }
 
-                franchisePending = false;
-            }
-            else if (loseScreen && !lost)
-            {
-                Logger.LogInfo("You Lost the Run! Sending loss check (ID 100000)");
-                HandleGameReset();
-                lastDay = 0;
-                session.Locations.CompleteLocationChecks(100000);
-                lost = true;
+                 franchisePending = false;
+             }
+             else if (loseScreen && !lost)
+             {
+                 Logger.LogInfo("You Lost the Run! Sending loss check (ID 100000)");
+                 HandleGameReset();
+                 lastDay = 0;
+                 session.Locations.CompleteLocationChecks(100000);
+                 lost = true;
 
-                if (deathLinkService != null)
-                {
-                    SendDeathLink();
-                }
+                 if (deathLinkService != null)
+                 {
+                     SendDeathLink();
+                 }
 
-            }
-            else if (inLobby && !itemsQueuedThisLobby)
-            {
-                ResetStateForLobbyEntry();
+             }
+             else if (inLobby && !itemsQueuedThisLobby)
+             {
+                 ResetStateForLobbyEntry();
 
-                Logger.LogInfo("[Lobby] Entered lobby. Preparing to queue items for next run...");
+                 Logger.LogInfo("[Lobby] Entered lobby. Preparing to queue items for next run...");
 
-                if (spawnQueue.Count == 0)
-                {
-                    QueueItemsFromReceivedPool(itemsKeptPerRun);
-                    Logger.LogInfo($"[Lobby] {spawnQueue.Count} items queued for next run.");
-                }
-                else
-                {
-                    Logger.LogInfo("[Lobby] Items are already queued. Skipping queueing.");
-                }
+                 if (spawnQueue.Count == 0)
+                 {
+                     QueueItemsFromReceivedPool(itemsKeptPerRun);
+                     Logger.LogInfo($"[Lobby] {spawnQueue.Count} items queued for next run.");
+                 }
+                 else
+                 {
+                     Logger.LogInfo("[Lobby] Items are already queued. Skipping queueing.");
+                 }
 
-                itemsQueuedThisLobby = true;
-            }
+                 itemsQueuedThisLobby = true;
+             }
 
-            if (deathLinkResetToLastStarPending)
-            {
-                deathLinkResetToLastStarPending = false;
-                if (!HasSingleton<SDay>())
-                {
-                    Logger.LogError("[PlateupAP] SDay singleton not found. Cannot do star reset.");
-                }
-                else
-                {
-                    ResetToLastStar();
-                }
-            }
+             if (deathLinkResetToLastStarPending)
+             {
+                 deathLinkResetToLastStarPending = false;
+                 if (!HasSingleton<SDay>())
+                 {
+                     Logger.LogError("[PlateupAP] SDay singleton not found. Cannot do star reset.");
+                 }
+                 else
+                 {
+                     ResetToLastStar();
+                 }
+             }
 
             // Wall progression saving logic
             if (HasSingleton<SKitchenMarker>())
             {
-                EntityQuery wallQuery = GetEntityQuery(ComponentType.ReadOnly<CAppliance>());
-                using var entities = wallQuery.ToEntityArray(Allocator.Temp);
-
-                foreach (var entity in entities)
-                {
-                    var appliance = EntityManager.GetComponentData<CAppliance>(entity);
-
-                    if (appliance.ID == ApplianceReferences.WallPiece)
-                    {
-                        if (!EntityManager.HasComponent<CStoredLastDay>(entity))
-                        {
-                            EntityManager.AddComponentData(entity, new CStoredLastDay { Value = lastDay });
-                            Logger.LogInfo($"[Mod.cs] Stored lastDay={lastDay} in wall (entity {entity.Index})");
-                        }
-                        else
-                        {
-                            var stored = EntityManager.GetComponentData<CStoredLastDay>(entity);
-                            if (stored.Value != lastDay)
-                            {
-                                EntityManager.SetComponentData(entity, new CStoredLastDay { Value = lastDay });
-                                Logger.LogInfo($"[Mod.cs] Updated lastDay to {lastDay} in wall (entity {entity.Index})");
-                            }
-                        }
-
-                        break; // Only need one wall
-                    }
-                }
-            }
-
-            // --- Dish Card Reading Logic ---
-            // Create the query for player entities with CPlayer and CItemHolder.
-            EntityQuery playersWithItems = GetEntityQuery(new QueryHelper().All(typeof(CPlayer), typeof(CItemHolder)));
-            using var playerEntities = playersWithItems.ToEntityArray(Allocator.Temp);
-
-            for (int i = 0; i < playerEntities.Length; i++)
-            {
-                Entity player = playerEntities[i];
-                CItemHolder holder = EntityManager.GetComponentData<CItemHolder>(player);
-
-                if (holder.HeldItem != Entity.Null)
-                {
-                    Entity heldItem = holder.HeldItem;
-                    if (EntityManager.HasComponent<CDishChoice>(heldItem))
-                    {
-                        CDishChoice dishChoice = EntityManager.GetComponentData<CDishChoice>(heldItem);
-                        int newDishID = dishChoice.Dish; // Get the new selected dish ID
-
-                        // Check if the dish has changed while in the lobby
-                        if (inLobby && newDishID != DishId && newDishID != 0)
-                        {
-                            DishId = newDishID; // Update stored dish ID
-                            loggedCardThisCycle = false;
-
-                            // Retrieve the Dish game data object.
-                            Dish dishData = (Dish)GDOUtils.GetExistingGDO(DishId);
-                            Logger.LogInfo($"New selected dish in HQ: {dishData.Name}");
-
-                            if (ProgressionMapping.dishDictionary.TryGetValue(DishId, out string dishName) && !loggedCardThisCycle)
-                            {
-                                Logger.LogInfo($"Updated dish (via dictionary): {dishName}");
-                                loggedCardThisCycle = true;
-                            }
-                            else if (!loggedCardThisCycle)
-                            {
-                                Logger.LogInfo($"Dish with ID {DishId} not found in dictionary; using game data: {dishData.Name}");
-                                loggedCardThisCycle = true;
-                            }
-                        }
-                        break;
-                    }
-                }
-            }
-            ApplySpeedModifiers();
-            ApplyApplianceSpeedModifiers();
-
-            // In OnUpdate (anywhere after session null checks), add this one-shot deferred pass:
-            if (!deferredItemHistoryApplied && session != null && session.Items != null)
-            {
-                // Run once when the server has pushed the historical items
-                if (session.Items.AllItemsReceived != null && session.Items.AllItemsReceived.Count > 0)
-                {
-                    Logger.LogInfo("[Archipelago] Performing deferred item history re-processing...");
-                    ProcessAllReceivedItems();
-                    deferredItemHistoryApplied = true;
-                }
-            }
-
-            // Only process when the kitchen scene marker is present (safe point)
-            if (forceSpawnRequested)
-            {
-                if (HasSingleton<SKitchenMarker>())
-                {
-                    forceSpawnRequested = false;
-                    ForceSpawnAllQueuedItems();
-                }
-                else
-                {
-                    // Still not in kitchen; keep the request pending
-                    Logger.LogWarning("[Debug] Spawn request pending; not in kitchen yet.");
-                }
+                SyncLastDayWithWall(); // Keep wall storage up-to-date during kitchen frames
             }
         }
 
@@ -1360,13 +1285,20 @@ namespace KitchenPlateupAP
             {
                 Logger.LogInfo("[OnItemReceived] Received Day Lease");
                 KitchenPlateupAP.LeaseRequirementSystem.TriggerRefresh();
+                // Do not queue Day Lease items
+                pendingSpawnState.PendingItemIDs.Remove(checkId);
                 return;
             }
 
-            if (ProgressionMapping.trapDictionary.ContainsKey(checkId))
+            if (checkId == 16)
             {
-                Logger.LogWarning($"[OnItemReceived] Received TRAP: {ProgressionMapping.trapDictionary[checkId]}!");
-                ApplyTrapEffect(checkId);
+                int before = MoneyCap;
+                MoneyCap = Mathf.Clamp(MoneyCap + MoneyCapIncrementStep, 0, 999);
+                Logger.LogInfo($"[MoneyCap] Received 'Money Cap Increase' (ID 16). Cap increased from {before} to {MoneyCap}.");
+                moneyClampPending = true; // clamp on main thread in OnUpdate
+                // Ensure it never sits in pending/queue
+                pendingSpawnState.PendingItemIDs.Remove(checkId);
+                spawnQueue = new Queue<ItemInfo>(spawnQueue.Where(x => (int)x.ItemId != 16));
                 return;
             }
 
@@ -1489,8 +1421,10 @@ namespace KitchenPlateupAP
                 int before = MoneyCap;
                 MoneyCap = Mathf.Clamp(MoneyCap + MoneyCapIncrementStep, 0, 999);
                 Logger.LogInfo($"[MoneyCap] Received 'Money Cap Increase' (ID 16). Cap increased from {before} to {MoneyCap}.");
-                if (HasSingleton<SKitchenMarker>())
-                    ClampMoneyToCap();
+                moneyClampPending = true; // clamp on main thread in OnUpdate
+                // Ensure it never sits in pending/queue
+                pendingSpawnState.PendingItemIDs.Remove(checkId);
+                spawnQueue = new Queue<ItemInfo>(spawnQueue.Where(x => (int)x.ItemId != 16));
                 return;
             }
         }
@@ -1700,6 +1634,7 @@ namespace KitchenPlateupAP
             }
 
             HashSet<int> trapIDs = new HashSet<int>(ProgressionMapping.trapDictionary.Keys);
+            HashSet<int> dishUnlockIds = new HashSet<int>(ProgressionMapping.dishUnlockIDs.Values);
 
             // Log all received items from Archipelago
             Logger.LogInfo("[QueueItemsFromReceivedPool] Total received items count: " + session.Items.AllItemsReceived.Count);
@@ -1715,7 +1650,9 @@ namespace KitchenPlateupAP
                 .Select(item => (int)item.ItemId)
                 .Where(id =>
                     !ProgressionMapping.speedUpgradeMapping.ContainsKey(id) &&
-                    !trapIDs.Contains(id)
+                    !trapIDs.Contains(id) &&
+                    id != 15 && id != 16 &&
+                    !dishUnlockIds.Contains(id) // do not queue dish unlock items
                 )
                 .ToList();
 
@@ -1741,39 +1678,42 @@ namespace KitchenPlateupAP
 
         private void QueueItemsForNextRun(int count)
         {
-            if (receivedItemPool.Count == 0)
-            {
-                Logger.LogWarning("No items available to queue for next run.");
-                return;
-            }
+             if (receivedItemPool.Count == 0)
+             {
+                 Logger.LogWarning("No items available to queue for next run.");
+                 return;
+             }
+ 
+            var dishUnlockIds = new HashSet<int>(ProgressionMapping.dishUnlockIDs.Values);
+            // Filter out speed upgrades and dish unlock items
+            var validItems = receivedItemPool
+                .Where(id => !ProgressionMapping.speedUpgradeMapping.ContainsKey(id) && !dishUnlockIds.Contains(id) && id != 15 && id != 16)
+                .ToList();
 
-            // Filter out speed upgrades
-            var validItems = receivedItemPool.Where(id => !ProgressionMapping.speedUpgradeMapping.ContainsKey(id)).ToList();
-
-            if (validItems.Count == 0)
-            {
-                Logger.LogWarning("All items in pool are speed upgrades. No items will be queued.");
-                return;
-            }
-
-            // Randomly select 'count' items (or all available if less than count)
-            var random = new System.Random();
-            var selectedItems = validItems.OrderBy(_ => random.Next()).Take(count).ToList();
-
-            foreach (int itemId in selectedItems)
-            {
-                if (!spawnQueue.Any(x => (int)x.ItemId == itemId))
-                {
-                    Logger.LogInfo($"Queuing item ID {itemId} for next run.");
-                    spawnQueue.Enqueue(CreateItemInfoForQueue(itemId));
-                }
-                else
-                {
-                    Logger.LogInfo($"Item ID {itemId} already queued. Skipping.");
-                }
-
-            }
-        }
+             if (validItems.Count == 0)
+             {
+                 Logger.LogWarning("All items in pool are speed upgrades. No items will be queued.");
+                 return;
+             }
+ 
+             // Randomly select 'count' items (or all available if less than count)
+             var random = new System.Random();
+             var selectedItems = validItems.OrderBy(_ => random.Next()).Take(count).ToList();
+ 
+             foreach (int itemId in selectedItems)
+             {
+                 if (!spawnQueue.Any(x => (int)x.ItemId == itemId))
+                 {
+                     Logger.LogInfo($"Queuing item ID {itemId} for next run.");
+                     spawnQueue.Enqueue(CreateItemInfoForQueue(itemId));
+                 }
+                 else
+                 {
+                     Logger.LogInfo($"Item ID {itemId} already queued. Skipping.");
+                 }
+ 
+             }
+         }
 
         private void ProcessSpawn(ItemInfo info)
         {
@@ -2091,7 +2031,9 @@ namespace KitchenPlateupAP
 
         private void DoDishChecks(int dayNumber)
         {
-            if (checksDisabled == true) return;
+            if (checksDisabled)
+                return;
+
             if (!ProgressionMapping.dishDictionary.TryGetValue(DishId, out string dishName))
             {
                 Logger.LogWarning($"[Dish Check] Dish ID {DishId} not found in dictionary.");
@@ -2104,9 +2046,15 @@ namespace KitchenPlateupAP
                 return;
             }
 
-            int dishCheckID = (dishID * 10000) + dayNumber;
+            if (dishIdTrackedForDayCount != DishId)
+            {
+                ResetDishDayCounter(DishId);
+            }
+
+            currentDishDayCount++;
+            int dishCheckID = (dishID * 10000) + currentDishDayCount;
             session.Locations.CompleteLocationChecks(dishCheckID);
-            Logger.LogInfo($"[Dish Check] Day={dayNumber}, dish='{dishName}', ID={dishCheckID}");
+            Logger.LogInfo($"[Dish Check] RunDay={dayNumber}, dishDay={currentDishDayCount}, dish='{dishName}', ID={dishCheckID}");
         }
 
 
@@ -2379,6 +2327,12 @@ namespace KitchenPlateupAP
                 PersistenceManager.SaveSpeedState(currentIdentity, state);
             }
         }
+        private void ResetDishDayCounter(int newDishId)
+        {
+            dishIdTrackedForDayCount = newDishId;
+            currentDishDayCount = 0;
+        }
+
         private void ResetStateForLobbyEntry()
         {
             suppressNextDeathLink = false;
@@ -2393,6 +2347,7 @@ namespace KitchenPlateupAP
             moneyClampedThisPrep = false;
             loggedCardThisCycle = false;
             dayID = ComputeRunBaseOffset(timesFranchised);
+            ResetDishDayCounter(DishId);
         }
 
         // Increments the franchise completion count and sends the franchise location check
@@ -2550,6 +2505,45 @@ namespace KitchenPlateupAP
             DishId = dishGdoId;
             Logger.LogInfo($"[DishUnlock] Unlocked dish '{dishName}' via item ID {checkId} (GDO ID: {dishGdoId}).");
             return true;
+        }
+
+        private void SyncLastDayWithWall()
+        {
+            wallLastDaySyncedThisKitchen = true;
+
+            EntityQuery wallQuery = GetEntityQuery(ComponentType.ReadOnly<CAppliance>());
+            using var entities = wallQuery.ToEntityArray(Allocator.Temp);
+
+            for (int i = 0; i < entities.Length; i++)
+            {
+                Entity entity = entities[i];
+                var appliance = EntityManager.GetComponentData<CAppliance>(entity);
+                if (appliance.ID != ApplianceReferences.WallPiece)
+                    continue;
+
+                bool hasStored = EntityManager.HasComponent<CStoredLastDay>(entity);
+                int storedValue = hasStored ? EntityManager.GetComponentData<CStoredLastDay>(entity).Value : 0;
+
+                int chosen = hasStored ? Math.Max(lastDay, storedValue) : lastDay;
+                if (chosen != lastDay)
+                {
+                    Logger.LogInfo($"[Mod.cs] Restored lastDay from wall: stored={storedValue}, local={lastDay} -> using {chosen}");
+                    lastDay = chosen;
+                }
+
+                if (!hasStored)
+                {
+                    EntityManager.AddComponentData(entity, new CStoredLastDay { Value = lastDay });
+                    Logger.LogInfo($"[Mod.cs] Stored lastDay={lastDay} in wall (entity {entity.Index})");
+                }
+                else if (storedValue != lastDay)
+                {
+                    EntityManager.SetComponentData(entity, new CStoredLastDay { Value = lastDay });
+                    Logger.LogInfo($"[Mod.cs] Updated lastDay to {lastDay} in wall (entity {entity.Index})");
+                }
+
+                break; // Only need one wall
+            }
         }
     }
 }

@@ -1,7 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Net;             
+using System.Net;
+using System.Threading;
 using System.Threading.Tasks;
 using Archipelago.MultiClient.Net;
 using Archipelago.MultiClient.Net.Enums;
@@ -20,12 +21,14 @@ namespace KitchenPlateupAP
 
         private static ArchipelagoSession _session;
 
- 
         private static string _lastHost;
         private static int _lastPort;
         private static string _lastPlayerName;
         private static string _lastPassword;
         private static ItemsHandlingFlags _lastFlags;
+        private static CancellationTokenSource _reconnectCts;
+        private static bool _suppressReconnect;
+        private const int ReconnectDelaySeconds = 5;
 
         public static ArchipelagoSession Session
         {
@@ -90,7 +93,7 @@ namespace KitchenPlateupAP
 
             try
             {
-                await DisconnectAsync().ConfigureAwait(false);
+                await DisconnectAsync(suppressReconnect: true).ConfigureAwait(false);
 
                 _lastHost = host;
                 _lastPort = port;
@@ -161,8 +164,11 @@ namespace KitchenPlateupAP
             return await ConnectAsync(_lastHost, _lastPort, _lastPlayerName, _lastPassword, _lastFlags).ConfigureAwait(false);
         }
 
-        public static async Task DisconnectAsync(string reason = null)
+        public static async Task DisconnectAsync(string reason = null, bool suppressReconnect = false)
         {
+            _suppressReconnect = suppressReconnect;
+            _reconnectCts?.Cancel();
+
             var s = Session;
             if (s == null) return;
 
@@ -190,6 +196,7 @@ namespace KitchenPlateupAP
 
         private static void WireSession(ArchipelagoSession session)
         {
+            if (session == null) return;
             session.Socket.SocketOpened += OnSocketOpened;
             session.Socket.PacketReceived += OnPacketReceived;
             session.Socket.SocketClosed += OnSocketClosed;
@@ -200,6 +207,7 @@ namespace KitchenPlateupAP
         {
             try
             {
+                if (session == null) return;
                 session.Socket.SocketOpened -= OnSocketOpened;
                 session.Socket.PacketReceived -= OnPacketReceived;
                 session.Socket.SocketClosed -= OnSocketClosed;
@@ -221,12 +229,67 @@ namespace KitchenPlateupAP
                 IsConnected = false;
                 SafeInvokeDisconnected(reason);
             }
+            ScheduleReconnect(reason);
         }
 
         private static void OnErrorReceived(Exception ex, string message)
         {
             Logger.LogError("Socket error: " + message);
             if (ex != null) Logger.LogError(ex.GetBaseException().ToString());
+        }
+
+        private static void ScheduleReconnect(string reason)
+        {
+            if (_suppressReconnect)
+            {
+                _suppressReconnect = false;
+                return;
+            }
+
+            if (IsConnecting)
+                return;
+
+            // Don’t auto-reconnect on obvious auth/user failures
+            if (!string.IsNullOrWhiteSpace(reason) &&
+                (reason.IndexOf("login", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                 reason.IndexOf("auth", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                 reason.IndexOf("password", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                 reason.IndexOf("user request", StringComparison.OrdinalIgnoreCase) >= 0))
+            {
+                Logger.LogWarning("Not auto-reconnecting due to failure reason: " + reason);
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(_lastHost) || string.IsNullOrWhiteSpace(_lastPlayerName))
+            {
+                Logger.LogWarning("Cannot auto-reconnect: missing last connection info.");
+                return;
+            }
+
+            _reconnectCts?.Cancel();
+            _reconnectCts = new CancellationTokenSource();
+            var token = _reconnectCts.Token;
+
+            Task.Run(async () =>
+            {
+                try
+                {
+                    var delaySeconds = ReconnectDelaySeconds + UnityEngine.Random.Range(0, 3); // small jitter
+                    Logger.LogWarning($"Connection lost ({reason ?? "unknown"}). Reconnecting in {delaySeconds}s...");
+                    await Task.Delay(TimeSpan.FromSeconds(delaySeconds), token);
+                    if (token.IsCancellationRequested)
+                        return;
+
+                    await ReconnectAsync().ConfigureAwait(false);
+                }
+                catch (TaskCanceledException)
+                {
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogWarning("Auto-reconnect attempt failed: " + ex.GetBaseException().Message);
+                }
+            }, token);
         }
 
         private static void OnPacketReceived(ArchipelagoPacketBase packet)

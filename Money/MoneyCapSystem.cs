@@ -9,9 +9,6 @@ namespace KitchenPlateupAP
     [UpdateInGroup(typeof(SimulationSystemGroup))]
     public class MoneyCapSystem : GenericSystemBase, IModSystem
     {
-        // Local cap so we don't depend on Mod.MoneyCap
-        private const int Cap = 500; // adjust as desired
-
         protected override void OnUpdate()
         {
             // Only clamp when we're in an actual run/kitchen
@@ -21,7 +18,7 @@ namespace KitchenPlateupAP
             // Clamp SMoney singleton
             if (Require(out SMoney money))
             {
-                int cap = Mathf.Max(0, Cap);
+                int cap = Mathf.Max(0, Mod.MoneyCap);
                 if (money.Amount > cap)
                 {
                     int before = money.Amount;

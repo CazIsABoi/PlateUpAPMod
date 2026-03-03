@@ -109,9 +109,11 @@ namespace KitchenPlateupAP
             {
                 var tags = a.ShoppingTags;
 
-                // Allowed categories: normal/basic/decoration
+                bool hasNoTags = tags == ShoppingTags.None;
+
+                // Allowed categories: normal/basic/decoration/tech/etc
                 bool allowed =
-                    tags.HasFlag(ShoppingTags.None) ||
+                    hasNoTags ||
                     tags.HasFlag(ShoppingTags.Basic) ||
                     tags.HasFlag(ShoppingTags.Misc) ||
                     tags.HasFlag(ShoppingTags.Automation) ||
@@ -121,11 +123,10 @@ namespace KitchenPlateupAP
                     tags.HasFlag(ShoppingTags.Plumbing) ||
                     tags.HasFlag(ShoppingTags.Decoration);
 
-                // Exclude event/seasonal/blueprint/special
+                // Exclude event/seasonal/special only
                 if (tags.HasFlag(ShoppingTags.Halloween) ||
                     tags.HasFlag(ShoppingTags.Christmas) ||
-                    tags.HasFlag(ShoppingTags.SpecialEvent) ||
-                    tags.HasFlag(ShoppingTags.None))
+                    tags.HasFlag(ShoppingTags.SpecialEvent))
                 {
                     return false;
                 }
@@ -134,8 +135,7 @@ namespace KitchenPlateupAP
             }
             catch
             {
-                // If tags differ across versions, default to allowing basic/decoration via name heuristics
-                var name = (a?.Name ?? "").ToLowerInvariant();
+                var name = (a?.Name ?? string.Empty).ToLowerInvariant();
                 if (name.Contains("table") || name.Contains("counter") || name.Contains("decor"))
                     return true;
                 return false;

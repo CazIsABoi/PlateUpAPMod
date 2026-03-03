@@ -376,18 +376,8 @@ namespace PlateupAP.UI
                 {
                     AddSystemMessage("MessageLog subscription failed: " + ex.Message);
                 }
-
-                session.Socket.PacketReceived += packet =>
-                {
-                    if (packet is PrintJsonPacket print)
-                    {
-                        string formatted = BuildFormattedPacketMessage(print.Data, out UnityColor color);
-                        AddMessage(ChatCategory.Normal, formatted, color);
-                    }
-                };
             }
         }
-
         private void OnStructuredLogMessage(APLogMessage msg)
         {
             try

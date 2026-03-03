@@ -3,6 +3,7 @@ using System.Linq;
 using Unity.Entities;
 using Unity.Collections;
 using Kitchen;
+using KitchenData;
 
 namespace KitchenPlateupAP
 {
@@ -41,66 +42,110 @@ namespace KitchenPlateupAP
         // Additive API: used by item unlocks
         public static void AddUnlockedDishes(IEnumerable<int> dishIDs)
         {
-            if (dishIDs == null) return;
-            foreach (var id in dishIDs)
+            if (dishIDs == null)
+                return;
+
+            foreach (int id in dishIDs)
+            {
                 _unlockedDishIDs.Add(id);
+            }
+
             Mod.Logger?.LogInfo($"[LockedDishes] Add -> {string.Join(", ", _unlockedDishIDs)}");
         }
 
-        public static IEnumerable<int> GetAvailableDishes() => _unlockedDishIDs;
+        public static IEnumerable<int> GetAvailableDishes()
+        {
+            return _unlockedDishIDs;
+        }
     }
 
-    [UpdateInGroup(typeof(InitializationSystemGroup))]
+    [UpdateInGroup(typeof(SimulationSystemGroup))]
+    [UpdateAfter(typeof(CreateDishOptions))]
     [UpdateAfter(typeof(GrantUpgrades))]
-    [UpdateBefore(typeof(CreateDishOptions))]
     public class FilterDishUpgradesSystem : SystemBase
     {
+        private bool _loggedThisFrame;
+
         protected override void OnUpdate()
         {
-            // Only filter when connected AND locking is enabled to avoid affecting normal gameplay.
+            _loggedThisFrame = false;
+
             if (!ArchipelagoConnectionManager.ConnectionSuccessful || ArchipelagoConnectionManager.Session == null)
+            {
+                LogSkip("no AP session");
                 return;
+            }
 
             if (!LockedDishes.IsLockingEnabled())
+            {
+                LogSkip("locking disabled");
                 return;
+            }
 
-            var allowed = LockedDishes.GetAvailableDishes()?.ToHashSet() ?? new HashSet<int>();
+            HashSet<int> allowed = LockedDishes.GetAvailableDishes()?.ToHashSet() ?? new HashSet<int>();
             if (allowed.Count == 0)
             {
-                // No baseline yet; don't remove vanilla content to avoid empty HQ.
+                LogSkip("allowed list empty");
                 return;
             }
 
-            var entityManager = EntityManager;
-            var query = GetEntityQuery(ComponentType.ReadOnly<CDishUpgrade>());
-            using var entities = query.ToEntityArray(Allocator.Temp);
+            EntityManager entityManager = EntityManager;
+            bool destroyedAny = false;
 
-            HashSet<int> existing = new HashSet<int>();
-
-            // Remove disallowed dish upgrades, track existing allowed ones
-            foreach (var entity in entities)
+            // Filter entities tagged explicitly as dish upgrades
+            EntityQuery dishUpgradeQuery = GetEntityQuery(ComponentType.ReadOnly<CDishUpgrade>());
+            using (NativeArray<Entity> entities = dishUpgradeQuery.ToEntityArray(Allocator.Temp))
             {
-                if (!entityManager.Exists(entity) || !entityManager.HasComponent<CDishUpgrade>(entity))
-                    continue;
-
-                var data = entityManager.GetComponentData<CDishUpgrade>(entity);
-                existing.Add(data.DishID);
-
-                if (!allowed.Contains(data.DishID))
+                foreach (Entity entity in entities)
                 {
-                    entityManager.DestroyEntity(entity);
+                    if (!entityManager.Exists(entity) || !entityManager.HasComponent<CDishUpgrade>(entity))
+                        continue;
+
+                    CDishUpgrade data = entityManager.GetComponentData<CDishUpgrade>(entity);
+                    if (!allowed.Contains(data.DishID))
+                    {
+                        entityManager.DestroyEntity(entity);
+                        destroyedAny = true;
+                    }
                 }
             }
 
-            // Create missing allowed dish upgrades
-            foreach (var dishId in allowed)
+            // Filter progression options that are actual dish cards (CreateDishOptions spawns these)
+            EntityQuery progressionQuery = GetEntityQuery(ComponentType.ReadOnly<CProgressionOption>());
+            using (NativeArray<Entity> entities = progressionQuery.ToEntityArray(Allocator.Temp))
             {
-                if (!existing.Contains(dishId))
+                foreach (Entity entity in entities)
                 {
-                    var newEntity = entityManager.CreateEntity(typeof(CDishUpgrade));
-                    entityManager.SetComponentData(newEntity, new CDishUpgrade { DishID = dishId });
+                    if (!entityManager.Exists(entity) || !entityManager.HasComponent<CProgressionOption>(entity))
+                        continue;
+
+                    CProgressionOption option = entityManager.GetComponentData<CProgressionOption>(entity);
+
+                    // Only act on entries that resolve to a Dish; ignore non-dish progression cards
+                    if (!GameData.Main.TryGet<Dish>(option.ID, out _))
+                        continue;
+
+                    if (!allowed.Contains(option.ID))
+                    {
+                        entityManager.DestroyEntity(entity);
+                        destroyedAny = true;
+                    }
                 }
             }
+
+            if (destroyedAny)
+            {
+                Mod.Logger?.LogInfo($"[LockedDishes] Filtered disallowed dish options. Allowed set: {string.Join(",", allowed)}");
+            }
+        }
+
+        private void LogSkip(string reason)
+        {
+            if (_loggedThisFrame)
+                return;
+
+            _loggedThisFrame = true;
+            Mod.Logger?.LogInfo($"[LockedDishes] Skipped filtering: {reason}. enabled={LockedDishes.IsLockingEnabled()}, allowed={string.Join(",", LockedDishes.GetAvailableDishes() ?? Enumerable.Empty<int>())}");
         }
     }
 }

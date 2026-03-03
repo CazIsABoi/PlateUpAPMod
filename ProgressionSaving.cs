@@ -16,6 +16,11 @@ namespace KitchenPlateupAP
 		public int Value;
 	}
 
+	public struct CStoredDishId : IComponentData
+	{
+		public int DishId;
+	}
+
 	[UpdateInGroup(typeof(SimulationSystemGroup))]
 	public class SaveProgressionSystem : SystemBase, IModSystem
 	{
@@ -34,6 +39,7 @@ namespace KitchenPlateupAP
 				if (appliance.ID == ApplianceReferences.WallPiece)
 				{
 					int lastDay = AccessLastDay();
+					int currentDish = Mod.Instance?.ActiveDishId ?? 0;
 
 					if (!EntityManager.HasComponent<CStoredLastDay>(entity))
 					{
@@ -47,6 +53,24 @@ namespace KitchenPlateupAP
 						{
 							EntityManager.SetComponentData(entity, new CStoredLastDay { Value = lastDay });
 							Mod.Logger.LogInfo($"[SaveProgressionSystem] Updated lastDay to {lastDay} in WallPiece (Entity {entity.Index})");
+						}
+					}
+
+					if (currentDish != 0)
+					{
+						if (!EntityManager.HasComponent<CStoredDishId>(entity))
+						{
+							EntityManager.AddComponentData(entity, new CStoredDishId { DishId = currentDish });
+							Mod.Logger.LogInfo($"[SaveProgressionSystem] Stored dish='{Mod.Instance?.GetDishName(currentDish)}' (GDO {currentDish}) in WallPiece (Entity {entity.Index})");
+						}
+						else
+						{
+							var storedDish = EntityManager.GetComponentData<CStoredDishId>(entity);
+							if (storedDish.DishId != currentDish)
+							{
+								EntityManager.SetComponentData(entity, new CStoredDishId { DishId = currentDish });
+								Mod.Logger.LogInfo($"[SaveProgressionSystem] Updated stored dish to '{Mod.Instance?.GetDishName(currentDish)}' (GDO {currentDish})");
+							}
 						}
 					}
 

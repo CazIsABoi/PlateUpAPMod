@@ -41,11 +41,11 @@ namespace KitchenPlateupAP
 
     }
 
-    public class Mod : BaseMod, IModSystem
+    public partial class Mod : BaseMod, IModSystem
     {
         public const string MOD_GUID = "com.caz.plateupap";
         public const string MOD_NAME = "PlateupAP";
-        public const string MOD_VERSION = "0.2.4.4";
+        public const string MOD_VERSION = "0.2.4.5";    
         public const string MOD_AUTHOR = "Caz";
         public const string MOD_GAMEVERSION = ">=1.1.9";
         public static int TOTAL_SCENES_LOADED = 0;
@@ -364,7 +364,7 @@ namespace KitchenPlateupAP
             {
                 Logger.LogInfo($"[PlateupAP] Full Slot Data: {JsonConvert.SerializeObject(slotData, Formatting.Indented)}");
 
-                // In RetrieveSlotData(), replace the selected_dishes handling so ONLY the first dish is unlocked as baseline
+                // In RetrieveSlotData(), replace the selected_dishes handling so ONLY the first dish (or starting_dish) is unlocked as baseline
                 if (slotData.TryGetValue("selected_dishes", out object rawDishes))
                 {
                     Logger.LogInfo($"[PlateupAP] Found selected_dishes in slot data: {rawDishes}");
@@ -372,6 +372,14 @@ namespace KitchenPlateupAP
                     {
                         selectedDishes = JsonConvert.DeserializeObject<List<string>>(rawDishes.ToString()) ?? new List<string>();
 
+                        // Optional explicit starting dish override
+                        string startingDishName = null;
+                        if (slotData.TryGetValue("starting_dish", out object rawStartingDish))
+                        {
+                            startingDishName = rawStartingDish?.ToString();
+                        }
+
+                        // Resolve all provided dish names to GDO IDs (for logging/persisting)
                         var resolvedDishIds = selectedDishes
                             .Select(name => ProgressionMapping.dishDictionary
                                 .FirstOrDefault(kv => string.Equals(kv.Value, name, StringComparison.OrdinalIgnoreCase)).Key)
@@ -379,15 +387,27 @@ namespace KitchenPlateupAP
                             .Distinct()
                             .ToList();
 
-                        if (resolvedDishIds.Count > 0)
+                        // Determine baseline dish: starting_dish if valid, else first of selected list
+                        int baselineDishId = 0;
+                        if (!string.IsNullOrWhiteSpace(startingDishName))
                         {
-                            LockedDishes.SetUnlockedDishes(resolvedDishIds);
+                            baselineDishId = ProgressionMapping.dishDictionary
+                                .FirstOrDefault(kv => string.Equals(kv.Value, startingDishName, StringComparison.OrdinalIgnoreCase)).Key;
+                        }
+                        if (baselineDishId == 0 && resolvedDishIds.Count > 0)
+                        {
+                            baselineDishId = resolvedDishIds[0];
+                        }
+
+                        if (baselineDishId != 0)
+                        {
+                            // Baseline only; other dishes stay locked until unlocked by items
+                            LockedDishes.SetUnlockedDishes(new[] { baselineDishId });
                             LockedDishes.EnableLocking();
-                            DishId = resolvedDishIds.Last();
-                            ResetDishDayCounter(DishId);
-                            PersistUnlockedDish(DishId);
+
+                            SetCurrentDish(baselineDishId, persist: false, resetDayCounter: false);
                             PersistLastSelectedDishes(selectedDishes);
-                            Logger.LogInfo($"[PlateupAP] Baseline dishes unlocked: {string.Join(", ", resolvedDishIds)}");
+                            Logger.LogInfo($"[PlateupAP] Baseline dish unlocked: {baselineDishId} (selected list: {string.Join(", ", resolvedDishIds)})");
                         }
                         else
                         {
@@ -760,9 +780,11 @@ namespace KitchenPlateupAP
         {
             if (ArchipelagoConnectionManager.ConnectionSuccessful)
             {
-                upgradesRandomized = false;
-                TryRandomizeUpgradesOnce();
-                RetrieveSlotData(); // Fetch slot data
+                EnsureItemsSubscription(); // subscribe early so lobby packets are handled
+                 upgradesRandomized = false;
+                 TryRandomizeUpgradesOnce();
+                 RetrieveSlotData(); // Fetch slot data
+                 EnsureDishLockingBaseline(); // <<< ensure we have a baseline to lock against
 
                 // Load persistence once per connection (before applying past items)
                 if (!persistenceLoaded)
@@ -819,6 +841,7 @@ namespace KitchenPlateupAP
                 deferredItemHistoryApplied = false; // arm second pass
                 Logger.LogInfo("[Archipelago] Re-processing all previously received location checks");
                 ReconstructProgressFromLocationChecks();
+                EnsureDishLockingBaseline(); // <<< re-check after item history
 
                 if (World != null)
                 {
@@ -1107,12 +1130,37 @@ namespace KitchenPlateupAP
              };
 
             // Ensure dish pedestal is spawned as soon as we enter the lobby
-            if (inLobby && !dishPedestalSpawned && LockedDishes.GetAvailableDishes().Any())
+            if (inLobby)
             {
+                UpdateDishFromHeldCards();
+
                 Logger.LogInfo("[OnUpdate] Forced dish card refresh in lobby.");
-                dishPedestalSpawned = true;
+                if (!dishPedestalSpawned && LockedDishes.GetAvailableDishes().Any())
+                {
+                    dishPedestalSpawned = true;
+                }
+
+                if (!itemsQueuedThisLobby)
+                {
+                    TryRefreshDishFromHeldCard();
+                    ResetStateForLobbyEntry();
+
+                    Logger.LogInfo("[Lobby] Entered lobby. Preparing to queue items for next run...");
+
+                    if (spawnQueue.Count == 0)
+                    {
+                        QueueItemsFromReceivedPool(itemsKeptPerRun);
+                        Logger.LogInfo($"[Lobby] {spawnQueue.Count} items queued for next run.");
+                    }
+                    else
+                    {
+                        Logger.LogInfo("[Lobby] Items are already queued. Skipping queueing.");
+                    }
+
+                    itemsQueuedThisLobby = true;
+                }
             }
-            else if (!inLobby)
+            else
             {
                 dishPedestalSpawned = false; // Reset flag when leaving lobby
             }
@@ -1172,7 +1220,7 @@ namespace KitchenPlateupAP
              }
              else if (inLobby && !itemsQueuedThisLobby)
              {
-                 TryRefreshDishFromHeldCard();
+                 UpdateDishFromHeldCards();
                  ResetStateForLobbyEntry();
 
                  Logger.LogInfo("[Lobby] Entered lobby. Preparing to queue items for next run...");
@@ -1213,24 +1261,31 @@ namespace KitchenPlateupAP
         // Spawning Items
         private void CheckReceivedItems()
         {
-            if (session == null || session.Items == null)
-            {
-                if (!sessionNotInitLogged)
-                {
+                        if (session == null || session.Items == null)
+                            {
+                               if (!sessionNotInitLogged)
+                                   {
                     Logger.LogError("Session items not yet initialized.");
                     sessionNotInitLogged = true;
-                }
-                return;
-            }
+                                    }
+                                return;
+                            }
+            
             sessionNotInitLogged = false;
+            EnsureItemsSubscription();
+        }
 
-            if (!itemsEventSubscribed)
-            {
-                // Use method group; delegate type matches event signature
-                session.Items.ItemReceived += OnItemReceived;
-                itemsEventSubscribed = true;
-                Logger.LogInfo("Subscribed to session.Items.ItemReceived.");
-            }
+        private void EnsureItemsSubscription()
+       {
+           if (itemsEventSubscribed)
+              return;
+
+            if (session == null || session.Items == null)
+                return;
+
+            session.Items.ItemReceived += OnItemReceived;
+            itemsEventSubscribed = true;
+            Logger.LogInfo("Subscribed to session.Items.ItemReceived (early).");
         }
 
         private void HandleRandomApplianceItem(int checkId)
@@ -1395,9 +1450,7 @@ namespace KitchenPlateupAP
 
                 if (dishGdoId != 0 && KitchenData.GameData.Main.TryGet<Dish>(dishGdoId, out var dish))
                 {
-                    PersistUnlockedDish(dishGdoId);
-                    LockedDishes.SetUnlockedDishes(new[] { dishGdoId });
-                    DishId = dishGdoId;
+                    SetCurrentDish(dishGdoId);
                     Logger.LogInfo($"Unlocked new dish: {dishName} (GDO ID: {dishGdoId})");
                 }
                 else
@@ -2493,7 +2546,9 @@ namespace KitchenPlateupAP
 
             PersistUnlockedDish(dishGdoId);
             LockedDishes.AddUnlockedDishes(new[] { dishGdoId });
+            LockedDishes.EnableLocking();
             DishId = dishGdoId;
+
             Logger.LogInfo($"[DishUnlock] Unlocked dish '{dishName}' via item ID {checkId} (GDO ID: {dishGdoId}).");
             return true;
         }
@@ -2501,53 +2556,18 @@ namespace KitchenPlateupAP
         // Refreshes DishId from the dish card the player is holding in the lobby.
         private bool TryRefreshDishFromHeldCard()
         {
-            if (!inLobby || playersWithItems == null)
+            int heldDishId = FindHeldDishId();
+            if (heldDishId == 0 || heldDishId == DishId)
                 return false;
 
-            using (var players = playersWithItems.ToEntityArray(Allocator.Temp))
-            {
-                for (int i = 0; i < players.Length; i++)
-                {
-                    if (!EntityManager.Exists(players[i]) || !EntityManager.HasComponent<CItemHolder>(players[i]))
-                        continue;
-
-                    var holder = EntityManager.GetComponentData<CItemHolder>(players[i]);
-                    Entity held = holder.HeldItem;
-                    if (held == Entity.Null || !EntityManager.Exists(held))
-                        continue;
-
-                    if (!EntityManager.HasComponent<CDishUpgrade>(held))
-                        continue;
-
-                    var upgrade = EntityManager.GetComponentData<CDishUpgrade>(held);
-                    int newDishId = upgrade.DishID;
-                    if (newDishId == 0)
-                        continue;
-
-                    DishId = newDishId;
-                    ResetDishDayCounter(DishId);
-                    PersistUnlockedDish(DishId);
-                    LockedDishes.AddUnlockedDishes(new[] { DishId });
-                    Logger.LogInfo($"[Dish Refresh] Set current dish from held card: GDO={DishId}");
-                    return true;
-                }
-            }
-
-            return false;
+            SetCurrentDish(heldDishId);
+            Logger.LogInfo($"[Dish Refresh] Set current dish from held card: GDO={DishId}");
+            return true;
         }
-        private void ReapplyMoneyCapFromHistory()
-        {
-            if (session?.Items?.AllItemsReceived == null)
-                return;
 
-            int upgradeCount = session.Items.AllItemsReceived.Count(item => (int)item.ItemId == 16);
-            MoneyCap = Mathf.Clamp(baseMoneyCap + upgradeCount * MoneyCapIncrementStep, 0, 999);
-            moneyClampPending = true;
-            Logger.LogInfo($"[MoneyCap] Re-applied cap (base={baseMoneyCap}, upgrades={upgradeCount}) => {MoneyCap}");
-        }
         private void SyncLastDayWithWall()
-         {
-             wallLastDaySyncedThisKitchen = true;
+        {
+            wallLastDaySyncedThisKitchen = true;
 
             EntityQuery wallQuery = GetEntityQuery(ComponentType.ReadOnly<CAppliance>());
             using var entities = wallQuery.ToEntityArray(Allocator.Temp);
@@ -2580,8 +2600,127 @@ namespace KitchenPlateupAP
                     Logger.LogInfo($"[Mod.cs] Updated lastDay to {lastDay} in wall (entity {entity.Index})");
                 }
 
-                break; // Only need one wall
+                bool hasDish = EntityManager.HasComponent<CStoredDishId>(entity);
+                int storedDishId = hasDish ? EntityManager.GetComponentData<CStoredDishId>(entity).DishId : 0;
+
+                if (storedDishId != 0 && storedDishId != DishId)
+                {
+                    Logger.LogInfo($"[Mod.cs] Restored dish from wall: stored={storedDishId}, local={DishId} -> using {GetDishName(storedDishId)}");
+                    SetCurrentDish(storedDishId, persist: false, resetDayCounter: false);
+                }
+
+                if (DishId != 0)
+                {
+                    if (!hasDish)
+                    {
+                        EntityManager.AddComponentData(entity, new CStoredDishId { DishId = DishId });
+                        Logger.LogInfo($"[Mod.cs] Stored dish='{GetDishName(DishId)}' (GDO {DishId}) in wall (entity {entity.Index})");
+                    }
+                    else if (storedDishId != DishId)
+                    {
+                        EntityManager.SetComponentData(entity, new CStoredDishId { DishId = DishId });
+                        Logger.LogInfo($"[Mod.cs] Updated wall dish to '{GetDishName(DishId)}' (GDO {DishId})");
+                    }
+                }
+
+                break;
             }
+        }
+    }
+
+    // Properties and methods extracted from Mod class for clarity
+    partial class Mod
+    {
+        internal int ActiveDishId => DishId;
+
+        internal string GetDishName(int dishId) => ProgressionMapping.dishDictionary.TryGetValue(dishId, out var name) ? name : "Unknown";
+
+        private void SetCurrentDish(int newDishId, bool persist = true, bool resetDayCounter = true)
+        {
+            if (newDishId == 0 || newDishId == DishId)
+                return;
+
+            DishId = newDishId;
+            if (resetDayCounter)
+                ResetDishDayCounter(DishId);
+
+            if (persist)
+                PersistUnlockedDish(DishId);
+
+            LockedDishes.AddUnlockedDishes(new[] { DishId });
+            LockedDishes.EnableLocking();
+
+            Logger.LogInfo($"[Dish] Current dish set to '{GetDishName(DishId)}' (GDO {DishId}).");
+        }
+
+        private int FindHeldDishId()
+        {
+            if (playersWithItems == null)
+                return 0;
+
+            using var players = playersWithItems.ToEntityArray(Allocator.Temp);
+            for (int i = 0; i < players.Length; i++)
+            {
+                var player = players[i];
+                if (!EntityManager.Exists(player) || !EntityManager.HasComponent<CItemHolder>(player))
+                    continue;
+
+                var holder = EntityManager.GetComponentData<CItemHolder>(player);
+                Entity held = holder.HeldItem;
+                if (held == Entity.Null || !EntityManager.Exists(held))
+                    continue;
+
+                if (EntityManager.HasComponent<CDishUpgrade>(held))
+                {
+                    var upgrade = EntityManager.GetComponentData<CDishUpgrade>(held);
+                    if (upgrade.DishID != 0)
+                        return upgrade.DishID;
+                }
+            }
+
+            return 0;
+        }
+        private void EnsureDishLockingBaseline()
+        {
+            // Already have an allowed set
+            if (LockedDishes.IsLockingEnabled() && LockedDishes.GetAvailableDishes().Any())
+                return;
+
+            // Try persisted last unlocked dish
+            int? persisted = LoadPersistedUnlockedDish();
+            if (persisted.HasValue && KitchenData.GameData.Main.TryGet<Dish>(persisted.Value, out _))
+            {
+                LockedDishes.SetUnlockedDishes(new[] { persisted.Value });
+                LockedDishes.EnableLocking();
+                SetCurrentDish(persisted.Value, persist: false, resetDayCounter: false);
+                Logger.LogWarning($"[LockedDishes] Fallback baseline applied from persisted dish {persisted.Value}.");
+                return;
+            }
+
+            // No baseline available; leave locking disabled to avoid nuking HQ content
+            LockedDishes.DisableLocking();
+            Logger.LogWarning("[LockedDishes] No baseline dish found; locking remains disabled.");
+        }
+
+        private void ReapplyMoneyCapFromHistory()
+        {
+            if (session?.Items?.AllItemsReceived == null)
+                return;
+
+            int upgradeCount = session.Items.AllItemsReceived.Count(item => (int)item.ItemId == 16);
+            MoneyCap = Mathf.Clamp(baseMoneyCap + upgradeCount * MoneyCapIncrementStep, 0, 999);
+            moneyClampPending = true;
+            Logger.LogInfo($"[MoneyCap] Re-applied cap (base={baseMoneyCap}, upgrades={upgradeCount}) => {MoneyCap}");
+        }
+
+        private void UpdateDishFromHeldCards()
+        {
+            if (!inLobby || playersWithItems == null)
+                return;
+
+            int heldDishId = FindHeldDishId();
+            if (heldDishId != 0)
+                SetCurrentDish(heldDishId);
         }
     }
 }

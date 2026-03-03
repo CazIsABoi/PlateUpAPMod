@@ -51,11 +51,16 @@ namespace KitchenPlateupAP
             int changedCount = 0;
             int totalAssigned = 0;
 
-            // Reassign upgrades for each appliance
+            // Reassign upgrades for each appliance – only for appliances that already had upgrades
             foreach (var src in all)
             {
                 int originalCount = src.Upgrades?.Count ?? 0;
-                // Decide number of upgrades to assign (keep original count or at least 1 if it had any)
+
+                // Skip appliances that were never upgradeable to avoid adding new/invalid upgrade paths
+                if (originalCount == 0)
+                    continue;
+
+                // Keep the same number of upgrade options as the original (at least 1)
                 int count = Math.Max(1, originalCount);
 
                 // Sample unique targets, avoiding self
@@ -109,11 +114,9 @@ namespace KitchenPlateupAP
             {
                 var tags = a.ShoppingTags;
 
-                bool hasNoTags = tags == ShoppingTags.None;
-
                 // Allowed categories: normal/basic/decoration/tech/etc
                 bool allowed =
-                    hasNoTags ||
+                    tags != ShoppingTags.None &&
                     tags.HasFlag(ShoppingTags.Basic) ||
                     tags.HasFlag(ShoppingTags.Misc) ||
                     tags.HasFlag(ShoppingTags.Automation) ||

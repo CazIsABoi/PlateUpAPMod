@@ -64,35 +64,21 @@ namespace KitchenPlateupAP
     [UpdateAfter(typeof(GrantUpgrades))]
     public class FilterDishUpgradesSystem : SystemBase
     {
-        private bool _loggedThisFrame;
-
         protected override void OnUpdate()
         {
-            _loggedThisFrame = false;
-
             if (!ArchipelagoConnectionManager.ConnectionSuccessful || ArchipelagoConnectionManager.Session == null)
-            {
-                LogSkip("no AP session");
                 return;
-            }
 
             if (!LockedDishes.IsLockingEnabled())
-            {
-                LogSkip("locking disabled");
                 return;
-            }
 
             HashSet<int> allowed = LockedDishes.GetAvailableDishes()?.ToHashSet() ?? new HashSet<int>();
             if (allowed.Count == 0)
-            {
-                LogSkip("allowed list empty");
                 return;
-            }
 
             EntityManager entityManager = EntityManager;
-            bool destroyedAny = false;
 
-            // Filter entities tagged explicitly as dish upgrades
+            // Only remove explicit dish-upgrade entities; leave progression options alone so picked cards apply
             EntityQuery dishUpgradeQuery = GetEntityQuery(ComponentType.ReadOnly<CDishUpgrade>());
             using (NativeArray<Entity> entities = dishUpgradeQuery.ToEntityArray(Allocator.Temp))
             {
@@ -105,47 +91,9 @@ namespace KitchenPlateupAP
                     if (!allowed.Contains(data.DishID))
                     {
                         entityManager.DestroyEntity(entity);
-                        destroyedAny = true;
                     }
                 }
             }
-
-            // Filter progression options that are actual dish cards (CreateDishOptions spawns these)
-            EntityQuery progressionQuery = GetEntityQuery(ComponentType.ReadOnly<CProgressionOption>());
-            using (NativeArray<Entity> entities = progressionQuery.ToEntityArray(Allocator.Temp))
-            {
-                foreach (Entity entity in entities)
-                {
-                    if (!entityManager.Exists(entity) || !entityManager.HasComponent<CProgressionOption>(entity))
-                        continue;
-
-                    CProgressionOption option = entityManager.GetComponentData<CProgressionOption>(entity);
-
-                    // Only act on entries that resolve to a Dish; ignore non-dish progression cards
-                    if (!GameData.Main.TryGet<Dish>(option.ID, out _))
-                        continue;
-
-                    if (!allowed.Contains(option.ID))
-                    {
-                        entityManager.DestroyEntity(entity);
-                        destroyedAny = true;
-                    }
-                }
-            }
-
-            if (destroyedAny)
-            {
-                Mod.Logger?.LogInfo($"[LockedDishes] Filtered disallowed dish options. Allowed set: {string.Join(",", allowed)}");
-            }
-        }
-
-        private void LogSkip(string reason)
-        {
-            if (_loggedThisFrame)
-                return;
-
-            _loggedThisFrame = true;
-            Mod.Logger?.LogInfo($"[LockedDishes] Skipped filtering: {reason}. enabled={LockedDishes.IsLockingEnabled()}, allowed={string.Join(",", LockedDishes.GetAvailableDishes() ?? Enumerable.Empty<int>())}");
         }
     }
 }

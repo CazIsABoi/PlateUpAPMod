@@ -16,7 +16,7 @@ using UnityEngine;
 using APLogMessage = Archipelago.MultiClient.Net.MessageLog.Messages.LogMessage;
 using UnityColor = UnityEngine.Color;
 
-namespace PlateupAP.UI
+namespace KitchenPlateupAP
 {
     public class ChatManager : MonoBehaviour
     {
@@ -275,7 +275,10 @@ namespace PlateupAP.UI
 
             GUI.EndGroup();
 
-            DrawGlobalFooterHUD(opacity, footerRect);
+            if (!IsInKitchen())
+            {
+                DrawGlobalFooterHUD(opacity, footerRect);
+            }
             DrawLeaseCountdownBadge(opacity);
         }
 
@@ -369,13 +372,9 @@ namespace PlateupAP.UI
             {
                 try
                 {
-                    // Subscribe with the exact signature expected
                     session.MessageLog.OnMessageReceived += OnStructuredLogMessage;
                 }
-                catch (Exception ex)
-                {
-                    AddSystemMessage("MessageLog subscription failed: " + ex.Message);
-                }
+                catch { }
             }
         }
         private void OnStructuredLogMessage(APLogMessage msg)
@@ -510,8 +509,8 @@ namespace PlateupAP.UI
 
         private void DrawGlobalFooterHUD(float opacity, Rect footerRect)
         {
-            const float footerBottomPadding = 18f;
             float padding = 8f;
+            float lineHeight = 22f;
 
             if (footerBgTex == null) InitializeFooterStyles();
             GUI.color = new UnityColor(FooterBg.r, FooterBg.g, FooterBg.b, FooterBg.a * opacity);
@@ -532,23 +531,28 @@ namespace PlateupAP.UI
             List<(string Name, bool? Unlocked)> dishStatuses = GetDishStatuses(dishName);
             string leaseLine = BuildLeaseLine(opacity);
 
-            float lineHeight = 18f;
             float currentY = footerRect.y + padding;
             if (footerStyle == null) InitializeFooterStyles();
-            Rect firstLineRect = new Rect(footerRect.x + padding, currentY, footerRect.width - 2f * padding, lineHeight);
-            GUI.Label(firstLineRect, line1, footerStyle);
+
+            // First dish line
+            GUI.Label(new Rect(footerRect.x + padding, currentY, footerRect.width - 2f * padding, lineHeight), line1, footerStyle);
             currentY += lineHeight + 4f;
 
+            // Lease line (drawn right after first dish if present)
+            if (!string.IsNullOrEmpty(leaseLine))
+            {
+                GUI.Label(new Rect(footerRect.x + padding, currentY, footerRect.width - 2f * padding, lineHeight + 4f), leaseLine, footerStyle);
+                currentY += lineHeight + 6f;
+            }
+
+            // Other dishes header + scroll list fills the rest
             if (dishStatuses.Count > 0)
             {
                 string header = $"<b><color=#{titleHex}>Other dishes:</color></b>";
-                Rect headerRect = new Rect(footerRect.x + padding, currentY, footerRect.width - 2f * padding, lineHeight);
-                GUI.Label(headerRect, header, footerStyle);
+                GUI.Label(new Rect(footerRect.x + padding, currentY, footerRect.width - 2f * padding, lineHeight), header, footerStyle);
                 currentY += lineHeight + 2f;
 
-                float leaseHeight = string.IsNullOrEmpty(leaseLine) ? 0f : lineHeight + 6f;
-                float availableListHeight = Mathf.Max(0f, footerRect.yMax - footerBottomPadding - leaseHeight - currentY);
-                float listHeight = Mathf.Max(60f, availableListHeight);
+                float listHeight = Mathf.Max(40f, footerRect.yMax - currentY - padding);
                 Rect scrollRect = new Rect(footerRect.x + padding, currentY, footerRect.width - 2f * padding, listHeight);
                 float contentHeight = dishStatuses.Count * lineHeight;
 
@@ -563,15 +567,6 @@ namespace PlateupAP.UI
                     itemY += lineHeight;
                 }
                 GUI.EndScrollView();
-
-                currentY = scrollRect.yMax + 4f;
-            }
-
-            if (!string.IsNullOrEmpty(leaseLine))
-            {
-                float leaseY = footerRect.yMax - lineHeight - (footerBottomPadding * 0.5f);
-                Rect leaseRect = new Rect(footerRect.x + padding, leaseY, footerRect.width - 2f * padding, lineHeight + 4f);
-                GUI.Label(leaseRect, leaseLine, footerStyle);
             }
         }
 
@@ -924,12 +919,23 @@ namespace PlateupAP.UI
         private Rect GetGlobalFooterRect()
         {
             const float footerWidth = 360f;
-            const float footerHeight = 165f;
+            const float lineHeight = 22f;
             const float margin = 14f;
+            const float padding = 8f;
+            const float headerLines = 3f;
+            const float gameStatusBarHeight = 50f;
 
-            float safeBottomMargin = Mathf.Max(margin, Screen.height * 0.02f);
+            int dishCount = Mathf.Max(0, ProgressionMapping.dishDictionary.Count - 1);
+            float dishRows = Mathf.Clamp(dishCount, 4f, 16f);
+            float idealHeight = (headerLines * (lineHeight + 4f)) + (dishRows * lineHeight) + (padding * 2f) + 10f;
+
+            // Cap to 45% of screen height so it never goes off-screen
+            float maxHeight = Screen.height * 0.45f;
+            float footerHeight = Mathf.Min(idealHeight, maxHeight);
+
+            float bottomOffset = gameStatusBarHeight + margin;
             float x = Screen.width - footerWidth - margin;
-            float y = Screen.height - footerHeight - safeBottomMargin;
+            float y = Screen.height - footerHeight - bottomOffset;
             return new Rect(x, y, footerWidth, footerHeight);
         }
 
@@ -951,6 +957,22 @@ namespace PlateupAP.UI
             }
 
             return true;
+        }
+
+        private bool IsInKitchen()
+        {
+            try
+            {
+                var world = World.DefaultGameObjectInjectionWorld;
+                if (world == null)
+                    return false;
+
+                return world.EntityManager.CreateEntityQuery(typeof(SKitchenMarker)).CalculateEntityCount() > 0;
+            }
+            catch
+            {
+                return false;
+            }
         }
     }
 }

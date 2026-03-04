@@ -24,6 +24,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Threading.Tasks;
 using Unity.Collections;
 using Unity.Entities;
@@ -46,7 +47,7 @@ namespace KitchenPlateupAP
     {
         public const string MOD_GUID = "com.caz.plateupap";
         public const string MOD_NAME = "PlateupAP";
-        public const string MOD_VERSION = "0.2.4.6";    
+        public const string MOD_VERSION = "0.2.5.0";    
         public const string MOD_AUTHOR = "Caz";
         public const string MOD_GAMEVERSION = ">=1.1.9";
         public static int TOTAL_SCENES_LOADED = 0;
@@ -60,6 +61,7 @@ namespace KitchenPlateupAP
         private EntityQuery playerSpeedQuery;
         private EntityQuery applianceSpeedQuery;
         private EntityQuery progressionUnlockQuery;
+        private EntityQuery settingQuery;
         private static RunIdentity currentIdentity;
         private static PendingSpawnState pendingSpawnState = new PendingSpawnState();
         private static bool persistenceLoaded = false;
@@ -90,6 +92,8 @@ namespace KitchenPlateupAP
         private static int baseMoneyCap = 20;
         private const int MoneyCapIncrementStep = 10;
         private bool wasInLobbyLastFrame = false;
+        private string lastAppliedStartingName = string.Empty;
+        private bool startingNameApplied = false;
 
         // Counts from slot data (defaults per spec = 5)
         private static int playerSpeedUpgradeCount = 5;
@@ -778,6 +782,7 @@ namespace KitchenPlateupAP
             ApplyPlayerSpeedConfig();
             World.GetOrCreateSystem<MoneyCapSystem>().Enabled = true;
             EnsureCustomAppliancesFileExists();
+            settingQuery = GetEntityQuery(ComponentType.ReadOnly<CSetting>());
         }
 
         public void OnSuccessfulConnect()
@@ -1153,6 +1158,8 @@ namespace KitchenPlateupAP
 
                     itemsQueuedThisLobby = true;
                 }
+
+                UpdateRestaurantStartingName();
             }
             else
             {
@@ -2026,7 +2033,8 @@ namespace KitchenPlateupAP
 
                     if (lastDay <= 15)
                     {
-                        DoDishChecks(lastDay);  
+                        DoDishChecks(lastDay);
+                        DoSettingChecks(lastDay);
                         if (lastDay % 3 == 0)
                         {
                             stars++;
@@ -2057,6 +2065,7 @@ namespace KitchenPlateupAP
                     {
                         lastDay++;
                         DoDishChecks(lastDay);
+                        DoSettingChecks(lastDay);
                     }
                     if (overallDaysCompleted % 3 == 0 && overallStarsEarned < 33)
                     {
@@ -2130,6 +2139,76 @@ namespace KitchenPlateupAP
                         EntityManager.SetComponentData(playerEntity, player);
                     }
                 }
+            }
+        }
+
+        private void DoSettingChecks(int dayNumber)
+        {
+            if (checksDisabled)
+                return;
+
+            if (session == null || !ArchipelagoConnectionManager.ConnectionSuccessful)
+                return;
+
+            var slotData = ArchipelagoConnectionManager.SlotData;
+            if (slotData == null)
+                return;
+
+            List<string> selectedSettings = null;
+            if (slotData.TryGetValue("selected_settings", out object rawSettings))
+            {
+                try
+                {
+                    selectedSettings = ((JArray)rawSettings).ToObject<List<string>>();
+                }
+                catch { }
+            }
+
+            if (selectedSettings == null || selectedSettings.Count == 0)
+                return;
+
+            if (lastDay < 1 || lastDay > 15)
+                return;
+
+            if (settingQuery == null || settingQuery.IsEmptyIgnoreFilter)
+            {
+                Logger.LogWarning("[SettingCheck] settingQuery is null or empty; no CSetting entity found.");
+                return;
+            }
+
+            using (var entities = settingQuery.ToEntityArray(Unity.Collections.Allocator.Temp))
+            {
+                if (entities.Length == 0)
+                {
+                    Logger.LogWarning("[SettingCheck] No entities with CSetting component found.");
+                    return;
+                }
+
+                var cSetting = EntityManager.GetComponentData<CSetting>(entities[0]);
+                int settingId = cSetting.RestaurantSetting;
+
+                if (!ProgressionMapping.TryResolveSettingDisplay(settingId, out string displayName))
+                {
+                    Logger.LogWarning($"[SettingCheck] Unknown setting ID {settingId}, cannot resolve display name.");
+                    return;
+                }
+
+                // Case-insensitive match against selected_settings from slot data
+                bool found = selectedSettings.Any(s => string.Equals(s, displayName, StringComparison.OrdinalIgnoreCase));
+                if (!found)
+                {
+                    Logger.LogInfo($"[SettingCheck] Setting '{displayName}' not in selected_settings [{string.Join(", ", selectedSettings)}], skipping.");
+                    return;
+                }
+
+                if (!ProgressionMapping.TryComputeSettingLocationId(settingId, lastDay, out int locId))
+                {
+                    Logger.LogWarning($"[SettingCheck] Could not compute location ID for setting={settingId}, day={lastDay}.");
+                    return;
+                }
+
+                session.Locations.CompleteLocationChecks(locId);
+                Logger.LogInfo($"[SettingCheck] Sent setting check: '{displayName} - Day {lastDay}' (locId={locId})");
             }
         }
 
@@ -2382,6 +2461,7 @@ namespace KitchenPlateupAP
             currentDishDayCount = 0;
         }
 
+        // Reset the flag when resetting state for a new lobby
         private void ResetStateForLobbyEntry()
         {
             suppressNextDeathLink = false;
@@ -2397,6 +2477,7 @@ namespace KitchenPlateupAP
             loggedCardThisCycle = false;
             dayID = ComputeRunBaseOffset(timesFranchised);
             ResetDishDayCounter(DishId);
+            startingNameApplied = false;
         }
 
         // Increments the franchise completion count and sends the franchise location check
@@ -2606,6 +2687,46 @@ namespace KitchenPlateupAP
                 }
                 break;
             }
+        }
+
+        // Add helper in the partial Mod section (with other helpers)
+        private void UpdateRestaurantStartingName()
+        {
+            if (!ArchipelagoConnectionManager.ConnectionSuccessful)
+                return;
+
+            string dishName = GetDishName(DishId);
+            bool hasDish = !string.IsNullOrEmpty(dishName) && !string.Equals(dishName, "Unknown", StringComparison.OrdinalIgnoreCase);
+
+            string suffix = hasDish ? dishName : $"Run {timesFranchised + 1}";
+            string finalName = $"Archipelago {suffix}";
+
+            if (finalName == lastAppliedStartingName && startingNameApplied)
+                return;
+
+            if (finalName.Length > FixedString64.UTF8MaxLengthInBytes)
+                finalName = finalName.Substring(0, FixedString64.UTF8MaxLengthInBytes);
+
+            var fs = new FixedString64(finalName);
+
+            if (HasSingleton<SRestaurantStartingName>())
+            {
+                var name = GetSingleton<SRestaurantStartingName>();
+                name.Name = fs;
+                Set(name);
+            }
+            else
+            {
+                Entity entity = EntityManager.CreateEntity(typeof(SRestaurantStartingName));
+                EntityManager.SetComponentData(entity, new SRestaurantStartingName
+                {
+                    Name = fs
+                });
+            }
+
+            lastAppliedStartingName = finalName;
+            startingNameApplied = true;
+            Logger.LogInfo($"[Name] Set starting restaurant name to '{finalName}'.");
         }
     }
 

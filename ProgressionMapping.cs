@@ -8,7 +8,6 @@ namespace KitchenPlateupAP
 {
     public static class ProgressionMapping
     {
-
         public static readonly Dictionary<int, int> progressionToGDO = new Dictionary<int, int>()
         {
             { 1001, ApplianceReferences.Hob },
@@ -107,7 +106,6 @@ namespace KitchenPlateupAP
             { 10164, ApplianceReferences.ExtraLife }
         };
 
-        // Existing lists kept for compatibility (not used by Mod.cs anymore)
         public static readonly List<int> usefulApplianceGDOs = new List<int>
         {
             ApplianceReferences.Hob,
@@ -172,7 +170,6 @@ namespace KitchenPlateupAP
             ApplianceReferences.PlateStackStarting
         };
 
-        // Essential (useful) appliances by name -> GDO ID (excluding starters)
         public static readonly Dictionary<string, int> usefulApplianceDictionary = new Dictionary<string, int>
         {
             { "Hob", ApplianceReferences.Hob },
@@ -208,7 +205,6 @@ namespace KitchenPlateupAP
             { "Serving Board Stack", ApplianceReferences.ServingBoardStack },
         };
 
-        // Filler appliances by name -> GDO ID (QoL, decor, providers, etc.)
         public static readonly Dictionary<string, int> fillerApplianceDictionary = new Dictionary<string, int>
         {
             { "Ice Dispenser", ApplianceReferences.IceDispenser },
@@ -331,6 +327,48 @@ namespace KitchenPlateupAP
             { "Sundaes", 117 }
         };
 
+        // Display-name -> block index (for location IDs)
+        public static readonly Dictionary<string, int> settingBlockIndex = new Dictionary<string, int>
+        {
+            { "Base Setting", 0 },
+            { "Autumn", 1 },
+            { "Banquet", 2 },
+            { "Turbo", 3 },
+            { "Witch Hut", 4 }
+        };
+
+        public static readonly Dictionary<int, string> settingIdToDisplay = new Dictionary<int, string>
+        {
+            { RestaurantSettingReferences.Country, "Base Setting" },
+            { RestaurantSettingReferences.Alpine, "Base Setting" },
+            { RestaurantSettingReferences.City, "Base Setting" },
+            { RestaurantSettingReferences.Autumn, "Autumn" },
+            { 206822591, "Banquet" },
+            { RestaurantSettingReferences.MarchSettingTurbo, "Turbo" },
+            { RestaurantSettingReferences.WitchHut2310, "Witch Hut" }
+        };
+
+        public static bool TryResolveSettingDisplay(int settingId, out string displayName)
+        {
+            return settingIdToDisplay.TryGetValue(settingId, out displayName);
+        }
+
+        public static bool TryComputeSettingLocationId(int settingId, int day, out int locId)
+        {
+            locId = 0;
+            if (day < 1 || day > 15)
+                return false;
+
+            if (!settingIdToDisplay.TryGetValue(settingId, out string display))
+                return false;
+
+            if (!settingBlockIndex.TryGetValue(display, out int block))
+                return false;
+
+            locId = 130000 + (block * 100) + day;
+            return true;
+        }
+
         public static readonly Dictionary<int, string> speedUpgradeMapping = new Dictionary<int, string>()
         {
             { 10, "Speed Upgrade Player" },
@@ -361,20 +399,15 @@ namespace KitchenPlateupAP
             { "Sundaes", 30117 }
         };
 
-        // Static constructor ensures custom appliances are loaded as soon as the class is used.
         static ProgressionMapping()
         {
             TryLoadCustomUsefulAppliances();
         }
 
-        // Allow users to add custom GDO IDs via a JSON file next to the config.
-        // Path: Application.persistentDataPath/PlateUpAPConfig/custom_appliances.json
-        // Format: [ 123456, 654321, ... ]
         private static void TryLoadCustomUsefulAppliances()
         {
             try
             {
-                // Resolve the same folder used by Mod.TryWarmupConfig
                 string folder = Path.Combine(UnityEngine.Application.persistentDataPath, "PlateUpAPConfig");
                 string path = Path.Combine(folder, "custom_appliances.json");
 
@@ -386,14 +419,11 @@ namespace KitchenPlateupAP
                 if (ids.Count == 0)
                     return;
 
-                // Merge into usefulApplianceDictionary (values used for random selection)
                 foreach (int gdoId in ids)
                 {
-                    // Skip invalid/zero
                     if (gdoId == 0)
                         continue;
 
-                    // Validate GDO exists in GameData to prevent bad entries
                     bool exists =
                         KitchenData.GameData.Main.TryGet<KitchenData.Appliance>(gdoId, out _) ||
                         KitchenData.GameData.Main.TryGet<KitchenData.Decor>(gdoId, out _);
@@ -401,7 +431,6 @@ namespace KitchenPlateupAP
                     if (!exists)
                         continue;
 
-                    // Use a synthetic key to avoid collisions; dictionary keys are names, values are GDO IDs.
                     string key = $"Custom_{gdoId}";
 
                     if (!usefulApplianceDictionary.ContainsKey(key))
@@ -412,7 +441,6 @@ namespace KitchenPlateupAP
             }
             catch (System.Exception ex)
             {
-                // Do not throw on bad file; keep stock behavior.
                 UnityEngine.Debug.LogWarning($"[ProgressionMapping] Failed to load custom appliances: {ex.Message}");
             }
         }

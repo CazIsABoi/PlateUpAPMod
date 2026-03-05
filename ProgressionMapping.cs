@@ -106,6 +106,72 @@ namespace KitchenPlateupAP
             { 10164, ApplianceReferences.ExtraLife }
         };
 
+        public static readonly Dictionary<int, int> applianceUnlockToGDO = new Dictionary<int, int>
+        {
+            { 2001, ApplianceReferences.Hob },
+            { 2002, ApplianceReferences.HobSafe },
+            { 2003, ApplianceReferences.HobDanger },
+            { 2004, ApplianceReferences.Oven },
+            { 2005, ApplianceReferences.Microwave },
+            { 2006, ApplianceReferences.SinkNormal },
+            { 2007, ApplianceReferences.SinkPower },
+            { 2008, ApplianceReferences.SinkSoak },
+            { 2009, ApplianceReferences.DishWasher },
+            { 2010, ApplianceReferences.SinkLarge },
+            { 2011, ApplianceReferences.Countertop },
+            { 2012, ApplianceReferences.Workstation },
+            { 2013, ApplianceReferences.Freezer },
+            { 2014, ApplianceReferences.PrepStation },
+            { 2015, ApplianceReferences.FrozenPrepStation },
+            { 2016, ApplianceReferences.BlueprintUpgradeDesk },
+            { 2017, ApplianceReferences.BlueprintCopyDesk },
+            { 2018, ApplianceReferences.BlueprintDiscountDesk },
+            { 2019, ApplianceReferences.BlueprintOrderingDesk },
+            { 2020, ApplianceReferences.Grabber },
+            { 2021, ApplianceReferences.GrabberSmart },
+            { 2022, ApplianceReferences.GrabberRotatable },
+            { 2023, ApplianceReferences.Combiner },
+            { 2024, ApplianceReferences.Portioner },
+            { 2025, ApplianceReferences.Mixer },
+            { 2026, ApplianceReferences.MixerPusher },
+            { 2027, ApplianceReferences.MixerHeated },
+            { 2028, ApplianceReferences.MixerRapid },
+            { 2029, ApplianceReferences.AutoPlater },
+            { 2030, ApplianceReferences.PotStack },
+            { 2031, ApplianceReferences.ServingBoardStack },
+            { 2032, ApplianceReferences.IceDispenser },
+            { 2033, ApplianceReferences.MilkDispenser },
+            { 2034, ApplianceReferences.MopBucket },
+            { 2035, ApplianceReferences.MopBucketLasting },
+            { 2036, ApplianceReferences.MopBucketFast },
+            { 2037, ApplianceReferences.RobotMop },
+            { 2038, ApplianceReferences.FloorBufferStation },
+            { 2039, ApplianceReferences.RobotBuffer },
+            { 2040, ApplianceReferences.BreadstickBox },
+            { 2041, ApplianceReferences.CandleBox },
+            { 2042, ApplianceReferences.NapkinBox },
+            { 2043, ApplianceReferences.SharpCutlery },
+            { 2044, ApplianceReferences.SpecialsMenuBox },
+            { 2045, ApplianceReferences.LeftoversBagStation },
+            { 2046, ApplianceReferences.SupplyCabinet },
+            { 2047, ApplianceReferences.HostStand },
+            { 2048, ApplianceReferences.FlowerPot },
+            { 2049, ApplianceReferences.CoffeeTable },
+            { 2050, ApplianceReferences.FoodDisplayStand },
+            { 2051, ApplianceReferences.FireExtinguisherHolder },
+            { 2052, ApplianceReferences.PlateStack },
+            { 2053, ApplianceReferences.PlateStackStarting },
+            { 2054, ApplianceReferences.WokStack },
+            { 2055, ApplianceReferences.SourceLasagneTray },
+            { 2056, ApplianceReferences.ProviderTacoTray },
+            { 2057, ApplianceReferences.ProviderMixingBowls },
+            { 2058, ApplianceReferences.SourceBigCakeTin },
+            { 2059, ApplianceReferences.SourceBrownieTray },
+            { 2060, ApplianceReferences.SourceCookieTray },
+            { 2061, ApplianceReferences.SourceCupcakeTray },
+            { 2062, ApplianceReferences.SourceDoughnutTray },
+        };
+
         public static readonly List<int> usefulApplianceGDOs = new List<int>
         {
             ApplianceReferences.Hob,
@@ -201,8 +267,6 @@ namespace KitchenPlateupAP
             { "Heated Mixer", ApplianceReferences.MixerHeated },
             { "Rapid Mixer", ApplianceReferences.MixerRapid },
             { "Auto Plater", ApplianceReferences.AutoPlater },
-            { "Pot Stack", ApplianceReferences.PotStack },
-            { "Serving Board Stack", ApplianceReferences.ServingBoardStack },
         };
 
         public static readonly Dictionary<string, int> fillerApplianceDictionary = new Dictionary<string, int>
@@ -238,6 +302,8 @@ namespace KitchenPlateupAP
             { "Cookie Tray", ApplianceReferences.SourceCookieTray },
             { "Cupcake Tray", ApplianceReferences.SourceCupcakeTray },
             { "Doughnut Tray", ApplianceReferences.SourceDoughnutTray },
+            { "Pot Stack", ApplianceReferences.PotStack },
+            { "Serving Board Stack", ApplianceReferences.ServingBoardStack },
         };
 
         public static readonly Dictionary<int, int> customerCardDictionary = new Dictionary<int, int>()
@@ -276,6 +342,22 @@ namespace KitchenPlateupAP
             { 32, UnlockCardReferences.QuickerBurning },
             { 33, UnlockCardReferences.SlowProcesses },
             { 34, UnlockCardReferences.TippingCulture },
+        };
+
+        public static readonly Dictionary<int, int> easydifficultCardDictionary = new Dictionary<int, int>()
+        {
+            { 1, UnlockCardReferences.MoreCustomers },
+            { 2, UnlockCardReferences.PatienceDecrease },
+            { 3, UnlockCardReferences.ClosingTime },
+            { 4, UnlockCardReferences.MessyCustomers },
+        };
+
+        public static readonly Dictionary<int, int> difficultCardDictionary = new Dictionary<int, int>()
+        {
+            { 5, UnlockCardReferences.PickyEaters },
+            { 6, UnlockCardReferences.AllYouCanEat },
+            { 7, UnlockCardReferences.AllYouCanEatIncrease },
+            { 8, UnlockCardReferences.HiddenPatience },
         };
 
         public static readonly Dictionary<int, string> trapDictionary = new Dictionary<int, string>()

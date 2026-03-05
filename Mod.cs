@@ -47,7 +47,7 @@ namespace KitchenPlateupAP
     {
         public const string MOD_GUID = "com.caz.plateupap";
         public const string MOD_NAME = "PlateupAP";
-        public const string MOD_VERSION = "0.2.5.0";    
+        public const string MOD_VERSION = "0.2.5.1";    
         public const string MOD_AUTHOR = "Caz";
         public const string MOD_GAMEVERSION = ">=1.1.9";
         public static int TOTAL_SCENES_LOADED = 0;
@@ -74,9 +74,11 @@ namespace KitchenPlateupAP
         private Archipelago.MultiClient.Net.BounceFeatures.DeathLink.DeathLinkService deathLinkService;
         private int deathLinkBehavior = 0; // Default to "Reset Run"
         private bool suppressNextDeathLink = false;
-        private static int goal = 0;             // 0 = franchise_x_times, 1 = complete_x_days
+        private static int goal = 0;             // 0 = franchise_x_times, 1 = complete_x_days, 2 = reach_day_x_with_dishes
         private static int franchiseCount = 0;   // how many times to franchise
         private static int dayCount = 1;        // how many days to complete
+        private static int dayTarget = 15;       // goal 2: global day the player must survive to (15–30)
+        private static int dishGoalCount = 3;    // goal 2: number of dishes that must be active on that day
         private static List<string> selectedDishes = new List<string>();
         object rawGoal = null;
         private static bool dishesMessageSent = false;
@@ -94,6 +96,10 @@ namespace KitchenPlateupAP
         private bool wasInLobbyLastFrame = false;
         private string lastAppliedStartingName = string.Empty;
         private bool startingNameApplied = false;
+        public static int ExtraBlueprintCount = 0;
+        int startingCardsMode = 0;
+        int startingCardsAmount = 0;
+        int removeCardCount = 0;
 
         // Counts from slot data (defaults per spec = 5)
         private static int playerSpeedUpgradeCount = 5;
@@ -124,6 +130,7 @@ namespace KitchenPlateupAP
         private bool forceSpawnRequested = false;
         private bool wallLastDaySyncedThisKitchen = false;
         private bool moneyClampPending = false;
+        private static int pendingCoinAmount = 0;
 
         // Flag to prevent repeated logging during a cycle.
         private static bool loggedCardThisCycle = false;
@@ -136,6 +143,7 @@ namespace KitchenPlateupAP
         private int dishIdTrackedForDayCount = 0;
         private int lastLoggedHeldDishId = -1; // track last logged card
         private int lastCardSyncDishId = 0;
+
         // Build tiers dynamically from slot data: start 0.5, + (1.0 / N) per upgrade, final 1.5 at N upgrades; if N==0 -> [1.0]
         private static float[] speedTiers = BuildPlayerSpeedTiers(playerSpeedUpgradeCount);
         private static int movementSpeedTier = 0;
@@ -157,6 +165,18 @@ namespace KitchenPlateupAP
         public static float chopSpeedMod = chopSpeedTiers[chopSpeedTier];
         public static float cookSpeedMod = cookSpeedTiers[cookSpeedTier];
         public static float cleanSpeedMod = cleanSpeedTiers[cleanSpeedTier];
+
+        // Appliance shop locking
+        public static bool ApplianceUnlocksEnabled = false;
+        private static HashSet<int> _unlockedApplianceGDOs = new HashSet<int>();
+
+        public static bool IsApplianceUnlocked(int gdoId) => !ApplianceUnlocksEnabled || _unlockedApplianceGDOs.Contains(gdoId);
+
+        public static void UnlockAppliance(int gdoId)
+        {
+            _unlockedApplianceGDOs.Add(gdoId);
+            Logger?.LogInfo($"[ApplianceUnlocks] Unlocked GDO {gdoId}. Total unlocked: {_unlockedApplianceGDOs.Count}");
+        }
 
         public static class InputSourceIdentifier
         {
@@ -371,6 +391,15 @@ namespace KitchenPlateupAP
             {
                 Logger.LogInfo($"[PlateupAP] Full Slot Data: {JsonConvert.SerializeObject(slotData, Formatting.Indented)}");
 
+                if (ArchipelagoConnectionManager.SlotData.TryGetValue("starting_cards", out object rawStartingCards))
+                    int.TryParse(rawStartingCards.ToString(), out startingCardsMode);
+
+                if (ArchipelagoConnectionManager.SlotData.TryGetValue("starting_cards_amount", out object rawStartingAmount))
+                    int.TryParse(rawStartingAmount.ToString(), out startingCardsAmount);
+
+                // Use SlotIndex as a deterministic seed so removal order is stable across reconnects
+                StartingCardManager.Initialise(startingCardsMode, startingCardsAmount, ArchipelagoConnectionManager.SlotIndex);
+
                 // In RetrieveSlotData(), replace the selected_dishes handling so ONLY the first dish (or starting_dish) is unlocked as baseline
                 if (slotData.TryGetValue("selected_dishes", out object rawDishes))
                 {
@@ -432,7 +461,7 @@ namespace KitchenPlateupAP
                 if (slotData.TryGetValue("goal", out object rawGoal))
                 {
                     goal = Convert.ToInt32(rawGoal);
-                    Logger.LogInfo($"[PlateupAP] Goal set to: {goal} (0=franchise_x_times, 1=complete_x_days)");
+                    Logger.LogInfo($"[PlateupAP] Goal set to: {goal} (0=franchise_x_times, 1=complete_x_days, 2=reach_day_x_with_dishes)");
                 }
 
                 if (slotData.TryGetValue("franchise_count", out object rawFranchiseCount))
@@ -445,6 +474,18 @@ namespace KitchenPlateupAP
                 {
                     dayCount = Convert.ToInt32(rawDayCount);
                     Logger.LogInfo($"[PlateupAP] Day count goal: {dayCount}");
+                }
+
+                if (slotData.TryGetValue("day_target", out object rawDayTarget))
+                {
+                    dayTarget = Mathf.Clamp(Convert.ToInt32(rawDayTarget), 15, 30);
+                    Logger.LogInfo($"[PlateupAP] Day target (goal 2): {dayTarget}");
+                }
+
+                if (slotData.TryGetValue("dish_goal_count", out object rawDishGoalCount))
+                {
+                    dishGoalCount = Mathf.Clamp(Convert.ToInt32(rawDishGoalCount), 1, 17);
+                    Logger.LogInfo($"[PlateupAP] Dish goal count (goal 2): {dishGoalCount}");
                 }
 
                 if (slotData.TryGetValue("death_link", out object rawDeathLink))
@@ -507,6 +548,17 @@ namespace KitchenPlateupAP
                     baseMoneyCap = startingCap;
                     MoneyCap = startingCap;
                     Logger.LogInfo($"[MoneyCap] Starting money cap from slot data set to {MoneyCap}");
+                }
+
+                if (slotData.TryGetValue("appliance_unlocks", out object rawApplianceUnlocks))
+                {
+                    int applianceUnlocksValue = Convert.ToInt32(rawApplianceUnlocks);
+                    ApplianceUnlocksEnabled = applianceUnlocksValue == 1;
+                    Logger.LogInfo($"[PlateupAP] Appliance Unlocks: {(ApplianceUnlocksEnabled ? "ENABLED" : "DISABLED")}");
+                }
+                else
+                {
+                    ApplianceUnlocksEnabled = false;
                 }
             }
 
@@ -830,7 +882,7 @@ namespace KitchenPlateupAP
                             var dishUnlockIds = new HashSet<int>(ProgressionMapping.dishUnlockIDs.Values);
                             foreach (int id in pendingSpawnState.PendingItemIDs.ToList())
                             {
-                                if (id == 15 || id == 16 || dishUnlockIds.Contains(id))
+                                if (id == 15 || id == 16 || id == 22 || dishUnlockIds.Contains(id))
                                 {
                                     pendingSpawnState.PendingItemIDs.Remove(id);
                                     continue;
@@ -953,9 +1005,9 @@ namespace KitchenPlateupAP
                 dayID = ComputeRunBaseOffset(timesFranchised);
                 Logger.LogInfo($"[Reconstruct] timesFranchised reconstructed as: {timesFranchised}, current run base offset={dayID}");
             }
-            else
+            else if (goal == 1 || goal == 2)
             {
-                // Day goal: Count all valid day and star completions, and find lastDay for dish checks
+                // Day goal / Dish goal: Count all valid day and star completions, and find lastDay for dish checks
                 overallDaysCompleted = 0;
                 overallStarsEarned = 0;
                 int lastFranchiseIdx = -1;
@@ -995,6 +1047,13 @@ namespace KitchenPlateupAP
 
                 Logger.LogInfo($"[Reconstruct] overallDaysCompleted: {overallDaysCompleted}, overallStarsEarned: {overallStarsEarned}, lastDay (for dish checks): {lastDay}");
             }
+
+            foreach (var item in session.Items.AllItemsReceived)
+            {
+                if (item.ItemId == 21)
+                    removeCardCount++;
+            }
+            StartingCardManager.SetRemoveCount(removeCardCount);
 
             // Count total lease items (item ID 15) in inventory (regardless of goal)
             Mod.TotalLeaseItemsReceived = session.Items.AllItemsReceived.Count(item => (int)item.ItemId == 15);
@@ -1144,16 +1203,43 @@ namespace KitchenPlateupAP
                 {
                     ResetStateForLobbyEntry();
 
-                    Logger.LogInfo("[Lobby] Entered lobby. Preparing to queue items for next run...");
+                    // Detect if this is a continued run by checking wall storage
+                    bool isContinuedRun = false;
+                    EntityQuery wallCheck = GetEntityQuery(ComponentType.ReadOnly<CAppliance>());
+                    using (var wallEntities = wallCheck.ToEntityArray(Allocator.Temp))
+                    {
+                        for (int i = 0; i < wallEntities.Length; i++)
+                        {
+                            var appliance = EntityManager.GetComponentData<CAppliance>(wallEntities[i]);
+                            if (appliance.ID != ApplianceReferences.WallPiece)
+                                continue;
 
-                    if (spawnQueue.Count == 0)
-                    {
-                        QueueItemsFromReceivedPool(itemsKeptPerRun);
-                        Logger.LogInfo($"[Lobby] {spawnQueue.Count} items queued for next run.");
+                            if (EntityManager.HasComponent<CStoredLastDay>(wallEntities[i]))
+                            {
+                                int storedDay = EntityManager.GetComponentData<CStoredLastDay>(wallEntities[i]).Value;
+                                if (storedDay > 0)
+                                {
+                                    isContinuedRun = true;
+                                    Logger.LogInfo($"[Lobby] Detected continued run (wall lastDay={storedDay}). Skipping item queueing.");
+                                }
+                            }
+                            break;
+                        }
                     }
-                    else
+
+                    if (!isContinuedRun)
                     {
-                        Logger.LogInfo("[Lobby] Items are already queued. Skipping queueing.");
+                        Logger.LogInfo("[Lobby] Entered lobby (fresh run). Preparing to queue items for next run...");
+
+                        if (spawnQueue.Count == 0)
+                        {
+                            QueueItemsFromReceivedPool(itemsKeptPerRun);
+                            Logger.LogInfo($"[Lobby] {spawnQueue.Count} items queued for next run.");
+                        }
+                        else
+                        {
+                            Logger.LogInfo("[Lobby] Items are already queued. Skipping queueing.");
+                        }
                     }
 
                     itemsQueuedThisLobby = true;
@@ -1176,6 +1262,17 @@ namespace KitchenPlateupAP
                 {
                     ClampMoneyToCap();
                     moneyClampPending = false;
+                }
+                if (pendingCoinAmount > 0)
+                {
+                    if (Require(out SMoney money))
+                    {
+                        int before = money.Amount;
+                        money.Amount += pendingCoinAmount;
+                        Set(money);
+                        Logger.LogInfo($"[Coins] Added {pendingCoinAmount} coins. Money: {before} -> {money.Amount}");
+                    }
+                    pendingCoinAmount = 0;
                 }
                 SyncDishFromActiveCards();
                 UpdateDayCycle();
@@ -1342,7 +1439,6 @@ namespace KitchenPlateupAP
             {
                 Logger.LogInfo("[OnItemReceived] Received Day Lease");
                 KitchenPlateupAP.LeaseRequirementSystem.TriggerRefresh();
-                // Do not queue Day Lease items
                 pendingSpawnState.PendingItemIDs.Remove(checkId);
                 return;
             }
@@ -1352,11 +1448,34 @@ namespace KitchenPlateupAP
                 int before = MoneyCap;
                 MoneyCap = Mathf.Clamp(MoneyCap + MoneyCapIncrementStep, 0, 999);
                 Logger.LogInfo($"[MoneyCap] Received 'Money Cap Increase' (ID 16). Cap increased from {before} to {MoneyCap}.");
-                moneyClampPending = true; // clamp on main thread in OnUpdate
-                // Ensure it never sits in pending/queue
+                moneyClampPending = true;
                 pendingSpawnState.PendingItemIDs.Remove(checkId);
                 spawnQueue = new Queue<ItemInfo>(spawnQueue.Where(x => (int)x.ItemId != 16));
                 return;
+            }
+
+            // Coin items: add money directly
+            if (checkId == 17 || checkId == 18 || checkId == 19)
+            {
+                int coinAmount = 0;
+                switch (checkId)
+                {
+                    case 17: coinAmount = 5; break;
+                    case 18: coinAmount = 10; break;
+                    case 19: coinAmount = 20; break;
+                }
+                Logger.LogInfo($"[Coins] Received {coinAmount} coins (item ID {checkId}).");
+                pendingCoinAmount += coinAmount;
+                pendingSpawnState.PendingItemIDs.Remove(checkId);
+                return;
+            }
+
+            // Add this where you handle received item IDs (e.g. in ProcessSpawn or CheckReceivedItems):
+            if (checkId == 21)
+            {
+                StartingCardManager.ApplyRemoveCard();
+                Logger.LogInfo($"[Mod] Remove Card received. {StartingCardManager.ActiveCount} starting card(s) remain.");
+                return; // Item is consumed, don't spawn anything
             }
 
             // Speed upgrades (apply immediately, persist tiers)
@@ -1417,6 +1536,14 @@ namespace KitchenPlateupAP
                         break;
                 }
 
+                if (checkId == 22)
+                {
+                    ExtraBlueprintCount++;
+                    Logger.LogInfo($"[ShopSize] Received 'Shop Size Increase'. Extra blueprints: {ExtraBlueprintCount}");
+                    pendingSpawnState.PendingItemIDs.Remove(checkId);
+                    return;
+                }
+
                 if (changed && currentIdentity != null)
                 {
                     var state = new SpeedUpgradeState
@@ -1430,6 +1557,47 @@ namespace KitchenPlateupAP
                     PersistenceManager.SaveSpeedState(currentIdentity, state);
                 }
                 playerBaseSpeeds.Clear();
+                return;
+            }
+
+            if (ApplianceUnlocksEnabled && ProgressionMapping.progressionToGDO.TryGetValue(checkId, out int unlockedGdo))
+            {
+                UnlockAppliance(unlockedGdo);
+            }
+
+            // Handle appliance unlock items (2001-2062 from apworld)
+            if (ProgressionMapping.applianceUnlockToGDO.TryGetValue(checkId, out int unlockGdoId))
+            {
+                if (ApplianceUnlocksEnabled)
+                {
+                    UnlockAppliance(unlockGdoId);
+                }
+
+                // Spawn immediately if in kitchen, otherwise queue for next prep
+                if (HasSingleton<SKitchenMarker>())
+                {
+                    Vector3 spawnPos = SpawnHelpers.ResolveSpawnPosition(EntityManager, SpawnPositionType.Door, InputSourceIdentifier.Identifier);
+                    if (KitchenData.GameData.Main.TryGet<Appliance>(unlockGdoId, out _))
+                    {
+                        SpawnHelpers.TrySpawnApplianceBlueprint(EntityManager, unlockGdoId, spawnPos, costMode: 0f);
+                        Logger.LogInfo($"[OnItemReceived] Spawned appliance unlock GDO {unlockGdoId} immediately.");
+                    }
+                }
+                else
+                {
+                    // Not in kitchen yet — queue for spawn during next prep
+                    if (!spawnQueue.Any(x => (int)x.ItemId == checkId))
+                    {
+                        spawnQueue.Enqueue(info);
+                        if (currentIdentity != null)
+                        {
+                            if (!pendingSpawnState.PendingItemIDs.Contains(checkId))
+                                pendingSpawnState.PendingItemIDs.Add(checkId);
+                            PersistenceManager.SavePendingSpawn(currentIdentity, pendingSpawnState);
+                        }
+                        Logger.LogInfo($"[OnItemReceived] Queued appliance unlock ID {checkId} for next prep.");
+                    }
+                }
                 return;
             }
 
@@ -1447,40 +1615,6 @@ namespace KitchenPlateupAP
                     PersistenceManager.SavePendingSpawn(currentIdentity, pendingSpawnState);
                 }
                 Logger.LogInfo($"[OnItemReceived] Queued item ID {checkId} for spawn.");
-            }
-
-            // Dish unlock logic
-            if (!string.IsNullOrEmpty(itemName) && itemName.StartsWith("Unlock: "))
-            {
-                string dishName = itemName.Substring("Unlock: ".Length).Trim();
-
-                // Resolve to GDO Dish ID via dishDictionary (GDO ID -> name)
-                int dishGdoId = ProgressionMapping.dishDictionary
-                    .FirstOrDefault(kv => string.Equals(kv.Value, dishName, StringComparison.OrdinalIgnoreCase))
-                    .Key;
-
-                if (dishGdoId != 0 && KitchenData.GameData.Main.TryGet<Dish>(dishGdoId, out var dish))
-                {
-                    SetCurrentDish(dishGdoId);
-                    Logger.LogInfo($"Unlocked new dish: {dishName} (GDO ID: {dishGdoId})");
-                }
-                else
-                {
-                    Logger.LogWarning($"Received unknown dish unlock: {dishName} (could not resolve to valid GDO Dish ID)");
-                }
-                return;
-            }
-
-            if (checkId == 16)
-            {
-                int before = MoneyCap;
-                MoneyCap = Mathf.Clamp(MoneyCap + MoneyCapIncrementStep, 0, 999);
-                Logger.LogInfo($"[MoneyCap] Received 'Money Cap Increase' (ID 16). Cap increased from {before} to {MoneyCap}.");
-                moneyClampPending = true; // clamp on main thread in OnUpdate
-                // Ensure it never sits in pending/queue
-                pendingSpawnState.PendingItemIDs.Remove(checkId);
-                spawnQueue = new Queue<ItemInfo>(spawnQueue.Where(x => (int)x.ItemId != 16));
-                return;
             }
         }
 
@@ -1513,6 +1647,18 @@ namespace KitchenPlateupAP
             foreach (var item in session.Items.AllItemsReceived)
             {
                 int itemId = (int)item.ItemId;
+
+                if (ApplianceUnlocksEnabled && ProgressionMapping.applianceUnlockToGDO.TryGetValue(itemId, out int historyGdo))
+                {
+                    UnlockAppliance(historyGdo);
+                }
+
+                if (itemId == 22)
+                {
+                    ExtraBlueprintCount++;
+                    Logger.LogInfo($"[ProcessAllReceivedItems] Re-applied Shop Size Increase. Extra blueprints: {ExtraBlueprintCount}");
+                    continue;
+                }
 
                 if (ProgressionMapping.speedUpgradeMapping.TryGetValue(itemId, out string upgradeType))
                 {
@@ -1707,7 +1853,9 @@ namespace KitchenPlateupAP
                     !ProgressionMapping.speedUpgradeMapping.ContainsKey(id) &&
                     !trapIDs.Contains(id) &&
                     id != 15 && id != 16 &&
-                    !dishUnlockIds.Contains(id) // do not queue dish unlock items
+                    id != 17 && id != 18 && id != 19 &&
+                    id != 22 &&
+                    !dishUnlockIds.Contains(id)
                 )
                 .ToList();
 
@@ -1730,45 +1878,6 @@ namespace KitchenPlateupAP
 
             Logger.LogInfo("[QueueItemsFromReceivedPool] " + selectedItems.Count + " items added to spawn queue.");
         }
-
-        private void QueueItemsForNextRun(int count)
-        {
-             if (receivedItemPool.Count == 0)
-             {
-                 Logger.LogWarning("No items available to queue for next run.");
-                 return;
-             }
- 
-            var dishUnlockIds = new HashSet<int>(ProgressionMapping.dishUnlockIDs.Values);
-            // Filter out speed upgrades and dish unlock items
-            var validItems = receivedItemPool
-                .Where(id => !ProgressionMapping.speedUpgradeMapping.ContainsKey(id) && !dishUnlockIds.Contains(id) && id != 15 && id != 16)
-                .ToList();
-
-             if (validItems.Count == 0)
-             {
-                 Logger.LogWarning("All items in pool are speed upgrades. No items will be queued.");
-                 return;
-             }
- 
-             // Randomly select 'count' items (or all available if less than count)
-             var random = new System.Random();
-             var selectedItems = validItems.OrderBy(_ => random.Next()).Take(count).ToList();
- 
-             foreach (int itemId in selectedItems)
-             {
-                 if (!spawnQueue.Any(x => (int)x.ItemId == itemId))
-                 {
-                     Logger.LogInfo($"Queuing item ID {itemId} for next run.");
-                     spawnQueue.Enqueue(CreateItemInfoForQueue(itemId));
-                 }
-                 else
-                 {
-                     Logger.LogInfo($"Item ID {itemId} already queued. Skipping.");
-                 }
- 
-             }
-         }
 
         private void ProcessSpawn(ItemInfo info)
         {
@@ -1813,8 +1922,11 @@ namespace KitchenPlateupAP
             {
                 if (!ProgressionMapping.progressionToGDO.TryGetValue(checkId, out gdoId))
                 {
-                    Logger.LogWarning("No mapping found for check id: " + checkId);
-                    return;
+                    if (!ProgressionMapping.applianceUnlockToGDO.TryGetValue(checkId, out gdoId))
+                    {
+                        Logger.LogWarning("No mapping found for check id: " + checkId);
+                        return;
+                    }
                 }
             }
 
@@ -1991,7 +2103,7 @@ namespace KitchenPlateupAP
                 firstCycleCompleted = true;
                 dayTransitionProcessed = false;
                 itemsSpawnedThisRun = false;
-                moneyClampedThisPrep = false; // reset for this cycle
+                moneyClampedThisPrep = false;
                 Logger.LogInfo("First day cycle completed; day cycle updates are now armed.");
             }
 
@@ -2003,6 +2115,12 @@ namespace KitchenPlateupAP
                     ItemInfo queued = spawnQueue.Dequeue();
                     Logger.LogInfo($"[Prep Phase] Spawning queued item ID: {queued.ItemId}");
                     ProcessSpawn(queued);
+                }
+
+                // Spawn extra blueprints from Shop Size Increase items
+                if (ExtraBlueprintCount > 0 && !itemsSpawnedThisRun)
+                {
+                    SpawnExtraBlueprints();
                 }
 
                 if (!moneyClampedThisPrep)
@@ -2051,8 +2169,8 @@ namespace KitchenPlateupAP
                         }
                     }
                 }
-                else
- {
+                else if (goal == 1)
+                {
                     overallDaysCompleted++;
                     Logger.LogInfo($"[Day Goal] Overall day {overallDaysCompleted} completed.");
                     if (overallDaysCompleted <= 100)
@@ -2078,6 +2196,54 @@ namespace KitchenPlateupAP
                     {
                         Logger.LogInfo($"[Day Goal] Reached {overallDaysCompleted} >= {dayCount}, sending goal complete.");
                         SendGoalComplete();
+                    }
+                }
+                else if (goal == 2)
+                {
+                    overallDaysCompleted++;
+                    Logger.LogInfo($"[Dish Day Goal] Overall day {overallDaysCompleted} completed.");
+
+                    // Day checks: 110000 + N (same range as goal 1, capped at day_target)
+                    if (overallDaysCompleted <= dayTarget)
+                    {
+                        int dayLocID = 110000 + overallDaysCompleted;
+                        session.Locations.CompleteLocationChecks(dayLocID);
+                        Logger.LogInfo($"[Dish Day Goal] Completed day location => ID={dayLocID}");
+                    }
+
+                    // Per-run day tracking and dish checks for the current active dish
+                    // Per-run day tracking and dish checks for the current active dish
+                    if (lastDay < dayTarget)
+                    {
+                        lastDay++;
+                        DoDishChecks(lastDay);
+                        DoSettingChecks(lastDay);
+                    }
+
+                    // Star checks: 120000 + N, for every star where N*3 <= day_target
+                    int maxStars = dayTarget / 3;
+                    if (overallDaysCompleted % 3 == 0 && overallStarsEarned < maxStars)
+                    {
+                        overallStarsEarned++;
+                        int starLocID = 120000 + overallStarsEarned;
+                        session.Locations.CompleteLocationChecks(starLocID);
+                        Logger.LogInfo($"[Dish Day Goal] Earned star #{overallStarsEarned}, location => ID={starLocID}");
+                    }
+
+                    // Win condition: when global day reaches day_target, check active dish count
+                    if (overallDaysCompleted >= dayTarget)
+                    {
+                        int activeDishes = CountActiveDishes();
+                        Logger.LogInfo($"[Dish Day Goal] Reached day_target={dayTarget}. Active dishes: {activeDishes}, required: {dishGoalCount}");
+                        if (activeDishes >= dishGoalCount)
+                        {
+                            Logger.LogInfo($"[Dish Day Goal] Win condition met! {activeDishes} >= {dishGoalCount} dishes active. Sending goal complete.");
+                            SendGoalComplete();
+                        }
+                        else
+                        {
+                            Logger.LogWarning($"[Dish Day Goal] Day target reached but only {activeDishes}/{dishGoalCount} dishes active. Goal NOT complete.");
+                        }
                     }
                 }
             }
@@ -2882,6 +3048,30 @@ namespace KitchenPlateupAP
                 kitchenDish = GetSingleton<RebuildKitchen.SCurrentKitchen>().Dish;
             }
 
+            // Fallback: if kitchen singleton has no dish, try reading from wall storage
+            if (kitchenDish == 0)
+            {
+                EntityQuery wallQuery = GetEntityQuery(ComponentType.ReadOnly<CAppliance>());
+                using var wallEntities = wallQuery.ToEntityArray(Allocator.Temp);
+                for (int i = 0; i < wallEntities.Length; i++)
+                {
+                    var appliance = EntityManager.GetComponentData<CAppliance>(wallEntities[i]);
+                    if (appliance.ID != ApplianceReferences.WallPiece)
+                        continue;
+
+                    if (EntityManager.HasComponent<CStoredDishId>(wallEntities[i]))
+                    {
+                        int wallDish = EntityManager.GetComponentData<CStoredDishId>(wallEntities[i]).DishId;
+                        if (wallDish != 0)
+                        {
+                            kitchenDish = wallDish;
+                            Logger.LogInfo($"[Prep Dish] Restored dish from wall: {kitchenDish} ({GetDishName(kitchenDish)})");
+                        }
+                    }
+                    break;
+                }
+            }
+
             string kitchenDishName = GetDishName(kitchenDish);
             string localDishName = GetDishName(DishId);
 
@@ -2892,6 +3082,62 @@ namespace KitchenPlateupAP
                 Logger.LogWarning($"[Prep Dish] Mismatch detected. Updating current dish to kitchen singleton: {kitchenDish} ({kitchenDishName}).");
                 SetCurrentDish(kitchenDish);
             }
+        }
+        private void SpawnExtraBlueprints()
+        {
+            var pool = new List<int>();
+            foreach (var appliance in KitchenData.GameData.Main.Get<Appliance>())
+            {
+                if (!appliance.IsPurchasable)
+                    continue;
+                if (ApplianceUnlocksEnabled && !IsApplianceUnlocked(appliance.ID))
+                    continue;
+                pool.Add(appliance.ID);
+            }
+
+            if (pool.Count == 0)
+            {
+                Logger.LogWarning("[ShopExpansion] No valid appliances in pool.");
+                return;
+            }
+
+            int toSpawn = Mathf.Min(ExtraBlueprintCount, pool.Count);
+
+            // Shuffle
+            var rng = new System.Random();
+            for (int i = pool.Count - 1; i > 0; i--)
+            {
+                int j = rng.Next(i + 1);
+                int tmp = pool[i];
+                pool[i] = pool[j];
+                pool[j] = tmp;
+            }
+
+            Vector3 basePos = SpawnHelpers.ResolveSpawnPosition(EntityManager, Spawning.SpawnPositionType.Door, InputSourceIdentifier.Identifier);
+
+            for (int i = 0; i < toSpawn; i++)
+            {
+                int gdoId = pool[i];
+                Vector3 offset = new Vector3(i * 0.5f, 0f, 0f);
+                SpawnHelpers.TrySpawnApplianceBlueprint(EntityManager, gdoId, basePos + offset, costMode: 1f);
+                Logger.LogInfo($"[ShopExpansion] Spawned extra blueprint GDO={gdoId} ({i + 1}/{toSpawn})");
+            }
+
+            itemsSpawnedThisRun = true;
+            Logger.LogInfo($"[ShopExpansion] Spawned {toSpawn} extra blueprint(s) this prep.");
+        }
+
+        /// <summary>
+        /// Goal 2: Counts active dishes as 1 (starting dish) + received dish unlock items.
+        /// </summary>
+        private int CountActiveDishes()
+        {
+            if (session?.Items?.AllItemsReceived == null)
+                return 1;
+
+            var dishUnlockIds = new HashSet<int>(ProgressionMapping.dishUnlockIDs.Values);
+            int unlockCount = session.Items.AllItemsReceived.Count(item => dishUnlockIds.Contains((int)item.ItemId));
+            return 1 + unlockCount; // 1 for starting dish
         }
     }
 }

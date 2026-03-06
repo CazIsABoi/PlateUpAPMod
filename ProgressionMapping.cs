@@ -306,6 +306,38 @@ namespace KitchenPlateupAP
             { "Serving Board Stack", ApplianceReferences.ServingBoardStack },
         };
 
+        public static readonly Dictionary<string, int> decorDictionary = new Dictionary<string, int>
+        {
+            { "Affordable Affordable Bin", ApplianceReferences.AffordableBin },
+            { "Affordable Dirty Floor Sign", ApplianceReferences.AffordableWetFloorSign },
+            { "Affordable Gumball Machine", ApplianceReferences.AffordableGumballMachine },
+            { "Affordable Stock Picture", ApplianceReferences.AffordableStockArt },
+            { "Affordable Ceiling Light", ApplianceReferences.AffordableRoofLight },
+            { "Affordable Neon Sign Eat", ApplianceReferences.AffordableNeonSign1 },
+            { "Affordable Neon Sign Enjoy", ApplianceReferences.AffordableNeonSign2 },
+            { "Charming Dartboard", ApplianceReferences.CosyDartboard },
+            { "Charming Wall Light", ApplianceReferences.CosyWallLight },
+            { "Charming Barrel", ApplianceReferences.CosyBarrel},
+            { "Charming Bookcase", ApplianceReferences.CosyBookcase },
+            { "Charming Rug", ApplianceReferences.CosyRug },
+            { "Charming Fireplace", ApplianceReferences.CosyFireplace },
+            { "Exclusive Candelabra", ApplianceReferences.FancyCandelabra },
+            { "Exclusive Chandelier", ApplianceReferences.FancyChandelier },
+            { "Exclusive Painting", ApplianceReferences.FancyPainting },
+            { "Exclusive Rug", ApplianceReferences.FancyRug },
+            { "Exclusive Classical Globe", ApplianceReferences.FancyGlobe },
+            { "Exclusive Precious Flower", ApplianceReferences.FancyFlowers },
+            { "Exclusive Statue", ApplianceReferences.FancyStatue },
+            { "Formal Abstract Lamp", ApplianceReferences.FormalStandingLamp },
+            { "Formal Tidy Plant", ApplianceReferences.FormalPlant },
+            { "Formal Vase", ApplianceReferences.FormalVase },
+            { "Formal Brand Mascot", ApplianceReferences.FormalDogStatue },
+            { "Formal Indoor Fountain", ApplianceReferences.Fountain },
+            { "Miscellaneous Calm Painting", ApplianceReferences.Painting },
+            { "Miscellaneous Plant", ApplianceReferences.Plant },
+            { "Miscellaneous Rug", ApplianceReferences.Rug },
+        };
+
         public static readonly Dictionary<int, int> customerCardDictionary = new Dictionary<int, int>()
         {
             { 1, UnlockCardReferences.Affordable },

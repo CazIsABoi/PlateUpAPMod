@@ -36,11 +36,34 @@ namespace KitchenPlateupAP
                     if (option.IsRemoved)
                         continue;
 
-                    // If this appliance has NOT been unlocked via Archipelago, remove it from the shop pool
-                    if (!Mod.IsApplianceUnlocked(option.Appliance))
+                    // Check if this is a decoration appliance
+                    bool isDecoration = false;
+                    if (GameData.Main.TryGet<Appliance>(option.Appliance, out var appliance))
                     {
-                        option.IsRemoved = true;
-                        EntityManager.SetComponentData(entities[i], option);
+                        isDecoration = appliance.ShoppingTags.HasFlag(ShoppingTags.Decoration);
+                    }
+
+                    if (isDecoration)
+                    {
+                        // Decoration unlocks disabled = let all decorations through
+                        if (!Mod.DecorationUnlocksEnabled)
+                            continue;
+
+                        // Decoration unlocks enabled = filter by unlock list
+                        if (!Mod.IsDecorationUnlocked(option.Appliance))
+                        {
+                            option.IsRemoved = true;
+                            EntityManager.SetComponentData(entities[i], option);
+                        }
+                    }
+                    else
+                    {
+                        // Non-decoration: filter by appliance unlock list
+                        if (!Mod.IsApplianceUnlocked(option.Appliance))
+                        {
+                            option.IsRemoved = true;
+                            EntityManager.SetComponentData(entities[i], option);
+                        }
                     }
                 }
             }

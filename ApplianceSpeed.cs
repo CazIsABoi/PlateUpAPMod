@@ -83,6 +83,7 @@ namespace KitchenPlateupAP
     public class ApplyCookSpeedSystem : GenericSystemBase, IModSystem
     {
         private EntityQuery ApplianceQuery;
+        private float _lastAppliedSpeed = float.NaN;
 
         protected override void Initialise()
         {
@@ -99,6 +100,11 @@ namespace KitchenPlateupAP
             }
 
             float speedMultiplier = Mod.cookSpeedMod;
+
+            // Skip if speed hasn't changed since last application
+            if (speedMultiplier == _lastAppliedSpeed)
+                return;
+            _lastAppliedSpeed = speedMultiplier;
 
             using var appliances = ApplianceQuery.ToEntityArray(Allocator.Temp);
             for (int i = 0; i < appliances.Length; i++)
@@ -169,6 +175,7 @@ namespace KitchenPlateupAP
     public class ApplyChopSpeedSystem : GenericSystemBase, IModSystem
     {
         private EntityQuery ApplianceQuery;
+        private float _lastAppliedSpeed = float.NaN;
 
         protected override void Initialise()
         {
@@ -184,6 +191,11 @@ namespace KitchenPlateupAP
             }
 
             float speedMultiplier = Mod.chopSpeedMod;
+
+            // Skip if speed hasn't changed since last application
+            if (speedMultiplier == _lastAppliedSpeed)
+                return;
+            _lastAppliedSpeed = speedMultiplier;
 
             using var appliances = ApplianceQuery.ToEntityArray(Allocator.Temp);
             for (int i = 0; i < appliances.Length; i++)
@@ -255,6 +267,7 @@ namespace KitchenPlateupAP
     public class ApplyKneadSpeedSystem : GenericSystemBase, IModSystem
     {
         private EntityQuery ApplianceQuery;
+        private float _lastAppliedSpeed = float.NaN;
 
         protected override void Initialise()
         {
@@ -270,6 +283,11 @@ namespace KitchenPlateupAP
             }
 
             float speedMultiplier = Mod.chopSpeedMod; // uses same multiplier as Chop
+
+            // Skip if speed hasn't changed since last application
+            if (speedMultiplier == _lastAppliedSpeed)
+                return;
+            _lastAppliedSpeed = speedMultiplier;
 
             using var appliances = ApplianceQuery.ToEntityArray(Allocator.Temp);
             for (int i = 0; i < appliances.Length; i++)
@@ -337,10 +355,11 @@ namespace KitchenPlateupAP
         }
     }
 
-    // SEPARATE mode: Clean
+    // SEPARATE mode: Clean 
     public class ApplyCleanSpeedSystem : GenericSystemBase, IModSystem
     {
         private EntityQuery ApplianceQuery;
+        private float _lastAppliedSpeed = float.NaN;
 
         protected override void Initialise()
         {
@@ -356,6 +375,11 @@ namespace KitchenPlateupAP
             }
 
             float speedMultiplier = Mod.cleanSpeedMod;
+
+            // Skip if speed hasn't changed since last application
+            if (speedMultiplier == _lastAppliedSpeed)
+                return;
+            _lastAppliedSpeed = speedMultiplier;
 
             using var appliances = ApplianceQuery.ToEntityArray(Allocator.Temp);
             for (int i = 0; i < appliances.Length; i++)

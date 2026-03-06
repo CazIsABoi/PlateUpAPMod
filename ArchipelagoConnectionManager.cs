@@ -130,8 +130,6 @@ namespace KitchenPlateupAP
 
                     try { Mod.Instance?.OnSuccessfulConnect(); } catch (Exception ex) { Logger.LogError("OnSuccessfulConnect callback error: " + ex.Message); }
 
-                    try { session.Items.ItemReceived += OnItemReceived; } catch {}
-
                     return true;
                 }
                 else
@@ -175,7 +173,7 @@ namespace KitchenPlateupAP
             try
             {
                 UnwireSession(s);
-                try { s.Items.ItemReceived -= OnItemReceived; } catch { }
+                // REMOVED: s.Items.ItemReceived -= OnItemReceived (was removing wrong handler)
             }
             catch { }
 
@@ -193,6 +191,7 @@ namespace KitchenPlateupAP
                 SafeInvokeDisconnected(reason ?? "Client disconnected");
             }
         }
+
 
         private static void WireSession(ArchipelagoSession session)
         {
@@ -274,7 +273,8 @@ namespace KitchenPlateupAP
             {
                 try
                 {
-                    var delaySeconds = ReconnectDelaySeconds + UnityEngine.Random.Range(0, 3); // small jitter
+                    var rng = new System.Random();
+                    var delaySeconds = ReconnectDelaySeconds + rng.Next(0, 3);
                     Logger.LogWarning($"Connection lost ({reason ?? "unknown"}). Reconnecting in {delaySeconds}s...");
                     await Task.Delay(TimeSpan.FromSeconds(delaySeconds), token);
                     if (token.IsCancellationRequested)

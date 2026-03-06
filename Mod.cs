@@ -80,7 +80,6 @@ namespace KitchenPlateupAP
         private static int dayTarget = 15;       // goal 2: global day the player must survive to (15–30)
         private static int dishGoalCount = 3;    // goal 2: number of dishes that must be active on that day
         private static List<string> selectedDishes = new List<string>();
-        object rawGoal = null;
         private static bool dishesMessageSent = false;
         private bool itemsQueuedThisLobby = false;
         int itemsKeptPerRun = 5;
@@ -111,9 +110,7 @@ namespace KitchenPlateupAP
         private int stars = 0;
         private int timesFranchised = 0; // number of completed franchises so far
         private int DishId;
-        private bool lastKitchenState = false;
         private bool firstCycleCompleted = false;
-        private bool previousWasDay = false;
         bool inLobby = true;
         bool loseScreen = false;
         bool franchiseScreen = false;
@@ -128,20 +125,16 @@ namespace KitchenPlateupAP
         private bool franchisePending = false;
         private bool moneyClampedThisPrep = false;
         private bool forceSpawnRequested = false;
-        private bool wallLastDaySyncedThisKitchen = false;
         private bool moneyClampPending = false;
         private static int pendingCoinAmount = 0;
 
         // Flag to prevent repeated logging during a cycle.
-        private static bool loggedCardThisCycle = false;
         private static bool prepLogDone = false;
         private static bool sessionNotInitLogged = false;
         private bool itemsSpawnedThisRun = false;
         private static Dictionary<int, float> playerBaseSpeeds = new Dictionary<int, float>();
-        private static bool deferredItemHistoryApplied = false;
         private int currentDishDayCount = 0;
         private int dishIdTrackedForDayCount = 0;
-        private int lastLoggedHeldDishId = -1; // track last logged card
         private int lastCardSyncDishId = 0;
 
         // Build tiers dynamically from slot data: start 0.5, + (1.0 / N) per upgrade, final 1.5 at N upgrades; if N==0 -> [1.0]
@@ -451,7 +444,6 @@ namespace KitchenPlateupAP
                             LockedDishes.SetUnlockedDishes(new[] { baselineDishId });
                             LockedDishes.EnableLocking();
 
-                            SetCurrentDish(baselineDishId, persist: false, resetDayCounter: false);
                             PersistLastSelectedDishes(selectedDishes);
                             Logger.LogInfo($"[PlateupAP] Baseline dish unlocked: {baselineDishId} (selected list: {string.Join(", ", resolvedDishIds)})");
                         }
@@ -869,6 +861,7 @@ namespace KitchenPlateupAP
             World.GetOrCreateSystem<MoneyCapSystem>().Enabled = true;
             EnsureCustomAppliancesFileExists();
             settingQuery = GetEntityQuery(ComponentType.ReadOnly<CSetting>());
+            ArchipelagoConnectionManager.Disconnected += (_) => { itemsEventSubscribed = false; };
         }
 
         public void OnSuccessfulConnect()
@@ -933,7 +926,6 @@ namespace KitchenPlateupAP
                 Logger.LogInfo("[Archipelago] Re-processing all previously received items...");
                 ProcessAllReceivedItems();
                 ReapplyMoneyCapFromHistory();
-                deferredItemHistoryApplied = false; // arm second pass
                 Logger.LogInfo("[Archipelago] Re-processing all previously received location checks");
                 ReconstructProgressFromLocationChecks();
                 EnsureDishLockingBaseline(); // <<< re-check after item history
@@ -1214,6 +1206,22 @@ namespace KitchenPlateupAP
 
         protected override void OnUpdate()
         {
+            if (slowEffectExpiry.Count > 0)
+            {
+                float now = UnityEngine.Time.time;
+                var expired = new List<Entity>();
+                foreach (var kv in slowEffectExpiry)
+                {
+                    if (now >= kv.Value)
+                        expired.Add(kv.Key);
+                }
+                foreach (var e in expired)
+                {
+                    slowEffectMultipliers.Remove(e);
+                    slowEffectExpiry.Remove(e);
+                    Logger.LogInfo("[Trap] Player speed restored (timer expired).");
+                }
+            }
 
             franchiseScreen = HasSingleton<SFranchiseBuilderMarker>();
             loseScreen = HasSingleton<SGameOver>();
@@ -1225,24 +1233,32 @@ namespace KitchenPlateupAP
             }
             inLobby = currentLobbyState;
             wasInLobbyLastFrame = currentLobbyState;
-            SceneManager.sceneLoaded += (scene, loadScene) =>
-            {
-                Logger.LogInfo($"Scene: {scene.name}");
-            };
 
             if (inLobby)
             {
                 if (!itemsQueuedThisLobby)
                 {
                     ResetStateForLobbyEntry();
+                    Logger.LogInfo("[Lobby] Entered lobby. Preparing to queue items for next run...");
 
+                    if (spawnQueue.Count == 0)
+                    {
+                        QueueItemsFromReceivedPool(itemsKeptPerRun);
+                        Logger.LogInfo($"[Lobby] {spawnQueue.Count} items queued for next run.");
+                    }
+                    else
+                    {
+                        Logger.LogInfo("[Lobby] Items are already queued. Skipping queueing.");
+                    }
+
+                    itemsQueuedThisLobby = true;
                 }
 
                 UpdateRestaurantStartingName();
             }
             else
             {
-                dishPedestalSpawned = false; // Reset flag when leaving lobby
+                dishPedestalSpawned = false;
             }
 
             if (HasSingleton<SKitchenMarker>())
@@ -1304,40 +1320,20 @@ namespace KitchenPlateupAP
                 {
                     SendDeathLink();
                 }
-
             }
-            else if (inLobby && !itemsQueuedThisLobby)
+
+            if (deathLinkResetToLastStarPending)
             {
-
-                 ResetStateForLobbyEntry();
-
-                 Logger.LogInfo("[Lobby] Entered lobby. Preparing to queue items for next run...");
-
-                 if (spawnQueue.Count == 0)
-                 {
-                     QueueItemsFromReceivedPool(itemsKeptPerRun);
-                     Logger.LogInfo($"[Lobby] {spawnQueue.Count} items queued for next run.");
-                 }
-                 else
-                 {
-                     Logger.LogInfo("[Lobby] Items are already queued. Skipping queueing.");
-                 }
-
-                 itemsQueuedThisLobby = true;
-             }
-
-             if (deathLinkResetToLastStarPending)
-             {
-                 deathLinkResetToLastStarPending = false;
-                 if (!HasSingleton<SDay>())
-                 {
-                     Logger.LogError("[PlateupAP] SDay singleton not found. Cannot do star reset.");
-                 }
-                 else
-                 {
-                     ResetToLastStar();
-                 }
-             }
+                deathLinkResetToLastStarPending = false;
+                if (!HasSingleton<SDay>())
+                {
+                    Logger.LogError("[PlateupAP] SDay singleton not found. Cannot do star reset.");
+                }
+                else
+                {
+                    ResetToLastStar();
+                }
+            }
         }
 
         // Spawning Items
@@ -1368,28 +1364,6 @@ namespace KitchenPlateupAP
             session.Items.ItemReceived += OnItemReceived;
             itemsEventSubscribed = true;
             Logger.LogInfo("Subscribed to session.Items.ItemReceived (early).");
-        }
-
-        private void HandleRandomApplianceItem(int checkId)
-        {
-            // Just enqueue the item; ProcessSpawn handles random selection and spawns during prep
-            if (!spawnQueue.Any(x => (int)x.ItemId == checkId))
-            {
-                spawnQueue.Enqueue(CreateItemInfoForQueue(checkId));
-
-                if (currentIdentity != null)
-                {
-                    if (!pendingSpawnState.PendingItemIDs.Contains(checkId))
-                        pendingSpawnState.PendingItemIDs.Add(checkId);
-                    PersistenceManager.SavePendingSpawn(currentIdentity, pendingSpawnState);
-                }
-
-                Logger.LogInfo($"[Random Appliance] Queued {(checkId == 1001 ? "useful" : "filler")} random appliance item for next prep.");
-            }
-            else
-            {
-                Logger.LogInfo("[Random Appliance] Item already queued; skipping.");
-            }
         }
 
         private static List<int> receivedItemPool = new List<int>();
@@ -1452,12 +1426,20 @@ namespace KitchenPlateupAP
                 return;
             }
 
-            // Add this where you handle received item IDs (e.g. in ProcessSpawn or CheckReceivedItems):
             if (checkId == 21)
             {
                 StartingCardManager.ApplyRemoveCard();
                 Logger.LogInfo($"[Mod] Remove Card received. {StartingCardManager.ActiveCount} starting card(s) remain.");
-                return; // Item is consumed, don't spawn anything
+                return;
+            }
+
+            // Shop Size Increase — MOVED BEFORE speed upgrades so it's reachable
+            if (checkId == 22)
+            {
+                ExtraBlueprintCount++;
+                Logger.LogInfo($"[ShopSize] Received 'Shop Size Increase'. Extra blueprints: {ExtraBlueprintCount}");
+                pendingSpawnState.PendingItemIDs.Remove(checkId);
+                return;
             }
 
             // Speed upgrades (apply immediately, persist tiers)
@@ -1518,14 +1500,6 @@ namespace KitchenPlateupAP
                         break;
                 }
 
-                if (checkId == 22)
-                {
-                    ExtraBlueprintCount++;
-                    Logger.LogInfo($"[ShopSize] Received 'Shop Size Increase'. Extra blueprints: {ExtraBlueprintCount}");
-                    pendingSpawnState.PendingItemIDs.Remove(checkId);
-                    return;
-                }
-
                 if (changed && currentIdentity != null)
                 {
                     var state = new SpeedUpgradeState
@@ -1555,7 +1529,6 @@ namespace KitchenPlateupAP
                     UnlockAppliance(unlockGdoId);
                 }
 
-                // Spawn immediately if in kitchen, otherwise queue for next prep
                 if (HasSingleton<SKitchenMarker>())
                 {
                     Vector3 spawnPos = SpawnHelpers.ResolveSpawnPosition(EntityManager, SpawnPositionType.Door, InputSourceIdentifier.Identifier);
@@ -1567,7 +1540,6 @@ namespace KitchenPlateupAP
                 }
                 else
                 {
-                    // Not in kitchen yet — queue for spawn during next prep
                     if (!spawnQueue.Any(x => (int)x.ItemId == checkId))
                     {
                         spawnQueue.Enqueue(info);
@@ -1836,20 +1808,10 @@ namespace KitchenPlateupAP
         private void HandleGameReset()
         {
             Logger.LogInfo("[PlateupAP] Handling game reset...");
-            firstCycleCompleted = false;
-            previousWasDay = false;
-            franchised = false;
-            lost = false;
+            ResetStateForLobbyEntry();
             itemsQueuedThisLobby = false;
             itemsSpawnedThisRun = false;
             franchisePending = false;
-            
-            lastDay = 0;
-            stars = 0;
-            ResetStateForLobbyEntry();
-            itemsQueuedThisLobby = false;
-            franchisePending = false;
-
             Logger.LogInfo("[PlateupAP] Game reset complete. Ready for a new run.");
         }
 
@@ -2041,8 +2003,7 @@ namespace KitchenPlateupAP
             }
         }
 
-        private Dictionary<Entity, float> originalSpeeds = new Dictionary<Entity, float>();
-        private HashSet<Entity> activeSlowEffects = new HashSet<Entity>();
+        private Dictionary<Entity, float> slowEffectExpiry = new Dictionary<Entity, float>();
 
         private void ApplySlowEffect()
         {
@@ -2055,16 +2016,12 @@ namespace KitchenPlateupAP
                 for (int i = 0; i < count; i++)
                 {
                     Entity player = playerEntities[i];
-
-                    // Set a slow effect multiplier (25% of normal speed)
                     if (!slowEffectMultipliers.ContainsKey(player))
                     {
                         slowEffectMultipliers[player] = 0.25f;
-                        Logger.LogInfo($"[Trap] Player {i} speed reduced.");
+                        slowEffectExpiry[player] = UnityEngine.Time.time + 15f;
+                        Logger.LogInfo($"[Trap] Player {i} speed reduced for 15 seconds.");
                     }
-
-                    // Schedule speed restoration after 30 seconds
-                    RestoreSpeedAfterDelay(player, 15);
                 }
             }
         }
@@ -2380,32 +2337,6 @@ namespace KitchenPlateupAP
         }
 
 
-        private void ApplySpeedModifiers()
-        {
-            using (var playerEntities = playerSpeedQuery.ToEntityArray(Allocator.Temp))
-            {
-                for (int i = 0; i < playerEntities.Length; i++)
-                {
-                    Entity playerEntity = playerEntities[i];
-                    CPlayer player = EntityManager.GetComponentData<CPlayer>(playerEntity);
-
-                    if (!playerBaseSpeeds.TryGetValue(playerEntity.Index, out float baseSpeed))
-                    {
-                        baseSpeed = player.Speed;
-                        playerBaseSpeeds[playerEntity.Index] = baseSpeed;
-                        // Optional: Logger.LogInfo($"[Speed] Cached base player speed {baseSpeed} for entity {playerEntity.Index}");
-                    }
-
-                    float target = baseSpeed * movementSpeedMod;
-                    if (Math.Abs(player.Speed - target) > 0.0001f)
-                    {
-                        player.Speed = target;
-                        EntityManager.SetComponentData(playerEntity, player);
-                    }
-                }
-            }
-        }
-
         private void DoSettingChecks(int dayNumber)
         {
             if (checksDisabled)
@@ -2476,53 +2407,6 @@ namespace KitchenPlateupAP
             }
         }
 
-        private void ApplyApplianceSpeedModifiers()
-        {
-            if (applianceSpeedMode != 0)
-            {
-                return;
-            }
-
-            if (!HasSingleton<SIsDayTime>())
-                return;
-
-            float speedMultiplier = applianceSpeedMod;
-
-            EntityQuery processingApplianceQuery = GetEntityQuery(ComponentType.ReadOnly<CItemUndergoingProcess>());
-            var processingAppliances = processingApplianceQuery.ToEntityArray(Allocator.TempJob);
-
-            var entityManager = EntityManager;
-            for (int i = 0; i < processingAppliances.Length; i++)
-            {
-                Entity itemEntity = processingAppliances[i];
-
-                if (!entityManager.HasComponent<CItemUndergoingProcess>(itemEntity))
-                    continue;
-
-                var itemProcess = entityManager.GetComponentData<CItemUndergoingProcess>(itemEntity);
-                Entity applianceEntity = itemProcess.Appliance;
-
-                // Check if appliance has a speed modifier component
-                if (!entityManager.HasComponent<CApplianceSpeedModifier>(applianceEntity))
-                    continue;
-
-                var speedMod = entityManager.GetComponentData<CApplianceSpeedModifier>(applianceEntity);
-
-                // Avoid spam: only write when we actually change the speed
-                if (Math.Abs(speedMod.Speed - speedMultiplier) > 0.0001f)
-                {
-                    // var previous = speedMod.Speed; // Keep in case we need it later
-                    speedMod.Speed = speedMultiplier;
-                    entityManager.SetComponentData(applianceEntity, speedMod);
-
-                    // Commented to reduce log spam
-                    // Mod.Logger.LogInfo($"[ApplyApplianceSpeedModifiers] Set appliance {applianceEntity.Index} speed to {speedMultiplier}, previous speed {previous}");
-                }
-            }
-
-            processingAppliances.Dispose();
-        }
-
         public void IncreaseApplianceSpeedTier()
         {
             if (applianceSpeedTier < applianceSpeedTiers.Length - 1)
@@ -2538,36 +2422,12 @@ namespace KitchenPlateupAP
             }
         }
 
-        public static Dictionary<int, float> originalApplianceSpeeds = new Dictionary<int, float>();
-
         public static float GetSpeedMultiplier(Appliance appliance)
         {
             int tierIndex = Mathf.Clamp(applianceSpeedTier, 0, applianceSpeedTiers.Length - 1);
             float multiplier = applianceSpeedTiers[tierIndex];
 
             return Mathf.Clamp(multiplier, 0.1f, 2f);
-        }
-
-        private void TrySubscribeItemsSync()
-        {
-            if (session == null)
-            {
-                Logger.LogError("Session is null, cannot subscribe to items.");
-                return;
-            }
-
-            while (session.Items == null)
-            {
-                Logger.LogInfo("Waiting for session items to initialize...");
-                System.Threading.Thread.Sleep(1000);
-            }
-
-            if (!itemsEventSubscribed)
-            {
-                session.Items.ItemReceived += OnItemReceived;
-                itemsEventSubscribed = true;
-                Logger.LogInfo("Subscribed to session.Items.ItemReceived.");
-            }
         }
         private void SendGoalComplete()
         {
@@ -2595,90 +2455,10 @@ namespace KitchenPlateupAP
 
         private const string LastSelectedDishesFile = "last_selected_dishes.txt";
 
-        private List<string> LoadLastSelectedDishes()
-        {
-            string path = Path.Combine(Application.persistentDataPath, LastSelectedDishesFile);
-            if (File.Exists(path))
-                return File.ReadAllLines(path).ToList();
-            return new List<string>();
-        }
-
         private void PersistLastSelectedDishes(List<string> dishes)
         {
             string path = Path.Combine(Application.persistentDataPath, LastSelectedDishesFile);
             File.WriteAllLines(path, dishes);
-        }
-
-        private PlateupAPConfig LoadConfigIsolated(string json)
-        {
-            // 1. Raw dump of currently registered global converters (if any)
-            try
-            {
-                var global = JsonConvert.DefaultSettings?.Invoke();
-                if (global != null && global.Converters != null)
-                {
-                    Logger.LogInfo("[PlateupAP][ConfigDebug] Global Converters:");
-                    for (int i = 0; i < global.Converters.Count; i++)
-                    {
-                        var c = global.Converters[i];
-                        Logger.LogInfo($"[PlateupAP][ConfigDebug]   #{i}: {c.GetType().FullName}");
-                    }
-                }
-                else
-                {
-                    Logger.LogInfo("[PlateupAP][ConfigDebug] No global DefaultSettings or no converters.");
-                }
-            }
-            catch (Exception ex)
-            {
-                Logger.LogInfo($"[PlateupAP][ConfigDebug] Failed dumping global converters: {ex.Message}");
-            }
-
-            // 2. Attempt strict clean deserialization (NO converters)
-            try
-            {
-                var cleanSettings = new JsonSerializerSettings
-                {
-                    Converters = new List<JsonConverter>(), // force empty
-                    MetadataPropertyHandling = MetadataPropertyHandling.Ignore,
-                    MissingMemberHandling = MissingMemberHandling.Ignore,
-                    NullValueHandling = NullValueHandling.Include
-                };
-                var clean = JsonConvert.DeserializeObject<PlateupAPConfig>(json, cleanSettings);
-                if (clean != null)
-                {
-                    Logger.LogInfo("[PlateupAP][ConfigDebug] Clean settings deserialization succeeded.");
-                    return clean;
-                }
-                Logger.LogInfo("[PlateupAP][ConfigDebug] Clean settings deserialization returned null – falling back to manual parse.");
-            }
-            catch (Exception ex)
-            {
-                Logger.LogInfo($"[PlateupAP][ConfigDebug] Clean deserialization path failed: {ex}");
-            }
-
-            // 3. Manual parse fallback (completely bypass converters)
-            try
-            {
-                var jo = Newtonsoft.Json.Linq.JObject.Parse(json);
-                var manual = new PlateupAPConfig
-                {
-                    address = (string)jo["address"],
-                    port = (int?)jo["port"] ?? 0,
-                    playername = (string)jo["playername"],
-                    password = (string)jo["password"]
-                };
-                if (string.IsNullOrWhiteSpace(manual.address))
-                    throw new Exception("Manual parse produced empty address.");
-                Logger.LogInfo("[PlateupAP][ConfigDebug] Manual parse succeeded.");
-                return manual;
-            }
-            catch (Exception ex)
-            {
-                Logger.LogError($"[PlateupAP][ConfigDebug] Manual parse failed: {ex}");
-            }
-
-            return null;
         }
 
         // Forces the movement speed mod to 1.0 and persists the new tier.
@@ -2759,7 +2539,6 @@ namespace KitchenPlateupAP
         {
             suppressNextDeathLink = false;
             firstCycleCompleted = false;
-            previousWasDay = false;
             franchised = false;
             lost = false;
             stars = 0;
@@ -2767,7 +2546,6 @@ namespace KitchenPlateupAP
             dayTransitionProcessed = false;
             itemsSpawnedThisRun = false;
             moneyClampedThisPrep = false;
-            loggedCardThisCycle = false;
             dayID = ComputeRunBaseOffset(timesFranchised);
             startingNameApplied = false;
 
@@ -2980,6 +2758,12 @@ namespace KitchenPlateupAP
     // Properties and methods extracted from Mod class for clarity
     partial class Mod
     {
+        // Expose for LeaseRequirementSystem and Chat HUD (eliminates reflection)
+        internal static int Goal => goal;
+        internal static int OverallDaysCompleted => overallDaysCompleted;
+        internal static int DayLeaseInterval => dayLeaseInterval;
+        internal int TimesFranchised => timesFranchised;
+
         internal int ActiveDishId => DishId;
 
         internal string GetDishName(int dishId) => ProgressionMapping.dishDictionary.TryGetValue(dishId, out var name) ? name : "Unknown";
@@ -3004,6 +2788,10 @@ namespace KitchenPlateupAP
             Logger.LogInfo($"[Dish] Current dish set to '{GetDishName(DishId)}' (GDO {DishId}).");
         }
 
+        private static void ResetItemsSubscription()
+        {
+            itemsEventSubscribed = false;
+        }
         private int FindHeldDishId()
         {
             if (playersWithItems == null)
@@ -3071,17 +2859,6 @@ namespace KitchenPlateupAP
             moneyClampPending = true;
             Logger.LogInfo($"[MoneyCap] Re-applied cap (base={baseMoneyCap}, upgrades={upgradeCount}) => {MoneyCap}");
         }
-
-        private void UpdateDishFromHeldCards()
-        {
-            if (!inLobby || playersWithItems == null)
-                return;
-
-            int heldDishId = FindHeldDishId();
-            if (heldDishId != 0)
-                SetCurrentDish(heldDishId);
-        }
-
         private void SyncDishFromActiveCards()
         {
             if (progressionUnlockQuery == null || !HasSingleton<SKitchenMarker>())

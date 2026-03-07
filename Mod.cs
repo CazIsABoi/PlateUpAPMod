@@ -47,7 +47,7 @@ namespace KitchenPlateupAP
     {
         public const string MOD_GUID = "com.caz.plateupap";
         public const string MOD_NAME = "PlateupAP";
-        public const string MOD_VERSION = "0.2.5.3";    
+        public const string MOD_VERSION = "0.2.5.4";    
         public const string MOD_AUTHOR = "Caz";
         public const string MOD_GAMEVERSION = ">=1.1.9";
         public static int TOTAL_SCENES_LOADED = 0;
@@ -375,8 +375,17 @@ namespace KitchenPlateupAP
                     return;
                 }
 
+                if (cfg.port <= 0 || string.IsNullOrWhiteSpace(cfg.playername))
+                {
+                    Logger.LogWarning("[PlateupAP][ConfigWarmup] Config incomplete (missing port or player name); cached but skipping auto-connect.");
+                    CachedConfig = cfg;
+                    return;
+                }
+
                 CachedConfig = cfg;
-                Logger.LogInfo($"[PlateupAP][ConfigWarmup] Cached config for {CachedConfig.address}:{CachedConfig.port} user={CachedConfig.playername}");
+                Logger.LogInfo($"[PlateupAP][Config] Using server={cfg.address}:{cfg.port} player={cfg.playername}");
+                Logger.LogInfo("[PlateupAP][Config] Auto-connecting...");
+                UpdateArchipelagoConfig(cfg);
             }
             catch (Exception ex)
             {
@@ -682,36 +691,33 @@ namespace KitchenPlateupAP
                 })
                 .AddButton("Connect", (int _) =>
                 {
-                    // Prefer cached config warmed in main menu; fallback to file
-                    PlateupAPConfig config = CachedConfig;
-                    if (config == null)
+                    // Always re-read the config file so edits take effect without restarting
+                    string folder = Path.Combine(Application.persistentDataPath, "PlateUpAPConfig");
+                    string path = Path.Combine(folder, "archipelago_config.json");
+                    if (!File.Exists(path))
                     {
-                        string folder = Path.Combine(Application.persistentDataPath, "PlateUpAPConfig");
-                        string path = Path.Combine(folder, "archipelago_config.json");
-                        if (!File.Exists(path))
-                        {
-                            Logger.LogError("Config file not found at: " + path);
-                            return;
-                        }
+                        Logger.LogError("Config file not found at: " + path);
+                        return;
+                    }
 
-                        string json = File.ReadAllText(path);
-                        try
+                    PlateupAPConfig config;
+                    string json = File.ReadAllText(path);
+                    try
+                    {
+                        var jo = Newtonsoft.Json.Linq.JObject.Parse(json);
+                        config = new PlateupAPConfig
                         {
-                            var jo = Newtonsoft.Json.Linq.JObject.Parse(json);
-                            config = new PlateupAPConfig
-                            {
-                                address = (string)jo["address"],
-                                port = (int?)jo["port"] ?? 0,
-                                playername = (string)jo["playername"],
-                                password = (string)jo["password"]
-                            };
-                        }
-                        catch (Exception ex)
-                        {
-                            Logger.LogError("[PlateupAP][Config] Manual parse failed: " + ex);
-                            Logger.LogError("JSON: " + json);
-                            return;
-                        }
+                            address = (string)jo["address"],
+                            port = (int?)jo["port"] ?? 0,
+                            playername = (string)jo["playername"],
+                            password = (string)jo["password"]
+                        };
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogError("[PlateupAP][Config] Manual parse failed: " + ex);
+                        Logger.LogError("JSON: " + json);
+                        return;
                     }
 
                     if (string.IsNullOrWhiteSpace(config.address))
@@ -1529,6 +1535,15 @@ namespace KitchenPlateupAP
                     UnlockAppliance(unlockGdoId);
                 }
 
+                // Resolve appliance name for chat
+                string applianceName = null;
+                if (KitchenData.GameData.Main.TryGet<Appliance>(unlockGdoId, out var applianceGdo))
+                {
+                    applianceName = applianceGdo.Name ?? unlockGdoId.ToString();
+                }
+                applianceName = applianceName ?? unlockGdoId.ToString();
+                ChatManager.AddSystemMessage($"Appliance received: {applianceName}");
+
                 if (HasSingleton<SKitchenMarker>())
                 {
                     Vector3 spawnPos = SpawnHelpers.ResolveSpawnPosition(EntityManager, SpawnPositionType.Door, InputSourceIdentifier.Identifier);
@@ -1573,10 +1588,12 @@ namespace KitchenPlateupAP
                         UnlockDecoration(chosen);
                         string decorName = ProgressionMapping.decorDictionary.FirstOrDefault(kv => kv.Value == chosen).Key ?? chosen.ToString();
                         Logger.LogInfo($"[DecorationUnlock] Unlocked random decoration: '{decorName}' (GDO {chosen})");
+                        ChatManager.AddSystemMessage($"Decoration unlocked: {decorName}");
                     }
                     else
                     {
                         Logger.LogInfo("[DecorationUnlock] All decorations already unlocked.");
+                        ChatManager.AddSystemMessage("All decorations already unlocked!");
                     }
                 }
                 pendingSpawnState.PendingItemIDs.Remove(checkId);
@@ -1934,6 +1951,16 @@ namespace KitchenPlateupAP
 
             if (spawned)
             {
+                // Resolve a friendly name for the chat
+                string spawnedName = null;
+                if (KitchenData.GameData.Main.TryGet<Appliance>(gdoId, out var spawnedAppliance))
+                    spawnedName = spawnedAppliance.Name;
+                else
+                    spawnedName = ProgressionMapping.decorDictionary
+                        .FirstOrDefault(kv => kv.Value == gdoId).Key;
+                spawnedName = spawnedName ?? $"GDO {gdoId}";
+
+                ChatManager.AddSystemMessage($"Spawned: {spawnedName}");
                 Logger.LogInfo($"[Spawn] Spawned item ID {checkId} (GDO {gdoId}) at {spawnPos}.");
                 if (currentIdentity != null && pendingSpawnState.PendingItemIDs.Remove(checkId))
                 {
@@ -1944,6 +1971,7 @@ namespace KitchenPlateupAP
             {
                 Logger.LogWarning($"[Spawn] Failed to spawn item ID {checkId} (GDO {gdoId}). Will remain pending.");
             }
+
         }
 
         //Traps

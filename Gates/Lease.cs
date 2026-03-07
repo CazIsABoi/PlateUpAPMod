@@ -44,7 +44,7 @@ namespace KitchenPlateupAP
                 return;
 
             int goal = Mod.Goal;
-            int overallDaysCompleted = goal == 1 ? Mod.OverallDaysCompleted : 0;
+            int overallDaysCompleted = (goal == 1 || goal == 2) ? Mod.OverallDaysCompleted : 0;
             int timesFranchised = Mod.Instance?.TimesFranchised ?? 1;
             int interval = Math.Max(1, Math.Min(30, Mod.DayLeaseInterval));
 

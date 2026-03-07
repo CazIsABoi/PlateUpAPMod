@@ -29,6 +29,8 @@ namespace KitchenPlateupAP
         private static CancellationTokenSource _reconnectCts;
         private static bool _suppressReconnect;
         private const int ReconnectDelaySeconds = 5;
+        private const int MaxReconnectAttempts = 10;
+        private const int MaxReconnectDelaySeconds = 60;
 
         public static ArchipelagoSession Session
         {
@@ -62,6 +64,22 @@ namespace KitchenPlateupAP
             _ = ConnectAsync(host, port, playerName, password, ItemsHandlingFlags.AllItems, requestSlotData: true);
         }
 
+        /// <summary>
+        /// Ensures JsonConvert.DefaultSettings won't interfere with Archipelago's
+        /// internal JSON serialization (e.g. ItemsHandlingFlags in the ConnectPacket).
+        /// </summary>
+        private static void SanitizeJsonDefaults()
+        {
+            try
+            {
+                Newtonsoft.Json.JsonConvert.DefaultSettings = null;
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning("Failed to clear JsonConvert.DefaultSettings: " + ex.Message);
+            }
+        }
+
         public static async Task<bool> ConnectAsync(
             string host,
             int port,
@@ -88,6 +106,12 @@ namespace KitchenPlateupAP
                     Logger.LogInfo("A connection attempt is already in progress.");
                     return false;
                 }
+                if (IsConnected)
+                {
+                    Logger.LogWarning("Already connected. Disconnect first before connecting again.");
+                    Fail("Already connected to Archipelago. Disconnect first.");
+                    return false;
+                }
                 IsConnecting = true;
             }
 
@@ -100,6 +124,11 @@ namespace KitchenPlateupAP
                 _lastPlayerName = playerName;
                 _lastPassword = password;
                 _lastFlags = flags;
+
+                // Clear any custom JSON serializer settings that other mods (e.g. KitchenLib)
+                // may have installed globally. These can corrupt the ConnectPacket's
+                // ItemsHandlingFlags serialization, causing "invalid item handling flags".
+                SanitizeJsonDefaults();
 
                 var session = ArchipelagoSessionFactory.CreateSession(host, port);
                 WireSession(session);
@@ -159,6 +188,9 @@ namespace KitchenPlateupAP
 
         public static async Task<bool> ReconnectAsync()
         {
+            // Reconnect must bypass the "already connected" guard since it
+            // is called after a disconnect event. Ensure cleanup first.
+            await DisconnectAsync(suppressReconnect: true).ConfigureAwait(false);
             return await ConnectAsync(_lastHost, _lastPort, _lastPlayerName, _lastPassword, _lastFlags).ConfigureAwait(false);
         }
 
@@ -173,7 +205,6 @@ namespace KitchenPlateupAP
             try
             {
                 UnwireSession(s);
-                // REMOVED: s.Items.ItemReceived -= OnItemReceived (was removing wrong handler)
             }
             catch { }
 
@@ -237,6 +268,18 @@ namespace KitchenPlateupAP
             if (ex != null) Logger.LogError(ex.GetBaseException().ToString());
         }
 
+        private static bool IsNonRetryableReason(string reason)
+        {
+            if (string.IsNullOrWhiteSpace(reason))
+                return false;
+
+            return reason.IndexOf("login", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   reason.IndexOf("auth", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   reason.IndexOf("password", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   reason.IndexOf("user request", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   reason.IndexOf("invalid", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
         private static void ScheduleReconnect(string reason)
         {
             if (_suppressReconnect)
@@ -248,14 +291,11 @@ namespace KitchenPlateupAP
             if (IsConnecting)
                 return;
 
-            // Don’t auto-reconnect on obvious auth/user failures
-            if (!string.IsNullOrWhiteSpace(reason) &&
-                (reason.IndexOf("login", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                 reason.IndexOf("auth", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                 reason.IndexOf("password", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                 reason.IndexOf("user request", StringComparison.OrdinalIgnoreCase) >= 0))
+            // Don't auto-reconnect on obvious auth/user failures
+            if (IsNonRetryableReason(reason))
             {
                 Logger.LogWarning("Not auto-reconnecting due to failure reason: " + reason);
+                try { ChatManager.AddSystemMessage("[Archipelago] Connection lost: " + reason); } catch { }
                 return;
             }
 
@@ -271,23 +311,61 @@ namespace KitchenPlateupAP
 
             Task.Run(async () =>
             {
-                try
+                var rng = new System.Random();
+                int attempt = 0;
+
+                while (attempt < MaxReconnectAttempts && !token.IsCancellationRequested)
                 {
-                    var rng = new System.Random();
-                    var delaySeconds = ReconnectDelaySeconds + rng.Next(0, 3);
-                    Logger.LogWarning($"Connection lost ({reason ?? "unknown"}). Reconnecting in {delaySeconds}s...");
-                    await Task.Delay(TimeSpan.FromSeconds(delaySeconds), token);
+                    attempt++;
+
+                    // Exponential backoff: 5-7s, 10-14s, 20-28s... capped at 60s
+                    int baseDelay = Math.Min(ReconnectDelaySeconds * (1 << (attempt - 1)), MaxReconnectDelaySeconds);
+                    int jitter = rng.Next(0, Math.Max(1, baseDelay / 2));
+                    int delaySeconds = baseDelay + jitter;
+
+                    Logger.LogWarning($"Connection lost ({reason ?? "unknown"}). Reconnect attempt {attempt}/{MaxReconnectAttempts} in {delaySeconds}s...");
+                    try { ChatManager.AddSystemMessage($"[Archipelago] Reconnecting ({attempt}/{MaxReconnectAttempts}) in {delaySeconds}s..."); } catch { }
+
+                    try
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(delaySeconds), token).ConfigureAwait(false);
+                    }
+                    catch (TaskCanceledException)
+                    {
+                        return;
+                    }
+
                     if (token.IsCancellationRequested)
                         return;
 
-                    await ReconnectAsync().ConfigureAwait(false);
+                    try
+                    {
+                        bool success = await ReconnectAsync().ConfigureAwait(false);
+                        if (success)
+                        {
+                            Logger.LogInfo($"Auto-reconnect succeeded on attempt {attempt}.");
+                            try { ChatManager.AddSystemMessage("[Archipelago] Reconnected successfully!"); } catch { }
+                            return;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogWarning($"Auto-reconnect attempt {attempt} failed: " + ex.GetBaseException().Message);
+
+                        // If the failure is non-retryable (e.g. server rejected credentials), stop trying
+                        if (IsNonRetryableReason(ex.GetBaseException().Message))
+                        {
+                            Logger.LogWarning("Stopping reconnect: non-retryable error.");
+                            try { ChatManager.AddSystemMessage("[Archipelago] Reconnect failed (non-retryable). Use Connect button."); } catch { }
+                            return;
+                        }
+                    }
                 }
-                catch (TaskCanceledException)
+
+                if (!token.IsCancellationRequested)
                 {
-                }
-                catch (Exception ex)
-                {
-                    Logger.LogWarning("Auto-reconnect attempt failed: " + ex.GetBaseException().Message);
+                    Logger.LogError($"Auto-reconnect failed after {MaxReconnectAttempts} attempts. Use the Connect button to reconnect manually.");
+                    try { ChatManager.AddSystemMessage($"[Archipelago] Reconnect failed after {MaxReconnectAttempts} attempts. Use Connect button."); } catch { }
                 }
             }, token);
         }
@@ -310,7 +388,7 @@ namespace KitchenPlateupAP
         {
             try
             {
-               
+
             }
             catch (Exception ex)
             {

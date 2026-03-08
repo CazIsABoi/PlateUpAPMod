@@ -6,7 +6,7 @@ using KitchenMods;
 
 namespace KitchenPlateupAP
 {
-    [UpdateBefore(typeof(ManageStartDayWarnings))]
+    [UpdateInGroup(typeof(SimulationSystemGroup))]
     public class LeaseRequirementSystem : SystemBase, IModSystem
     {
         private static bool forceRefresh = false;
@@ -38,6 +38,31 @@ namespace KitchenPlateupAP
 
             if (!HasSingleton<SKitchenMarker>() || !HasSingleton<SIsNightTime>())
                 return;
+
+            // Day leases feature is disabled: ensure gate is never active and clear status
+            if (!Mod.DayLeasesEnabled)
+            {
+                if (HasSingleton<SStartDayWarnings>())
+                {
+                    var warnings = GetSingleton<SStartDayWarnings>();
+                    warnings.SellingRequiredAppliance = WarningLevel.Safe;
+                    SetSingleton(warnings);
+                }
+
+                LastStatus = new CachedLeaseInfo
+                {
+                    IsValid = true,
+                    IsPrepPhase = true,
+                    CurrentDay = HasSingleton<SDay>() ? GetSingleton<SDay>().Day : 0,
+                    Owned = 0,
+                    Required = 0,
+                    IsGateActive = false,
+                    DaysUntilNext = 0
+                };
+
+                forceRefresh = false;
+                return;
+            }
 
             int currentDay = HasSingleton<SDay>() ? GetSingleton<SDay>().Day : 0;
             if (currentDay < 1)
@@ -85,7 +110,6 @@ namespace KitchenPlateupAP
             int daysUntilNext = 0;
             if (requiredLeases > 0 && leaseCount >= requiredLeases)
             {
-                // Already have enough leases for this segment; find next threshold
                 if (goal == 0)
                 {
                     int nextRequiredDay = (requiredLeases + 1) * interval;
@@ -98,11 +122,14 @@ namespace KitchenPlateupAP
                 }
             }
 
-            var warnings = GetSingleton<SStartDayWarnings>();
-            warnings.SellingRequiredAppliance = (requiredLeases > 0 && leaseCount < requiredLeases)
-                ? WarningLevel.Error
-                : WarningLevel.Safe;
-            SetSingleton(warnings);
+            bool gateActive = requiredLeases > 0 && leaseCount < requiredLeases;
+
+            if (HasSingleton<SStartDayWarnings>())
+            {
+                var warnings = GetSingleton<SStartDayWarnings>();
+                warnings.SellingRequiredAppliance = gateActive ? WarningLevel.Error : WarningLevel.Safe;
+                SetSingleton(warnings);
+            }
 
             LastStatus = new CachedLeaseInfo
             {
@@ -111,7 +138,7 @@ namespace KitchenPlateupAP
                 CurrentDay = currentDay,
                 Owned = leaseCount,
                 Required = requiredLeases,
-                IsGateActive = requiredLeases > 0 && leaseCount < requiredLeases,
+                IsGateActive = gateActive,
                 DaysUntilNext = daysUntilNext
             };
 

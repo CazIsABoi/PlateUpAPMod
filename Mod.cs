@@ -99,6 +99,9 @@ namespace KitchenPlateupAP
         int startingCardsMode = 0;
         int startingCardsAmount = 0;
         int removeCardCount = 0;
+        private static bool dayLeasesEnabled = true;   // day_leases_enabled (default: on)
+        private static int freeStarterDishCount = 1;   // free_starter_dishes (default: 1)
+        private static List<string> startingDishes = new List<string>(); // free baseline dishes
 
         // Counts from slot data (defaults per spec = 5)
         private static int playerSpeedUpgradeCount = 5;
@@ -127,6 +130,21 @@ namespace KitchenPlateupAP
         private bool forceSpawnRequested = false;
         private bool moneyClampPending = false;
         private static int pendingCoinAmount = 0;
+        private static int _spawnedTrapCardCount = 0;
+        private static int startingGroupSize = 0;   // 0 = disabled; 1-8 = starting cap
+        private static int groupSizeReductionsReceived = 0;
+
+        // Kitchen parameter modifiers (cumulative, applied via SKitchenParameters)
+        private static float customersPerHourDelta = 0f;
+        private static int minGroupSizeDelta = 0;
+        private static int maxGroupSizeDelta = 0;
+
+        // Patience modifier delta (applied via CTableModifier entity)
+        private static float patienceMultiplierDelta = 0f;
+
+        // Flag so kitchen parameter changes get applied on next OnUpdate tick
+        private static bool kitchenParamsDirty = false;
+        private static bool patienceDirty = false;
 
         // Flag to prevent repeated logging during a cycle.
         private static bool prepLogDone = false;
@@ -136,6 +154,14 @@ namespace KitchenPlateupAP
         private int currentDishDayCount = 0;
         private int dishIdTrackedForDayCount = 0;
         private int lastCardSyncDishId = 0;
+
+        // Mess modifier delta (applied via CTableModifier.OrderingModifiers.MessFactor)
+        private static float messFactorDelta = 0f;
+
+        // Global patience: baseline offset + per-item increment
+        private static bool globalPatienceEnabled = false;
+        private static int globalPatienceUpgradeCount = 5;
+        private static int globalPatienceUpgradesReceived = 0;
 
         // Build tiers dynamically from slot data: start 0.5, + (1.0 / N) per upgrade, final 1.5 at N upgrades; if N==0 -> [1.0]
         private static float[] speedTiers = BuildPlayerSpeedTiers(playerSpeedUpgradeCount);
@@ -412,7 +438,31 @@ namespace KitchenPlateupAP
                 // Use SlotIndex as a deterministic seed so removal order is stable across reconnects
                 StartingCardManager.Initialise(startingCardsMode, startingCardsAmount, ArchipelagoConnectionManager.SlotIndex);
 
-                // In RetrieveSlotData(), replace the selected_dishes handling so ONLY the first dish (or starting_dish) is unlocked as baseline
+                // Parse free_starter_dishes and starting_dishes FIRST, before selected_dishes processing
+                if (slotData.TryGetValue("free_starter_dishes", out object rawFreeStarterDishes))
+                {
+                    freeStarterDishCount = Mathf.Clamp(Convert.ToInt32(rawFreeStarterDishes), 0, 17);
+                    Logger.LogInfo($"[PlateupAP] Free Starter Dishes: {freeStarterDishCount}");
+                }
+                else
+                {
+                    freeStarterDishCount = 1;
+                }
+
+                if (slotData.TryGetValue("starting_dishes", out object rawStartingDishes))
+                {
+                    try
+                    {
+                        startingDishes = JsonConvert.DeserializeObject<List<string>>(rawStartingDishes.ToString()) ?? new List<string>();
+                        Logger.LogInfo($"[PlateupAP] Starting dishes (free): {string.Join(", ", startingDishes)}");
+                    }
+                    catch (JsonReaderException ex)
+                    {
+                        startingDishes = new List<string>();
+                        Logger.LogWarning($"[PlateupAP] Failed to parse starting_dishes: {ex.Message}");
+                    }
+                }
+
                 if (slotData.TryGetValue("selected_dishes", out object rawDishes))
                 {
                     Logger.LogInfo($"[PlateupAP] Found selected_dishes in slot data: {rawDishes}");
@@ -420,41 +470,41 @@ namespace KitchenPlateupAP
                     {
                         selectedDishes = JsonConvert.DeserializeObject<List<string>>(rawDishes.ToString()) ?? new List<string>();
 
-                        // Optional explicit starting dish override
-                        string startingDishName = null;
-                        if (slotData.TryGetValue("starting_dish", out object rawStartingDish))
+                        // Backward compat: if starting_dishes wasn't in slot data, derive from selected_dishes
+                        if (startingDishes.Count == 0)
                         {
-                            startingDishName = rawStartingDish?.ToString();
+                            startingDishes = selectedDishes.Take(freeStarterDishCount).ToList();
+                            Logger.LogInfo($"[PlateupAP] No starting_dishes in slot data; derived from selected_dishes: {string.Join(", ", startingDishes)}");
                         }
 
-                        // Resolve all provided dish names to GDO IDs (for logging/persisting)
-                        var resolvedDishIds = selectedDishes
+                        // Optional explicit starting dish override (legacy single-dish field)
+                        string startingDishName = null;
+                        if (slotData.TryGetValue("starting_dish", out object rawStartingDish))
+                            startingDishName = rawStartingDish?.ToString();
+
+                        // Resolve all free starter dish names to GDO IDs
+                        var baselineIds = startingDishes
                             .Select(name => ProgressionMapping.dishDictionary
                                 .FirstOrDefault(kv => string.Equals(kv.Value, name, StringComparison.OrdinalIgnoreCase)).Key)
                             .Where(id => id != 0)
                             .Distinct()
                             .ToList();
 
-                        // Determine baseline dish: starting_dish if valid, else first of selected list
-                        int baselineDishId = 0;
+                        // Also include legacy starting_dish if it resolved and isn't already present
                         if (!string.IsNullOrWhiteSpace(startingDishName))
                         {
-                            baselineDishId = ProgressionMapping.dishDictionary
+                            int legacyId = ProgressionMapping.dishDictionary
                                 .FirstOrDefault(kv => string.Equals(kv.Value, startingDishName, StringComparison.OrdinalIgnoreCase)).Key;
-                        }
-                        if (baselineDishId == 0 && resolvedDishIds.Count > 0)
-                        {
-                            baselineDishId = resolvedDishIds[0];
+                            if (legacyId != 0 && !baselineIds.Contains(legacyId))
+                                baselineIds.Insert(0, legacyId);
                         }
 
-                        if (baselineDishId != 0)
+                        if (baselineIds.Count > 0)
                         {
-                            // Baseline only; other dishes stay locked until unlocked by items
-                            LockedDishes.SetUnlockedDishes(new[] { baselineDishId });
+                            LockedDishes.SetUnlockedDishes(baselineIds);
                             LockedDishes.EnableLocking();
-
                             PersistLastSelectedDishes(selectedDishes);
-                            Logger.LogInfo($"[PlateupAP] Baseline dish unlocked: {baselineDishId} (selected list: {string.Join(", ", resolvedDishIds)})");
+                            Logger.LogInfo($"[PlateupAP] Baseline dishes unlocked: {string.Join(", ", baselineIds)} (free count={freeStarterDishCount})");
                         }
                         else
                         {
@@ -467,6 +517,16 @@ namespace KitchenPlateupAP
                         LockedDishes.DisableLocking();
                         Logger.LogError($"[PlateupAP] Error parsing selected_dishes JSON: {ex.Message}. Locking disabled.");
                     }
+                }
+
+                if (slotData.TryGetValue("day_leases_enabled", out object rawDayLeasesEnabled))
+                {
+                    dayLeasesEnabled = Convert.ToBoolean(rawDayLeasesEnabled);
+                    Logger.LogInfo($"[PlateupAP] Day Leases Enabled: {dayLeasesEnabled}");
+                }
+                else
+                {
+                    dayLeasesEnabled = true;
                 }
 
                 if (slotData.TryGetValue("goal", out object rawGoal))
@@ -505,9 +565,7 @@ namespace KitchenPlateupAP
                     Logger.LogInfo($"[PlateupAP] DeathLink enabled: {deathLinkEnabled}");
 
                     if (deathLinkEnabled)
-                    {
                         EnableDeathLink();
-                    }
                 }
 
                 if (slotData.TryGetValue("death_link_behavior", out object rawBehavior))
@@ -571,6 +629,7 @@ namespace KitchenPlateupAP
                 {
                     ApplianceUnlocksEnabled = false;
                 }
+
                 if (slotData.TryGetValue("decoration_unlocks", out object rawDecorationUnlocks))
                 {
                     int decorUnlocksValue = Convert.ToInt32(rawDecorationUnlocks);
@@ -580,6 +639,38 @@ namespace KitchenPlateupAP
                 else
                 {
                     DecorationUnlocksEnabled = false;
+                }
+
+                if (slotData.TryGetValue("starting_group_size", out object rawGroupSize))
+                {
+                    startingGroupSize = Mathf.Clamp(Convert.ToInt32(rawGroupSize), 0, 8);
+                    Logger.LogInfo($"[PlateupAP] Starting Group Size: {startingGroupSize}");
+                    ApplyGroupSizeOverride();
+                }
+                else
+                {
+                    startingGroupSize = 0;
+                    ApplyGroupSizeOverride();
+                }
+
+                if (slotData.TryGetValue("global_patience_enabled", out object rawGlobalPatienceEnabled))
+                {
+                    globalPatienceEnabled = Convert.ToBoolean(rawGlobalPatienceEnabled);
+                    Logger.LogInfo($"[PlateupAP] Global Patience Enabled: {globalPatienceEnabled}");
+                }
+                else
+                {
+                    globalPatienceEnabled = false;
+                }
+
+                if (slotData.TryGetValue("global_patience_upgrade_count", out object rawGlobalPatienceCount))
+                {
+                    globalPatienceUpgradeCount = Mathf.Max(1, Convert.ToInt32(rawGlobalPatienceCount));
+                    Logger.LogInfo($"[PlateupAP] Global Patience Upgrade Count: {globalPatienceUpgradeCount}");
+                }
+                else
+                {
+                    globalPatienceUpgradeCount = 5;
                 }
             }
 
@@ -865,6 +956,7 @@ namespace KitchenPlateupAP
             progressionUnlockQuery = GetEntityQuery(new QueryHelper().All(typeof(CProgressionUnlock)));
             ApplyPlayerSpeedConfig();
             World.GetOrCreateSystem<MoneyCapSystem>().Enabled = true;
+            World.GetOrCreateSystem<GroupSizeOverrideSystem>().Enabled = true;
             EnsureCustomAppliancesFileExists();
             settingQuery = GetEntityQuery(ComponentType.ReadOnly<CSetting>());
             ArchipelagoConnectionManager.Disconnected += (_) => { itemsEventSubscribed = false; };
@@ -928,13 +1020,16 @@ namespace KitchenPlateupAP
                      persistenceLoaded = true;
                  }
 
+                groupSizeReductionsReceived = 0;
+
                 // Re-apply upgrades from session history (will clamp; persistence prevents over-increment)
                 Logger.LogInfo("[Archipelago] Re-processing all previously received items...");
                 ProcessAllReceivedItems();
                 ReapplyMoneyCapFromHistory();
                 Logger.LogInfo("[Archipelago] Re-processing all previously received location checks");
                 ReconstructProgressFromLocationChecks();
-                EnsureDishLockingBaseline(); // <<< re-check after item history
+                EnsureDishLockingBaseline();
+                ApplyGroupSizeOverride();
 
                 if (World != null)
                 {
@@ -1269,6 +1364,27 @@ namespace KitchenPlateupAP
 
             if (HasSingleton<SKitchenMarker>())
             {
+                if (kitchenParamsDirty)
+                {
+                    ApplyKitchenParameterDeltas();
+                    kitchenParamsDirty = false;
+                }
+
+                if (patienceDirty)
+                {
+                    ApplyPatienceModifier();
+                    patienceDirty = false;
+                }
+
+                // Spawn any pending random trap cards (deferred from off-thread OnItemReceived)
+                int pendingCards = RandomTrapCardCount - _spawnedTrapCardCount;
+                for (int i = 0; i < pendingCards; i++)
+                {
+                    Logger.LogInfo("[Trap] Spawning deferred random customer card from OnUpdate.");
+                    SpawnRandomCustomerCard();
+                    _spawnedTrapCardCount++;
+                }
+
                 if (moneyClampPending)
                 {
                     ClampMoneyToCap();
@@ -1439,11 +1555,80 @@ namespace KitchenPlateupAP
                 return;
             }
 
-            // Shop Size Increase — MOVED BEFORE speed upgrades so it's reachable
+            // Shop Size Increase
             if (checkId == 22)
             {
                 ExtraBlueprintCount++;
                 Logger.LogInfo($"[ShopSize] Received 'Shop Size Increase'. Extra blueprints: {ExtraBlueprintCount}");
+                pendingSpawnState.PendingItemIDs.Remove(checkId);
+                return;
+            }
+
+            if (checkId == 23)
+            {
+                groupSizeReductionsReceived++;
+                Logger.LogInfo($"[GroupSize] Received 'Reduce Group Size' (ID 23). Total reductions: {groupSizeReductionsReceived}");
+                ApplyGroupSizeOverride();
+                pendingSpawnState.PendingItemIDs.Remove(checkId);
+                return;
+            }
+
+            // Patience Increase (filler)
+            if (checkId == 24)
+            {
+                patienceMultiplierDelta += 0.25f;
+                patienceDirty = true;
+                Logger.LogInfo($"[Filler] Patience Increase received. Patience delta now: {patienceMultiplierDelta}");
+                pendingSpawnState.PendingItemIDs.Remove(checkId);
+                return;
+            }
+
+            // Less Customers (filler)
+            if (checkId == 25)
+            {
+                customersPerHourDelta -= 0.25f;
+                kitchenParamsDirty = true;
+                Logger.LogInfo($"[Filler] Less Customers received. CustomersPerHour delta now: {customersPerHourDelta}");
+                pendingSpawnState.PendingItemIDs.Remove(checkId);
+                return;
+            }
+
+            // Min Group Size Decrease (filler)
+            if (checkId == 26)
+            {
+                minGroupSizeDelta--;
+                kitchenParamsDirty = true;
+                Logger.LogInfo($"[Filler] Min Group Size Decrease received. MinGroupSize delta now: {minGroupSizeDelta}");
+                pendingSpawnState.PendingItemIDs.Remove(checkId);
+                return;
+            }
+
+            // Max Group Size Decrease (filler)
+            if (checkId == 27)
+            {
+                maxGroupSizeDelta--;
+                kitchenParamsDirty = true;
+                Logger.LogInfo($"[Filler] Max Group Size Decrease received. MaxGroupSize delta now: {maxGroupSizeDelta}");
+                pendingSpawnState.PendingItemIDs.Remove(checkId);
+                return;
+            }
+
+            // Global Patience Upgrade (filler)
+            if (checkId == 28)
+            {
+                globalPatienceUpgradesReceived++;
+                patienceDirty = true;
+                Logger.LogInfo($"[Filler] Global Patience Upgrade received. Total upgrades: {globalPatienceUpgradesReceived}");
+                pendingSpawnState.PendingItemIDs.Remove(checkId);
+                return;
+            }
+
+            // Mess Reduction (filler)
+            if (checkId == 29)
+            {
+                messFactorDelta -= 0.05f;
+                patienceDirty = true;
+                Logger.LogInfo($"[Filler] Mess Reduction received. MessFactor delta now: {messFactorDelta}");
                 pendingSpawnState.PendingItemIDs.Remove(checkId);
                 return;
             }
@@ -1542,31 +1727,10 @@ namespace KitchenPlateupAP
                     applianceName = applianceGdo.Name ?? unlockGdoId.ToString();
                 }
                 applianceName = applianceName ?? unlockGdoId.ToString();
-                ChatManager.AddSystemMessage($"Appliance received: {applianceName}");
+                ChatManager.AddSystemMessage($"Appliance Unlock Received: {applianceName}");
 
-                if (HasSingleton<SKitchenMarker>())
-                {
-                    Vector3 spawnPos = SpawnHelpers.ResolveSpawnPosition(EntityManager, SpawnPositionType.Door, InputSourceIdentifier.Identifier);
-                    if (KitchenData.GameData.Main.TryGet<Appliance>(unlockGdoId, out _))
-                    {
-                        SpawnHelpers.TrySpawnApplianceBlueprint(EntityManager, unlockGdoId, spawnPos, costMode: 0f);
-                        Logger.LogInfo($"[OnItemReceived] Spawned appliance unlock GDO {unlockGdoId} immediately.");
-                    }
-                }
-                else
-                {
-                    if (!spawnQueue.Any(x => (int)x.ItemId == checkId))
-                    {
-                        spawnQueue.Enqueue(info);
-                        if (currentIdentity != null)
-                        {
-                            if (!pendingSpawnState.PendingItemIDs.Contains(checkId))
-                                pendingSpawnState.PendingItemIDs.Add(checkId);
-                            PersistenceManager.SavePendingSpawn(currentIdentity, pendingSpawnState);
-                        }
-                        Logger.LogInfo($"[OnItemReceived] Queued appliance unlock ID {checkId} for next prep.");
-                    }
-                }
+                // Appliance unlocks only add to the shop pool — do NOT spawn a blueprint
+                pendingSpawnState.PendingItemIDs.Remove(checkId);
                 return;
             }
 
@@ -1643,6 +1807,15 @@ namespace KitchenPlateupAP
 
             Logger.LogInfo($"[ProcessAllReceivedItems] Processing {session.Items.AllItemsReceived.Count} past items...");
 
+            customersPerHourDelta = 0f;
+            minGroupSizeDelta = 0;
+            maxGroupSizeDelta = 0;
+            patienceMultiplierDelta = 0f;
+            messFactorDelta = 0f;
+            globalPatienceUpgradesReceived = 0;
+            groupSizeReductionsReceived = 0;
+            ExtraBlueprintCount = 0;
+
             foreach (var item in session.Items.AllItemsReceived)
             {
                 int itemId = (int)item.ItemId;
@@ -1672,6 +1845,90 @@ namespace KitchenPlateupAP
                     {
                         int chosen = pool[UnityEngine.Random.Range(0, pool.Count)];
                         UnlockDecoration(chosen);
+                    }
+                    continue;
+                }
+
+                if (itemId == 23)
+                {
+                    groupSizeReductionsReceived++;
+                    Logger.LogInfo($"[ProcessAllReceivedItems] Re-applied Reduce Group Size. Total: {groupSizeReductionsReceived}");
+                    continue;
+                }
+
+                if (itemId == 24)
+                {
+                    patienceMultiplierDelta += 0.25f;
+                    patienceDirty = true;
+                    Logger.LogInfo($"[ProcessAllReceivedItems] Re-applied Patience Increase. Delta: {patienceMultiplierDelta}");
+                    continue;
+                }
+
+                if (itemId == 25)
+                {
+                    customersPerHourDelta -= 0.25f;
+                    kitchenParamsDirty = true;
+                    Logger.LogInfo($"[ProcessAllReceivedItems] Re-applied Less Customers. Delta: {customersPerHourDelta}");
+                    continue;
+                }
+
+                if (itemId == 26)
+                {
+                    minGroupSizeDelta--;
+                    kitchenParamsDirty = true;
+                    Logger.LogInfo($"[ProcessAllReceivedItems] Re-applied Min Group Size Decrease. Delta: {minGroupSizeDelta}");
+                    continue;
+                }
+
+                if (itemId == 27)
+                {
+                    maxGroupSizeDelta--;
+                    kitchenParamsDirty = true;
+                    Logger.LogInfo($"[ProcessAllReceivedItems] Re-applied Max Group Size Decrease. Delta: {maxGroupSizeDelta}");
+                    continue;
+                }
+
+                if (itemId == 28)
+                {
+                    globalPatienceUpgradesReceived++;
+                    patienceDirty = true;
+                    Logger.LogInfo($"[ProcessAllReceivedItems] Re-applied Global Patience Upgrade. Total: {globalPatienceUpgradesReceived}");
+                    continue;
+                }
+
+                if (itemId == 29)
+                {
+                    messFactorDelta -= 0.05f;
+                    patienceDirty = true;
+                    Logger.LogInfo($"[ProcessAllReceivedItems] Re-applied Mess Reduction. MessFactor delta: {messFactorDelta}");
+                    continue;
+                }
+
+                // Traps: patience decrease (20003), more customers (20004), etc.
+                if (ProgressionMapping.trapDictionary.ContainsKey(itemId))
+                {
+                    switch (itemId)
+                    {
+                        case 20003:
+                            patienceMultiplierDelta -= 0.25f;
+                            patienceDirty = true;
+                            Logger.LogInfo($"[ProcessAllReceivedItems] Re-applied Patience Decrease. Delta: {patienceMultiplierDelta}");
+                            break;
+                        case 20004:
+                            customersPerHourDelta += 0.25f;
+                            kitchenParamsDirty = true;
+                            Logger.LogInfo($"[ProcessAllReceivedItems] Re-applied More Customers. Delta: {customersPerHourDelta}");
+                            break;
+                        case 20005:
+                            minGroupSizeDelta++;
+                            kitchenParamsDirty = true;
+                            Logger.LogInfo($"[ProcessAllReceivedItems] Re-applied Min Group Size Increase. Delta: {minGroupSizeDelta}");
+                            break;
+                        case 20006:
+                            maxGroupSizeDelta++;
+                            kitchenParamsDirty = true;
+                            Logger.LogInfo($"[ProcessAllReceivedItems] Re-applied Max Group Size Increase. Delta: {maxGroupSizeDelta}");
+                            break;
                     }
                     continue;
                 }
@@ -1731,6 +1988,9 @@ namespace KitchenPlateupAP
                 string itemName = session.Items.GetItemName(itemId);
                 TryHandleDishUnlockFromItem(itemId, itemName);
             }
+
+            ExtraBlueprintCount = receivedItemPool?.Count(id => id == 22) ?? 0;
+            Logger.LogInfo($"[ProcessAllReceivedItems] Reconstructed ExtraBlueprintCount={ExtraBlueprintCount} from pool.");
         }
 
         private void ForceSpawnAllQueuedItems()
@@ -1860,7 +2120,10 @@ namespace KitchenPlateupAP
                     !trapIDs.Contains(id) &&
                     id != 15 && id != 16 &&
                     id != 17 && id != 18 && id != 19 &&
-                    id != 22 && id != 100 &&
+                    id != 22 && id != 23 && id != 24 &&
+                    id != 25 && id != 26 && id != 27 &&
+                    id != 28 && id != 29 &&
+                    id != 100 &&
                     !dishUnlockIds.Contains(id)
                 )
                 .ToList();
@@ -1992,27 +2255,39 @@ namespace KitchenPlateupAP
                 case 20002: // Random Customer Card
                     Logger.LogWarning("[Trap] Random Customer Card triggered! Incrementing our card count...");
                     RandomTrapCardCount++;
-                    Logger.LogInfo($"We’ve now received this RandomCard trap {RandomTrapCardCount} time(s).");
-
-                    // If we are already in the kitchen scene, spawn one card *right now*:
-                    if (HasSingleton<SKitchenMarker>())
-                    {
-                        Logger.LogInfo("[Trap] We are in the Kitchen, so spawning a random card immediately...");
-                        SpawnRandomCustomerCard();
-                    }
-                    else
-                    {
-                        Logger.LogInfo("[Trap] Not in Kitchen yet, so no immediate card spawn. We'll spawn later.");
-                    }
+                    Logger.LogInfo($"We've now received this RandomCard trap {RandomTrapCardCount} time(s).");
+                    Logger.LogInfo("[Trap] Card will be spawned on next kitchen OnUpdate tick.");
                     break;
 
+                case 20003: // Patience Decrease
+                    Logger.LogWarning("[Trap] Patience Decrease activated!");
+                    patienceMultiplierDelta -= 0.25f;
+                    patienceDirty = true;
+                    break;
+
+                case 20004: // More Customers
+                    Logger.LogWarning("[Trap] More Customers activated!");
+                    customersPerHourDelta += 0.25f;
+                    kitchenParamsDirty = true;
+                    break;
+
+                case 20005: // Minimum Group Size Increase
+                    Logger.LogWarning("[Trap] Minimum Group Size Increase activated!");
+                    minGroupSizeDelta++;
+                    kitchenParamsDirty = true;
+                    break;
+
+                case 20006: // Maximum Group Size Increase
+                    Logger.LogWarning("[Trap] Maximum Group Size Increase activated!");
+                    maxGroupSizeDelta++;
+                    kitchenParamsDirty = true;
+                    break;
 
                 default:
                     Logger.LogWarning($"[Trap] Unknown trap ID {trapId} received.");
                     break;
             }
         }
-
         private void IgniteAllAppliances()
         {
             Logger.LogInfo("[Trap] Igniting all appliances...");
@@ -2178,6 +2453,12 @@ namespace KitchenPlateupAP
                     ItemInfo queued = spawnQueue.Dequeue();
                     Logger.LogInfo($"[Prep Phase] Spawning queued item ID: {queued.ItemId}");
                     ProcessSpawn(queued);
+                }
+
+                // Spawn extra blueprints from Shop Size Increase items
+                if (ExtraBlueprintCount > 0 && !itemsSpawnedThisRun)
+                {
+                    SpawnExtraBlueprints();
                 }
 
                 // Spawn extra blueprints from Shop Size Increase items
@@ -2576,8 +2857,8 @@ namespace KitchenPlateupAP
             moneyClampedThisPrep = false;
             dayID = ComputeRunBaseOffset(timesFranchised);
             startingNameApplied = false;
+            _sentAchievementChecks.Clear();
 
-            // Reconstruct dish day count from Archipelago server
             currentDishDayCount = GetHighestDishDayFromChecks(DishId);
             dishIdTrackedForDayCount = DishId;
             Logger?.LogInfo($"[ResetStateForLobbyEntry] Restored dish {DishId} ({GetDishName(DishId)}) day count={currentDishDayCount} from AP checks.");
@@ -2630,6 +2911,86 @@ namespace KitchenPlateupAP
                     Set(money);
                     Logger?.LogInfo($"[MoneyCap] Clamped money from {before} to {cap} during prep.");
                 }
+            }
+        }
+
+        private void ApplyKitchenParameterDeltas()
+        {
+            if (!HasSingleton<SKitchenMarker>())
+                return;
+
+            var defaults = SKitchenParameters.Defaults.Parameters;
+
+            var current = HasSingleton<SKitchenParameters>()
+                ? GetSingleton<SKitchenParameters>()
+                : SKitchenParameters.Defaults;
+
+            current.Parameters.CustomersPerHour = Mathf.Max(0.1f, defaults.CustomersPerHour * (1f + customersPerHourDelta));
+            current.Parameters.MinimumGroupSize = Mathf.Clamp(defaults.MinimumGroupSize + minGroupSizeDelta, 1, 8);
+            current.Parameters.MaximumGroupSize = Mathf.Clamp(defaults.MaximumGroupSize + maxGroupSizeDelta, current.Parameters.MinimumGroupSize, 8);
+
+            if (HasSingleton<SKitchenParameters>())
+                SetSingleton(current);
+            else
+            {
+                Entity e = EntityManager.CreateEntity(typeof(SKitchenParameters));
+                EntityManager.SetComponentData(e, current);
+            }
+
+            Logger.LogInfo($"[KitchenParams] Applied: CustomersPerHour={current.Parameters.CustomersPerHour:F2}, Min={current.Parameters.MinimumGroupSize}, Max={current.Parameters.MaximumGroupSize}");
+        }
+
+        private void ApplyPatienceModifier()
+        {
+            if (!HasSingleton<SKitchenMarker>())
+                return;
+
+            // Compute the net patience delta:
+            // Base = -0.2 if global patience is enabled (starts penalised), 0 otherwise.
+            // Each Global Patience Upgrade item adds (0.4 / count), up to +0.2 at full upgrades.
+            float globalPatienceOffset = 0f;
+            if (globalPatienceEnabled)
+            {
+                float perUpgrade = globalPatienceUpgradeCount > 0 ? 0.4f / globalPatienceUpgradeCount : 0f;
+                globalPatienceOffset = -0.2f + (globalPatienceUpgradesReceived * perUpgrade);
+                globalPatienceOffset = Mathf.Clamp(globalPatienceOffset, -0.2f, 0.2f);
+            }
+
+            float netPatience = patienceMultiplierDelta + globalPatienceOffset;
+
+            EntityQuery tableModQuery = GetEntityQuery(
+                ComponentType.ReadWrite<CTableModifier>(),
+                ComponentType.ReadOnly<CEffectRangeGlobal>(),
+                ComponentType.ReadOnly<CEffectAlways>());
+
+            if (tableModQuery.IsEmptyIgnoreFilter)
+            {
+                Entity e = EntityManager.CreateEntity(typeof(CTableModifier), typeof(CEffectRangeGlobal), typeof(CEffectAlways), typeof(CAppliesEffect));
+                var mod = new CTableModifier();
+                mod.PatienceModifiers.Eating = netPatience;
+                mod.PatienceModifiers.Thinking = netPatience;
+                mod.PatienceModifiers.Seating = netPatience;
+                mod.PatienceModifiers.Service = netPatience;
+                mod.PatienceModifiers.WaitForFood = netPatience;
+                mod.OrderingModifiers.MessFactor = messFactorDelta;
+                EntityManager.SetComponentData(e, mod);
+                Logger.LogInfo($"[Patience] Created global CTableModifier: patience={netPatience:F3} (delta={patienceMultiplierDelta:F3}, global={globalPatienceOffset:F3}), mess={messFactorDelta:F3}");
+            }
+            else
+            {
+                using var entities = tableModQuery.ToEntityArray(Allocator.Temp);
+                for (int i = 0; i < entities.Length; i++)
+                {
+                    var mod = EntityManager.GetComponentData<CTableModifier>(entities[i]);
+                    mod.PatienceModifiers.Eating = netPatience;
+                    mod.PatienceModifiers.Thinking = netPatience;
+                    mod.PatienceModifiers.Seating = netPatience;
+                    mod.PatienceModifiers.Service = netPatience;
+                    mod.PatienceModifiers.WaitForFood = netPatience;
+                    mod.OrderingModifiers.MessFactor = messFactorDelta;
+                    EntityManager.SetComponentData(entities[i], mod);
+                }
+                Logger.LogInfo($"[Patience] Updated global CTableModifier: patience={netPatience:F3} (delta={patienceMultiplierDelta:F3}, global={globalPatienceOffset:F3}), mess={messFactorDelta:F3}");
             }
         }
 
@@ -2781,6 +3142,19 @@ namespace KitchenPlateupAP
             startingNameApplied = true;
             Logger.LogInfo($"[Name] Set starting restaurant name to '{finalName}'.");
         }
+        private static void ApplyGroupSizeOverride()
+        {
+            if (startingGroupSize <= 0)
+            {
+                GroupSizeOverrideSystem.MaxGroupSizeOverride = 0;
+                Logger?.LogInfo("[GroupSize] Override disabled (starting_group_size=0).");
+                return;
+            }
+
+            int effective = Mathf.Max(1, startingGroupSize - groupSizeReductionsReceived);
+            GroupSizeOverrideSystem.MaxGroupSizeOverride = effective;
+            Logger?.LogInfo($"[GroupSize] Effective cap={effective} (start={startingGroupSize}, reductions={groupSizeReductionsReceived})");
+        }
     }
 
     // Properties and methods extracted from Mod class for clarity
@@ -2791,6 +3165,7 @@ namespace KitchenPlateupAP
         internal static int OverallDaysCompleted => overallDaysCompleted;
         internal static int DayLeaseInterval => dayLeaseInterval;
         internal int TimesFranchised => timesFranchised;
+        internal static bool DayLeasesEnabled => dayLeasesEnabled;
 
         internal int ActiveDishId => DishId;
 
@@ -2854,6 +3229,32 @@ namespace KitchenPlateupAP
             }
 
             return 0;
+        }
+
+        private static readonly HashSet<string> _sentAchievementChecks = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        internal void OnAchievementSatisfied(string identifier)
+        {
+            if (session == null || session.Locations == null)
+                return;
+
+            if (!ProgressionMapping.achievementLocationIds.TryGetValue(identifier, out int locId))
+            {
+                Logger?.LogInfo($"[Achievement] '{identifier}' has no AP location mapping; skipping.");
+                return;
+            }
+
+            if (_sentAchievementChecks.Contains(identifier))
+                return;
+
+            _sentAchievementChecks.Add(identifier);
+
+            if (session.Locations.AllLocationsChecked.Contains(locId))
+                return;
+
+            session.Locations.CompleteLocationChecks(locId);
+            Logger?.LogInfo($"[Achievement] Sent location check for '{identifier}' (locId={locId}).");
+            ChatManager.AddSystemMessage($"Achievement unlocked: {identifier}");
         }
         private void EnsureDishLockingBaseline()
         {

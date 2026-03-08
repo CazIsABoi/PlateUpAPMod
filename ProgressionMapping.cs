@@ -1,8 +1,9 @@
 using KitchenData;
 using KitchenLib.References;
+using Newtonsoft.Json;
+using System;
 using System.Collections.Generic;
 using System.IO;
-using Newtonsoft.Json;
 
 namespace KitchenPlateupAP
 {
@@ -170,6 +171,9 @@ namespace KitchenPlateupAP
             { 2060, ApplianceReferences.SourceCookieTray },
             { 2061, ApplianceReferences.SourceCupcakeTray },
             { 2062, ApplianceReferences.SourceDoughnutTray },
+            { 2063, ApplianceReferences.ShoeRackTrainers },
+            { 2064, ApplianceReferences.SharpKnifeProvider },
+            { 2065, ApplianceReferences.GasSafetyOverride },
         };
 
         public static readonly List<int> usefulApplianceGDOs = new List<int>
@@ -396,7 +400,11 @@ namespace KitchenPlateupAP
         {
             { 20000, "EVERYTHING IS ON FIRE" },
             { 20001, "Super Slow" },
-            { 20002, "Random Customer Card" }
+            { 20002, "Random Customer Card" },
+            { 20003, "Patience Decrease" },
+            { 20004, "More Customers" },
+            { 20005, "Minimum Group Size Increase" },
+            { 20006, "Maximum Group Size Increase" }
         };
 
         public static readonly Dictionary<int, string> dishDictionary = new Dictionary<int, string>()
@@ -439,6 +447,29 @@ namespace KitchenPlateupAP
             { "Stir Fry", 115 },
             { "Sandwiches", 116 },
             { "Sundaes", 117 }
+        };
+
+        // Achievement identifier string -> AP location ID
+        // Identifiers confirmed from decompiled Kitchen assembly
+        public static readonly Dictionary<string, int> achievementLocationIds = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "THIS_IS_FINE",       140001 },
+            { "FIRE_BRIGADE",       140002 },
+            { "OH_NO",              140003 },
+            { "CHARCOAL_FACTORY",   140004 },
+            { "SAFETY_LAST",        140005 },
+            { "LEARNING_BY_DOING",  140006 },
+            { "PLEASE_WAIT",        140007 },
+            { "FLAWLESS_TIMING",    140008 },
+            { "HEALTH_INSPECTOR",   140009 },
+            { "CIRCLE_LINE",        140010 },
+            { "CHEF_SCHOOL",        140011 },
+            { "NEW_CHEF_PLUS",      140012 },
+            { "OVERTIME_5",         140013 },
+            { "OVERTIME_10",        140014 },
+            { "OVERTIME_15",        140015 },
+            { "ANTISOCIAL",         140016 },
+            { "WORK_SMART",         140017 },
         };
 
         // Display-name -> block index (for location IDs)

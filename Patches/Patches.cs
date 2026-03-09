@@ -125,6 +125,14 @@ namespace KitchenPlateupAP
     {
         static void Postfix(DeterminePlayerSpeed __instance)
         {
+            // Skip entirely in the lobby or if the mod instance isn't ready
+            if (Mod.Instance == null)
+                return;
+
+            // Only apply speed modifications during active kitchen play (day time)
+            if (!__instance.HasSingleton<SKitchenMarker>())
+                return;
+
             if (!__instance.HasSingleton<SIsDayTime>())
                 return;
 

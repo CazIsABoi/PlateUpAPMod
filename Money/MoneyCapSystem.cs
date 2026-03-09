@@ -11,7 +11,10 @@ namespace KitchenPlateupAP
     {
         protected override void OnUpdate()
         {
-            // Only clamp when we're in an actual run/kitchen
+            // Only clamp when the money cap mechanic is enabled and we're in a run
+            if (!Mod.MoneyCapEnabled)
+                return;
+
             if (!HasSingleton<SKitchenMarker>())
                 return;
 

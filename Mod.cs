@@ -47,7 +47,7 @@ namespace KitchenPlateupAP
     {
         public const string MOD_GUID = "com.caz.plateupap";
         public const string MOD_NAME = "PlateupAP";
-        public const string MOD_VERSION = "0.2.5.4";    
+        public const string MOD_VERSION = "0.2.5.6";    
         public const string MOD_AUTHOR = "Caz";
         public const string MOD_GAMEVERSION = ">=1.1.9";
         public static int TOTAL_SCENES_LOADED = 0;
@@ -102,6 +102,10 @@ namespace KitchenPlateupAP
         private static bool dayLeasesEnabled = true;   // day_leases_enabled (default: on)
         private static int freeStarterDishCount = 1;   // free_starter_dishes (default: 1)
         private static List<string> startingDishes = new List<string>(); // free baseline dishes
+        public static bool MoneyCapEnabled = true;
+        private static int moneyCapIncreaseAmount = 20;
+        private static bool applianceUnlockGrantsAppliance = true;
+        private static int lastSentRerollCost = 0;
 
         // Counts from slot data (defaults per spec = 5)
         private static int playerSpeedUpgradeCount = 5;
@@ -369,15 +373,18 @@ namespace KitchenPlateupAP
             ArchipelagoConnectionManager.TryConnect(config.address, config.port, config.playername, config.password);
         }
 
+        private static string GetConfigFilePath()
+        {
+            return Path.Combine(GetConfigFolderPath(), "archipelago_config.json");
+        }
+
         private void TryWarmupConfig()
         {
             try
             {
-                // Ensure the custom file exists early (main menu)
                 EnsureCustomAppliancesFileExists();
 
-                string folder = Path.Combine(Application.persistentDataPath, "PlateUpAPConfig");
-                string path = Path.Combine(folder, "archipelago_config.json");
+                string path = GetConfigFilePath(); 
                 if (!File.Exists(path))
                 {
                     Logger.LogWarning($"[PlateupAP][ConfigWarmup] No config at: {path}");
@@ -385,7 +392,6 @@ namespace KitchenPlateupAP
                 }
 
                 var json = File.ReadAllText(path);
-                // Use isolated manual parse to avoid converter interference
                 var jo = JObject.Parse(json);
                 var cfg = new PlateupAPConfig
                 {
@@ -618,6 +624,25 @@ namespace KitchenPlateupAP
                     MoneyCap = startingCap;
                     Logger.LogInfo($"[MoneyCap] Starting money cap from slot data set to {MoneyCap}");
                 }
+                if (slotData.TryGetValue("money_cap_enabled", out object rawMoneyCapEnabled))
+                {
+                    MoneyCapEnabled = Convert.ToInt32(rawMoneyCapEnabled) != 0;
+                    Logger.LogInfo($"[MoneyCap] money_cap_enabled: {MoneyCapEnabled}");
+                }
+                else
+                {
+                    MoneyCapEnabled = true;
+                }
+
+                if (slotData.TryGetValue("money_cap_increase_amount", out object rawMoneyCapIncreaseAmount))
+                {
+                    moneyCapIncreaseAmount = Mathf.Max(0, Convert.ToInt32(rawMoneyCapIncreaseAmount));
+                    Logger.LogInfo($"[MoneyCap] money_cap_increase_amount: {moneyCapIncreaseAmount}");
+                }
+                else
+                {
+                    moneyCapIncreaseAmount = 20;
+                }
 
                 if (slotData.TryGetValue("appliance_unlocks", out object rawApplianceUnlocks))
                 {
@@ -628,6 +653,16 @@ namespace KitchenPlateupAP
                 else
                 {
                     ApplianceUnlocksEnabled = false;
+                }
+
+                if (slotData.TryGetValue("appliance_unlock_grants_appliance", out object rawGrantsAppliance))
+                {
+                    applianceUnlockGrantsAppliance = Convert.ToInt32(rawGrantsAppliance) != 0;
+                    Logger.LogInfo($"[ApplianceUnlocks] appliance_unlock_grants_appliance: {applianceUnlockGrantsAppliance}");
+                }
+                else
+                {
+                    applianceUnlockGrantsAppliance = true;
                 }
 
                 if (slotData.TryGetValue("decoration_unlocks", out object rawDecorationUnlocks))
@@ -723,14 +758,12 @@ namespace KitchenPlateupAP
                 .AddInfo(@"Config is found in \AppData\LocalLow\It's Happening\PlateUp")
                 .AddButton("Create Config", (int _) =>
                 {
-                    // Explicitly target LocalLow path: %appdata%\..\LocalLow\It's Happening\PlateUp\PlateUpAPConfig
-                    string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData); // %APPDATA%
-                    string folder = Path.GetFullPath(Path.Combine(appData, "..", "LocalLow", "It's Happening", "PlateUp", "PlateUpAPConfig"));
+                    string folder = GetConfigFolderPath();
 
                     if (!Directory.Exists(folder))
                         Directory.CreateDirectory(folder);
 
-                    string path = Path.Combine(folder, "archipelago_config.json");
+                    string path = GetConfigFilePath();
                     PlateupAPConfig defaultConfig = new PlateupAPConfig
                     {
                         address = "archipelago.gg",
@@ -766,7 +799,6 @@ namespace KitchenPlateupAP
                         }
                         else
                         {
-                            // Generic fallback: open the containing folder
                             var psi = new ProcessStartInfo
                             {
                                 FileName = folder,
@@ -782,9 +814,7 @@ namespace KitchenPlateupAP
                 })
                 .AddButton("Connect", (int _) =>
                 {
-                    // Always re-read the config file so edits take effect without restarting
-                    string folder = Path.Combine(Application.persistentDataPath, "PlateUpAPConfig");
-                    string path = Path.Combine(folder, "archipelago_config.json");
+                    string path = GetConfigFilePath();
                     if (!File.Exists(path))
                     {
                         Logger.LogError("Config file not found at: " + path);
@@ -820,7 +850,6 @@ namespace KitchenPlateupAP
                     Logger.LogInfo($"[PlateupAP][Config] Using server={config.address}:{config.port} player={config.playername}");
                     UpdateArchipelagoConfig(config);
                 })
-                // NEW: Debug utilities
                 .AddLabel("Debug Utilities")
                 .AddInfo("Quick fixes during a run")
                 .AddButton("Set Player Speed to 1x", (int _) => { ForcePlayerSpeedToOne(); })
@@ -960,6 +989,12 @@ namespace KitchenPlateupAP
             EnsureCustomAppliancesFileExists();
             settingQuery = GetEntityQuery(ComponentType.ReadOnly<CSetting>());
             ArchipelagoConnectionManager.Disconnected += (_) => { itemsEventSubscribed = false; };
+
+            if (!_configWarmed)
+            {
+                _configWarmed = true;
+                TryWarmupConfig();
+            }
         }
 
         public void OnSuccessfulConnect()
@@ -1402,6 +1437,7 @@ namespace KitchenPlateupAP
                     pendingCoinAmount = 0;
                 }
                 SyncDishFromActiveCards();
+                CheckRerollCostChecks();
                 UpdateDayCycle();
                 CheckReceivedItems();
             }
@@ -1524,8 +1560,8 @@ namespace KitchenPlateupAP
             if (checkId == 16)
             {
                 int before = MoneyCap;
-                MoneyCap = Mathf.Clamp(MoneyCap + MoneyCapIncrementStep, 0, 999);
-                Logger.LogInfo($"[MoneyCap] Received 'Money Cap Increase' (ID 16). Cap increased from {before} to {MoneyCap}.");
+                MoneyCap = Mathf.Clamp(MoneyCap + moneyCapIncreaseAmount, 0, 999);
+                Logger.LogInfo($"[MoneyCap] Received 'Money Cap Increase' (ID 16). Cap increased from {before} to {MoneyCap} (+{moneyCapIncreaseAmount}).");
                 moneyClampPending = true;
                 pendingSpawnState.PendingItemIDs.Remove(checkId);
                 spawnQueue = new Queue<ItemInfo>(spawnQueue.Where(x => (int)x.ItemId != 16));
@@ -1712,7 +1748,7 @@ namespace KitchenPlateupAP
                 UnlockAppliance(unlockedGdo);
             }
 
-            // Handle appliance unlock items (2001-2062 from apworld)
+            // Handle appliance unlock items (2001–2093 from apworld)
             if (ProgressionMapping.applianceUnlockToGDO.TryGetValue(checkId, out int unlockGdoId))
             {
                 if (ApplianceUnlocksEnabled)
@@ -1727,10 +1763,29 @@ namespace KitchenPlateupAP
                     applianceName = applianceGdo.Name ?? unlockGdoId.ToString();
                 }
                 applianceName = applianceName ?? unlockGdoId.ToString();
-                ChatManager.AddSystemMessage($"Appliance Unlock Received: {applianceName}");
 
-                // Appliance unlocks only add to the shop pool — do NOT spawn a blueprint
-                pendingSpawnState.PendingItemIDs.Remove(checkId);
+                if (applianceUnlockGrantsAppliance)
+                {
+                    // Queue for blueprint spawn in-kitchen
+                    if (!spawnQueue.Any(x => (int)x.ItemId == checkId))
+                    {
+                        spawnQueue.Enqueue(info);
+                        if (currentIdentity != null)
+                        {
+                            if (!pendingSpawnState.PendingItemIDs.Contains(checkId))
+                                pendingSpawnState.PendingItemIDs.Add(checkId);
+                            PersistenceManager.SavePendingSpawn(currentIdentity, pendingSpawnState);
+                        }
+                        Logger.LogInfo($"[ApplianceUnlocks] Queued blueprint spawn for '{applianceName}' (GDO {unlockGdoId}).");
+                    }
+                    ChatManager.AddSystemMessage($"Appliance Received: {applianceName}");
+                }
+                else
+                {
+                    // Shop pool only — no blueprint granted
+                    ChatManager.AddSystemMessage($"Appliance Added to Shop: {applianceName}");
+                    pendingSpawnState.PendingItemIDs.Remove(checkId);
+                }
                 return;
             }
 
@@ -3097,13 +3152,11 @@ namespace KitchenPlateupAP
             PersistUnlockedDish(dishGdoId);
             LockedDishes.AddUnlockedDishes(new[] { dishGdoId });
             LockedDishes.EnableLocking();
-            DishId = dishGdoId;
 
             Logger.LogInfo($"[DishUnlock] Unlocked dish '{dishName}' via item ID {checkId} (GDO ID: {dishGdoId}).");
             return true;
         }
 
-        // Add helper in the partial Mod section (with other helpers)
         private void UpdateRestaurantStartingName()
         {
             if (!ArchipelagoConnectionManager.ConnectionSuccessful)
@@ -3326,7 +3379,35 @@ namespace KitchenPlateupAP
                 lastCardSyncDishId = foundDish;
             }
         }
+        private void CheckRerollCostChecks()
+        {
+            if (session == null || session.Locations == null)
+                return;
 
+            if (!Require(out SRerollCost rerollCost))
+                return;
+
+            int cost = rerollCost.Cost;
+
+            // cost starts at 10 and increases by 10 each reroll; send a check for every new
+            // multiple of 10 the player has reached that hasn't been sent yet.
+            // Location ID = 150000 + (cost / 10), e.g. cost 10 -> 150001, cost 20 -> 150002, etc.
+            int step = cost / 10;
+            int lastStep = lastSentRerollCost / 10;
+
+            for (int i = lastStep + 1; i <= step; i++)
+            {
+                int locationId = 150000 + i;
+                if (!session.Locations.AllLocationsChecked.Contains(locationId))
+                {
+                    session.Locations.CompleteLocationChecks(locationId);
+                    Logger.LogInfo($"[RerollCost] Sent check for reroll cost {i * 10}g (location ID {locationId}).");
+                }
+            }
+
+            if (cost > lastSentRerollCost)
+                lastSentRerollCost = cost;
+        }
         private void LogPrepDishSnapshot()
         {
             int kitchenDish = 0;

@@ -79,6 +79,7 @@ namespace KitchenPlateupAP
         private static GUIStyle footerStyle;
         private static Texture2D footerBgTex;
         private static GUIStyle leaseBadgeStyle;
+        private static GUIStyle rerollBadgeStyle;
 
         // Colors reused
         private static readonly UnityColor FooterBg = new UnityColor(0f, 0f, 0f, 0.85f);
@@ -279,7 +280,14 @@ namespace KitchenPlateupAP
             {
                 DrawGlobalFooterHUD(opacity, footerRect);
             }
-            DrawLeaseCountdownBadge(opacity);
+
+            // Only show the lease tracker when day leases are enabled
+            if (Mod.DayLeasesEnabled)
+            {
+                DrawLeaseCountdownBadge(opacity);
+            }
+
+            DrawRerollCostBadge(opacity);
         }
 
         private void InitializeGUIStyles()
@@ -529,7 +537,7 @@ namespace KitchenPlateupAP
             string line1 = $"<b><color=#{titleHex}>First dish:</color></b> <color=#{dishColor}>{dishName}</color>";
 
             List<(string Name, bool? Unlocked)> dishStatuses = GetDishStatuses(dishName);
-            string leaseLine = BuildLeaseLine(opacity);
+            string leaseLine = Mod.DayLeasesEnabled ? BuildLeaseLine(opacity) : null;
 
             float currentY = footerRect.y + padding;
             if (footerStyle == null) InitializeFooterStyles();
@@ -538,7 +546,7 @@ namespace KitchenPlateupAP
             GUI.Label(new Rect(footerRect.x + padding, currentY, footerRect.width - 2f * padding, lineHeight), line1, footerStyle);
             currentY += lineHeight + 4f;
 
-            // Lease line (drawn right after first dish if present)
+            // Lease line (drawn right after first dish if present, only when enabled)
             if (!string.IsNullOrEmpty(leaseLine))
             {
                 GUI.Label(new Rect(footerRect.x + padding, currentY, footerRect.width - 2f * padding, lineHeight + 4f), leaseLine, footerStyle);
@@ -726,6 +734,86 @@ namespace KitchenPlateupAP
             string line2 = $"Have <color=#{haveHex}>{lease.Owned}</color> / Need <color=#{needHex}>{lease.Required}</color>";
             Rect textRect = new Rect(rect.x + padding, rect.y + 6f, rect.width - 2f * padding, rect.height - 12f);
             GUI.Label(textRect, line1 + "\n" + line2, leaseBadgeStyle);
+        }
+
+        /// <summary>
+        /// Draws a small HUD badge (top-right, below the lease badge) showing the
+        /// current blueprint reroll cost, so the player can see which checks are pending.
+        /// Only visible during prep phase (night time) while in a kitchen.
+        /// </summary>
+        private void DrawRerollCostBadge(float opacity)
+        {
+            if (!TryGetRerollCost(out int rerollCost))
+                return;
+
+            InitializeFooterStyles();
+
+            if (rerollBadgeStyle == null)
+            {
+                rerollBadgeStyle = new GUIStyle(GUI.skin.label)
+                {
+                    fontSize = 16,
+                    richText = true,
+                    wordWrap = true,
+                    alignment = TextAnchor.UpperLeft,
+                    normal = { textColor = UnityColor.white }
+                };
+            }
+
+            float width = 320f;
+            float height = 46f;
+            float marginRight = 35f;
+
+            // Position below the lease badge (which sits at ~15% from top) when leases are shown,
+            // otherwise take the lease badge's slot directly.
+            float leaseBlockHeight = Mod.DayLeasesEnabled ? 68f + 8f : 0f;
+            float top = Mathf.Max(140f, Screen.height * 0.15f) + leaseBlockHeight;
+
+            Rect rect = new Rect(Screen.width - width - marginRight, top, width, height);
+            float padding = 10f;
+
+            GUI.color = new UnityColor(FooterBg.r, FooterBg.g, FooterBg.b, FooterBg.a * opacity);
+            GUI.DrawTexture(rect, footerBgTex);
+            GUI.color = UnityColor.white;
+
+            string titleHex = ColorUtility.ToHtmlStringRGBA(new UnityColor(FooterTitle.r, FooterTitle.g, FooterTitle.b, opacity));
+            string valueHex = ColorUtility.ToHtmlStringRGBA(new UnityColor(1f, 1f, 1f, opacity));
+
+            string label = $"<b><color=#{titleHex}>Reroll Cost:</color></b> <color=#{valueHex}>{rerollCost}g</color>";
+            Rect textRect = new Rect(rect.x + padding, rect.y + 8f, rect.width - 2f * padding, rect.height - 16f);
+            GUI.Label(textRect, label, rerollBadgeStyle);
+        }
+
+        /// <summary>
+        /// Reads <see cref="SRerollCost"/> from the ECS world.
+        /// Returns false when not in a kitchen or the singleton does not exist.
+        /// </summary>
+        private static bool TryGetRerollCost(out int cost)
+        {
+            cost = 0;
+            try
+            {
+                var world = World.DefaultGameObjectInjectionWorld;
+                if (world == null) return false;
+
+                var em = world.EntityManager;
+
+                bool inKitchen = em.CreateEntityQuery(typeof(SKitchenMarker)).CalculateEntityCount() > 0;
+                if (!inKitchen) return false;
+
+                bool isPrep = em.CreateEntityQuery(typeof(SIsNightTime)).CalculateEntityCount() > 0;
+                if (!isPrep) return false;
+
+                var query = em.CreateEntityQuery(typeof(SRerollCost));
+                if (query.CalculateEntityCount() == 0) return false;
+
+                cost = query.GetSingleton<SRerollCost>().Cost;
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private void InitializeLeaseBadgeVisuals()
@@ -947,8 +1035,8 @@ namespace KitchenPlateupAP
             }
 
             if (Event.current.type == UnityEngine.EventType.ScrollWheel ||
-                Event.current.type == UnityEngine.EventType.MouseDown ||
                 Event.current.type == UnityEngine.EventType.MouseDrag ||
+                Event.current.type == UnityEngine.EventType.MouseDown ||
                 Input.GetMouseButton(0) ||
                 Input.GetMouseButton(1) ||
                 Input.GetMouseButton(2))

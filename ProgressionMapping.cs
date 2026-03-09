@@ -478,7 +478,7 @@ namespace KitchenPlateupAP
         // Identifiers confirmed from decompiled Kitchen assembly
         public static readonly Dictionary<string, int> achievementLocationIds = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
         {
-            { "THIS_IS_FINE",       140001 },
+            { "FIRE_RECOVERY",       140001 },
             { "FIRE_BRIGADE",       140002 },
             { "OH_NO",              140003 },
             { "CHARCOAL_FACTORY",   140004 },
@@ -486,13 +486,13 @@ namespace KitchenPlateupAP
             { "LEARNING_BY_DOING",  140006 },
             { "PLEASE_WAIT",        140007 },
             { "FLAWLESS_TIMING",    140008 },
-            { "HEALTH_INSPECTOR",   140009 },
+            { "WHAT_A_STATE",   140009 },
             { "CIRCLE_LINE",        140010 },
             { "CHEF_SCHOOL",        140011 },
             { "NEW_CHEF_PLUS",      140012 },
-            { "OVERTIME_5",         140013 },
-            { "OVERTIME_10",        140014 },
-            { "OVERTIME_15",        140015 },
+            { "DAY_20",         140013 },
+            { "DAY_25",        140014 },
+            { "DAY_30",        140015 },
             { "ANTISOCIAL",         140016 },
             { "WORK_SMART",         140017 },
         };

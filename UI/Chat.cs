@@ -73,13 +73,32 @@ namespace KitchenPlateupAP
         private static readonly UnityColor FillerItemColor = UnityColor.green; // None
         private static readonly UnityColor UsefulItemColor = UnityColor.blue; // NeverExclude
         private static readonly UnityColor ProgressionItemColor = new UnityColor(1f, 0.84f, 0f); // Advancement (gold)
+
+        // Archipelago canonical colors — matched to the AP color spec
+        // Yellow       = local player
+        // Magenta      = other players
+        // Plum         = progression items (Advancement)
+        // SlateBlue    = important/useful items (NeverExclude)
+        // Cyan         = filler items (normal)
+        // Salmon       = traps
+        // Red          = unfound hints / errors
+        // Green        = found hints / ok states
+        // White        = default text
+        private static readonly UnityColor APYellow = new UnityColor(1.000f, 1.000f, 0.000f); // local player
+        private static readonly UnityColor APMagenta = new UnityColor(1.000f, 0.000f, 1.000f); // other players
+        private static readonly UnityColor APPlum = new UnityColor(0.867f, 0.627f, 0.867f); // progression
+        private static readonly UnityColor APSlateBlue = new UnityColor(0.416f, 0.353f, 0.804f); // useful/important
+        private static readonly UnityColor APCyan = new UnityColor(0.000f, 1.000f, 1.000f); // filler/normal
+        private static readonly UnityColor APSalmon = new UnityColor(0.980f, 0.502f, 0.447f); // traps
+        private static readonly UnityColor APRed = new UnityColor(1.000f, 0.000f, 0.000f); // red
+        private static readonly UnityColor APGreen = new UnityColor(0.000f, 1.000f, 0.000f); // green
+        private static readonly UnityColor APBlue = new UnityColor(0.000f, 0.000f, 1.000f); // entrances
         private static readonly UnityColor SystemColor = new UnityColor(1f, 0.75f, 0f);
 
         // Footer styles/textures
         private static GUIStyle footerStyle;
         private static Texture2D footerBgTex;
         private static GUIStyle leaseBadgeStyle;
-        private static GUIStyle rerollBadgeStyle;
 
         // Colors reused
         private static readonly UnityColor FooterBg = new UnityColor(0f, 0f, 0f, 0.85f);
@@ -287,7 +306,6 @@ namespace KitchenPlateupAP
                 DrawLeaseCountdownBadge(opacity);
             }
 
-            DrawRerollCostBadge(opacity);
         }
 
         private void InitializeGUIStyles()
@@ -397,7 +415,8 @@ namespace KitchenPlateupAP
                 {
                     if (part is PlayerMessagePart playerPart)
                     {
-                        UnityColor? color = playerPart.IsActivePlayer ? TurquoisePlayerColor : (UnityColor?)null;
+                        // Yellow = local player, Magenta = any other player
+                        UnityColor color = playerPart.IsActivePlayer ? APYellow : APMagenta;
                         segments.Add(new Segment { Text = playerPart.Text, Color = color });
                     }
                     else if (part is ItemMessagePart itemPart)
@@ -405,6 +424,11 @@ namespace KitchenPlateupAP
                         string itemName = session.Items.GetItemName(itemPart.ItemId) ?? itemPart.Text;
                         UnityColor color = ClassifyItemColor(itemPart.Flags);
                         segments.Add(new Segment { Text = itemName, Color = color });
+                    }
+                    else if (part is LocationMessagePart locationPart)
+                    {
+                        // Locations use Blue in the AP spec
+                        segments.Add(new Segment { Text = locationPart.Text, Color = APBlue });
                     }
                     else
                     {
@@ -419,13 +443,12 @@ namespace KitchenPlateupAP
                 AddSystemMessage("Message parse error: " + ex.Message);
             }
         }
-
         private static UnityColor ClassifyItemColor(ItemFlags flags)
         {
-            if ((flags & ItemFlags.Advancement) != 0) return ProgressionItemColor;
-            if ((flags & ItemFlags.NeverExclude) != 0) return UsefulItemColor;
-            // Treat traps as filler unless special handling desired
-            return FillerItemColor;
+            if ((flags & ItemFlags.Advancement) != 0) return APPlum;       // progression
+            if ((flags & ItemFlags.NeverExclude) != 0) return APSlateBlue; // useful/important
+            if ((flags & ItemFlags.Trap) != 0) return APSalmon;            // trap
+            return APCyan;                                                   // filler/normal
         }
 
         private static string BuildFormattedPacketMessage(IReadOnlyList<JsonMessagePart> parts, out UnityColor finalColor)
@@ -445,7 +468,6 @@ namespace KitchenPlateupAP
                         switch (part.Type)
                         {
                             case JsonMessagePartType.ItemId:
-                                // Convert item id to name
                                 if (long.TryParse(part.Text, out long itemId))
                                 {
                                     string name = session.Items.GetItemName(itemId);
@@ -470,49 +492,20 @@ namespace KitchenPlateupAP
                 {
                     lastColor = part.Color.Value switch
                     {
-                        JsonMessagePartColor.Red => UnityColor.red,
-                        JsonMessagePartColor.Green => UnityColor.green,
-                        JsonMessagePartColor.Blue => UnityColor.blue,
-                        JsonMessagePartColor.Magenta => UnityColor.magenta,
-                        JsonMessagePartColor.Yellow => UnityColor.yellow,
-                        JsonMessagePartColor.Cyan => UnityColor.cyan,
+                        JsonMessagePartColor.Red => APRed,
+                        JsonMessagePartColor.Green => APGreen,
+                        JsonMessagePartColor.Blue => APBlue,
+                        JsonMessagePartColor.Magenta => APMagenta,
+                        JsonMessagePartColor.Yellow => APYellow,
+                        JsonMessagePartColor.Cyan => APCyan,
+                        JsonMessagePartColor.White => UnityColor.white,
+                        JsonMessagePartColor.Black => UnityColor.black,
                         _ => UnityColor.white
                     };
                 }
             }
             finalColor = lastColor;
             return sb.ToString();
-        }
-
-        // Bottom-left footer inside the chat group area
-        private void DrawFooterHUD(float opacity, float contentX, Rect chatRect)
-        {
-            float footerWidth = 360f;
-            float footerPadding = 8f;
-            float footerY = chatRect.height - 75f; // sits above input field
-            Rect footerRect = new Rect(contentX, footerY, footerWidth, 70f);
-
-            // Background
-            GUI.color = new UnityColor(FooterBg.r, FooterBg.g, FooterBg.b, FooterBg.a * opacity);
-            GUI.DrawTexture(footerRect, footerBgTex);
-            GUI.color = UnityColor.white;
-
-            // Build lines
-            string titleHex = ColorUtility.ToHtmlStringRGBA(new UnityColor(FooterTitle.r, FooterTitle.g, FooterTitle.b, opacity));
-            string greenHex = ColorUtility.ToHtmlStringRGBA(new UnityColor(FooterGreen.r, FooterGreen.g, FooterGreen.b, opacity));
-            string redHex = ColorUtility.ToHtmlStringRGBA(new UnityColor(FooterRed.r, FooterRed.g, FooterRed.b, opacity));
-
-            string dishName = ResolveFirstDishName();
-            bool? unlocked = IsDishUnlockedLocal(dishName);
-            string dishColor = unlocked == false ? redHex : greenHex;
-
-            string line1 = $"<b><color=#{titleHex}>First dish:</color></b> <color=#{dishColor}>{dishName}</color>";
-
-            // Lease info only during prep when gated
-            string leaseLine = BuildLeaseLine(opacity);
-            string combined = leaseLine == null ? line1 : line1 + "\n" + leaseLine;
-
-            GUI.Label(new Rect(footerRect.x + footerPadding, footerRect.y + 6f, footerRect.width - 2 * footerPadding, footerRect.height - 12f), combined, footerStyle);
         }
 
         private void DrawGlobalFooterHUD(float opacity, Rect footerRect)
@@ -735,87 +728,6 @@ namespace KitchenPlateupAP
             Rect textRect = new Rect(rect.x + padding, rect.y + 6f, rect.width - 2f * padding, rect.height - 12f);
             GUI.Label(textRect, line1 + "\n" + line2, leaseBadgeStyle);
         }
-
-        /// <summary>
-        /// Draws a small HUD badge (top-right, below the lease badge) showing the
-        /// current blueprint reroll cost, so the player can see which checks are pending.
-        /// Only visible during prep phase (night time) while in a kitchen.
-        /// </summary>
-        private void DrawRerollCostBadge(float opacity)
-        {
-            if (!TryGetRerollCost(out int rerollCost))
-                return;
-
-            InitializeFooterStyles();
-
-            if (rerollBadgeStyle == null)
-            {
-                rerollBadgeStyle = new GUIStyle(GUI.skin.label)
-                {
-                    fontSize = 16,
-                    richText = true,
-                    wordWrap = true,
-                    alignment = TextAnchor.UpperLeft,
-                    normal = { textColor = UnityColor.white }
-                };
-            }
-
-            float width = 320f;
-            float height = 46f;
-            float marginRight = 35f;
-
-            // Position below the lease badge (which sits at ~15% from top) when leases are shown,
-            // otherwise take the lease badge's slot directly.
-            float leaseBlockHeight = Mod.DayLeasesEnabled ? 68f + 8f : 0f;
-            float top = Mathf.Max(140f, Screen.height * 0.15f) + leaseBlockHeight;
-
-            Rect rect = new Rect(Screen.width - width - marginRight, top, width, height);
-            float padding = 10f;
-
-            GUI.color = new UnityColor(FooterBg.r, FooterBg.g, FooterBg.b, FooterBg.a * opacity);
-            GUI.DrawTexture(rect, footerBgTex);
-            GUI.color = UnityColor.white;
-
-            string titleHex = ColorUtility.ToHtmlStringRGBA(new UnityColor(FooterTitle.r, FooterTitle.g, FooterTitle.b, opacity));
-            string valueHex = ColorUtility.ToHtmlStringRGBA(new UnityColor(1f, 1f, 1f, opacity));
-
-            string label = $"<b><color=#{titleHex}>Reroll Cost:</color></b> <color=#{valueHex}>{rerollCost}g</color>";
-            Rect textRect = new Rect(rect.x + padding, rect.y + 8f, rect.width - 2f * padding, rect.height - 16f);
-            GUI.Label(textRect, label, rerollBadgeStyle);
-        }
-
-        /// <summary>
-        /// Reads <see cref="SRerollCost"/> from the ECS world.
-        /// Returns false when not in a kitchen or the singleton does not exist.
-        /// </summary>
-        private static bool TryGetRerollCost(out int cost)
-        {
-            cost = 0;
-            try
-            {
-                var world = World.DefaultGameObjectInjectionWorld;
-                if (world == null) return false;
-
-                var em = world.EntityManager;
-
-                bool inKitchen = em.CreateEntityQuery(typeof(SKitchenMarker)).CalculateEntityCount() > 0;
-                if (!inKitchen) return false;
-
-                bool isPrep = em.CreateEntityQuery(typeof(SIsNightTime)).CalculateEntityCount() > 0;
-                if (!isPrep) return false;
-
-                var query = em.CreateEntityQuery(typeof(SRerollCost));
-                if (query.CalculateEntityCount() == 0) return false;
-
-                cost = query.GetSingleton<SRerollCost>().Cost;
-                return true;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
         private void InitializeLeaseBadgeVisuals()
         {
             if (leaseBadgeStyle == null)

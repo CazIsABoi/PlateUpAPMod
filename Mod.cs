@@ -47,7 +47,7 @@ namespace KitchenPlateupAP
     {
         public const string MOD_GUID = "com.caz.plateupap";
         public const string MOD_NAME = "PlateupAP";
-        public const string MOD_VERSION = "0.2.5.6";    
+        public const string MOD_VERSION = "0.2.5.7";    
         public const string MOD_AUTHOR = "Caz";
         public const string MOD_GAMEVERSION = ">=1.1.9";
         public static int TOTAL_SCENES_LOADED = 0;
@@ -325,7 +325,11 @@ namespace KitchenPlateupAP
         {
             speedTiers = BuildPlayerSpeedTiers(playerSpeedUpgradeCount);
             movementSpeedTier = Mathf.Clamp(movementSpeedTier, 0, speedTiers.Length - 1);
-            movementSpeedMod = speedTiers[movementSpeedTier];
+
+            // When there are no speed upgrades in the pool, the feature is disabled —
+            // leave the player at the unmodified default speed (1.0).
+            movementSpeedMod = playerSpeedUpgradeCount <= 0 ? 1f : speedTiers[movementSpeedTier];
+
             playerBaseSpeeds.Clear();
             Logger?.LogInfo($"[PlateupAP] Player speed tiers rebuilt for count={playerSpeedUpgradeCount}. Levels={speedTiers.Length}, currentTier={movementSpeedTier}, multiplier={movementSpeedMod}");
         }
@@ -1612,7 +1616,7 @@ namespace KitchenPlateupAP
             // Patience Increase (filler)
             if (checkId == 24)
             {
-                patienceMultiplierDelta += 0.25f;
+                patienceMultiplierDelta += 0.05f;
                 patienceDirty = true;
                 Logger.LogInfo($"[Filler] Patience Increase received. Patience delta now: {patienceMultiplierDelta}");
                 pendingSpawnState.PendingItemIDs.Remove(checkId);
@@ -1622,7 +1626,7 @@ namespace KitchenPlateupAP
             // Less Customers (filler)
             if (checkId == 25)
             {
-                customersPerHourDelta -= 0.25f;
+                customersPerHourDelta -= 0.05f;
                 kitchenParamsDirty = true;
                 Logger.LogInfo($"[Filler] Less Customers received. CustomersPerHour delta now: {customersPerHourDelta}");
                 pendingSpawnState.PendingItemIDs.Remove(checkId);
@@ -1741,11 +1745,6 @@ namespace KitchenPlateupAP
                 }
                 playerBaseSpeeds.Clear();
                 return;
-            }
-
-            if (ApplianceUnlocksEnabled && ProgressionMapping.progressionToGDO.TryGetValue(checkId, out int unlockedGdo))
-            {
-                UnlockAppliance(unlockedGdo);
             }
 
             // Handle appliance unlock items (2001–2093 from apworld)
@@ -1913,7 +1912,7 @@ namespace KitchenPlateupAP
 
                 if (itemId == 24)
                 {
-                    patienceMultiplierDelta += 0.25f;
+                    patienceMultiplierDelta += 0.05f;
                     patienceDirty = true;
                     Logger.LogInfo($"[ProcessAllReceivedItems] Re-applied Patience Increase. Delta: {patienceMultiplierDelta}");
                     continue;
@@ -1921,7 +1920,7 @@ namespace KitchenPlateupAP
 
                 if (itemId == 25)
                 {
-                    customersPerHourDelta -= 0.25f;
+                    customersPerHourDelta -= 0.05f;
                     kitchenParamsDirty = true;
                     Logger.LogInfo($"[ProcessAllReceivedItems] Re-applied Less Customers. Delta: {customersPerHourDelta}");
                     continue;
@@ -2316,13 +2315,13 @@ namespace KitchenPlateupAP
 
                 case 20003: // Patience Decrease
                     Logger.LogWarning("[Trap] Patience Decrease activated!");
-                    patienceMultiplierDelta -= 0.25f;
+                    patienceMultiplierDelta -= 0.05f;
                     patienceDirty = true;
                     break;
 
                 case 20004: // More Customers
                     Logger.LogWarning("[Trap] More Customers activated!");
-                    customersPerHourDelta += 0.25f;
+                    customersPerHourDelta += 0.05f;
                     kitchenParamsDirty = true;
                     break;
 
@@ -2631,16 +2630,16 @@ namespace KitchenPlateupAP
 
                     if (overallDaysCompleted >= dayTarget)
                     {
-                        int activeDishes = CountActiveDishes();
-                        Logger.LogInfo($"[Dish Day Goal] Reached day_target={dayTarget}. Active dishes: {activeDishes}, required: {dishGoalCount}");
-                        if (activeDishes >= dishGoalCount)
+                        int dishesAtTarget = CountDishesCompletedAtDayTarget();
+                        Logger.LogInfo($"[Dish Day Goal] Reached day_target={dayTarget}. Dishes completed at day {dayTarget}: {dishesAtTarget}, required: {dishGoalCount}");
+                        if (dishesAtTarget >= dishGoalCount)
                         {
-                            Logger.LogInfo($"[Dish Day Goal] Win condition met! {activeDishes} >= {dishGoalCount} dishes active. Sending goal complete.");
+                            Logger.LogInfo($"[Dish Day Goal] Win condition met! {dishesAtTarget}/{dishGoalCount} dishes completed at day {dayTarget}. Sending goal complete.");
                             SendGoalComplete();
                         }
                         else
                         {
-                            Logger.LogWarning($"[Dish Day Goal] Day target reached but only {activeDishes}/{dishGoalCount} dishes active. Goal NOT complete.");
+                            Logger.LogWarning($"[Dish Day Goal] Day target reached but only {dishesAtTarget}/{dishGoalCount} dishes completed at day {dayTarget}. Goal NOT complete.");
                         }
                     }
                 }
@@ -3022,8 +3021,6 @@ namespace KitchenPlateupAP
             {
                 Entity e = EntityManager.CreateEntity(typeof(CTableModifier), typeof(CEffectRangeGlobal), typeof(CEffectAlways), typeof(CAppliesEffect));
                 var mod = new CTableModifier();
-                mod.PatienceModifiers.Eating = netPatience;
-                mod.PatienceModifiers.Thinking = netPatience;
                 mod.PatienceModifiers.Seating = netPatience;
                 mod.PatienceModifiers.Service = netPatience;
                 mod.PatienceModifiers.WaitForFood = netPatience;
@@ -3037,8 +3034,6 @@ namespace KitchenPlateupAP
                 for (int i = 0; i < entities.Length; i++)
                 {
                     var mod = EntityManager.GetComponentData<CTableModifier>(entities[i]);
-                    mod.PatienceModifiers.Eating = netPatience;
-                    mod.PatienceModifiers.Thinking = netPatience;
                     mod.PatienceModifiers.Seating = netPatience;
                     mod.PatienceModifiers.Service = netPatience;
                     mod.PatienceModifiers.WaitForFood = netPatience;
@@ -3048,7 +3043,6 @@ namespace KitchenPlateupAP
                 Logger.LogInfo($"[Patience] Updated global CTableModifier: patience={netPatience:F3} (delta={patienceMultiplierDelta:F3}, global={globalPatienceOffset:F3}), mess={messFactorDelta:F3}");
             }
         }
-
         private int ComputeDeterministicSeed()
         {
             try
@@ -3472,16 +3466,28 @@ namespace KitchenPlateupAP
         }
 
         /// <summary>
-        /// Goal 2: Counts active dishes as 1 (starting dish) + received dish unlock items.
+        /// Goal 2: Counts how many dishes from selected_dishes have a completed day check
+        /// at exactly day_target in AllLocationsChecked.
         /// </summary>
-        private int CountActiveDishes()
+        private int CountDishesCompletedAtDayTarget()
         {
-            if (session?.Items?.AllItemsReceived == null)
-                return 1;
+            if (session?.Locations?.AllLocationsChecked == null)
+                return 0;
 
-            var dishUnlockIds = new HashSet<int>(ProgressionMapping.dishUnlockIDs.Values);
-            int unlockCount = session.Items.AllItemsReceived.Count(item => dishUnlockIds.Contains((int)item.ItemId));
-            return 1 + unlockCount; // 1 for starting dish
+            var checkedLocations = session.Locations.AllLocationsChecked;
+            int count = 0;
+
+            foreach (var dishName in selectedDishes)
+            {
+                if (!ProgressionMapping.dish_id_lookup.TryGetValue(dishName, out int dishId))
+                    continue;
+
+                int targetLocId = (dishId * 10000) + dayTarget;
+                if (checkedLocations.Contains(targetLocId))
+                    count++;
+            }
+
+            return count;
         }
     }
 }

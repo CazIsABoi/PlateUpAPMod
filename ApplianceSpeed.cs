@@ -46,7 +46,7 @@ namespace KitchenPlateupAP
                         Speed = speedMultiplier
                     });
 
-                    Mod.Logger.LogInfo($"[PlateupAP] (Grouped) Applied speed {speedMultiplier} to appliance {applianceEntity.Index}");
+                  //  Mod.Logger.LogInfo($"[PlateupAP] (Grouped) Applied speed {speedMultiplier} to appliance {applianceEntity.Index}");
                 }
                 else
                 {
@@ -59,7 +59,7 @@ namespace KitchenPlateupAP
                             existingMod.Speed = speedMultiplier;
                             EntityManager.SetComponentData(applianceEntity, existingMod);
 
-                            Mod.Logger.LogInfo($"[PlateupAP] (Grouped) Updated appliance {applianceEntity.Index} speed to {speedMultiplier}");
+                    //        Mod.Logger.LogInfo($"[PlateupAP] (Grouped) Updated appliance {applianceEntity.Index} speed to {speedMultiplier}");
                         }
                     }
                     else
@@ -72,7 +72,7 @@ namespace KitchenPlateupAP
                             Process = 0,
                             Speed = speedMultiplier
                         });
-                        Mod.Logger.LogInfo($"[PlateupAP] (Grouped) Replaced separate mod with grouped speed {speedMultiplier} on appliance {applianceEntity.Index}");
+                     //   Mod.Logger.LogInfo($"[PlateupAP] (Grouped) Replaced separate mod with grouped speed {speedMultiplier} on appliance {applianceEntity.Index}");
                     }
                 }
             }
@@ -118,7 +118,7 @@ namespace KitchenPlateupAP
                     if (leftover.AffectsAllProcesses)
                     {
                         EntityManager.RemoveComponent<CApplianceSpeedModifier>(applianceEntity);
-                        Mod.Logger.LogInfo($"[CookSpeed] Removed leftover grouped speed mod on appliance {applianceEntity.Index}");
+                   //     Mod.Logger.LogInfo($"[CookSpeed] Removed leftover grouped speed mod on appliance {applianceEntity.Index}");
                     }
                 }
 
@@ -151,7 +151,7 @@ namespace KitchenPlateupAP
                         Process = ProcessReferences.Cook,
                         Speed = speedMultiplier
                     });
-                    Mod.Logger.LogInfo($"[CookSpeed] Added cook speed x{speedMultiplier} to appliance {applianceEntity.Index}");
+                //    Mod.Logger.LogInfo($"[CookSpeed] Added cook speed x{speedMultiplier} to appliance {applianceEntity.Index}");
                 }
                 else
                 {
@@ -164,7 +164,7 @@ namespace KitchenPlateupAP
                         existingMod.AffectsAllProcesses = false;
                         EntityManager.SetComponentData(applianceEntity, existingMod);
 
-                        Mod.Logger.LogInfo($"[CookSpeed] Updated cook speed from {oldSpeed} to {speedMultiplier} on {applianceEntity.Index}");
+                   //     Mod.Logger.LogInfo($"[CookSpeed] Updated cook speed from {oldSpeed} to {speedMultiplier} on {applianceEntity.Index}");
                     }
                 }
             }
@@ -209,7 +209,7 @@ namespace KitchenPlateupAP
                     if (leftover.AffectsAllProcesses)
                     {
                         EntityManager.RemoveComponent<CApplianceSpeedModifier>(applianceEntity);
-                        Mod.Logger.LogInfo($"[ChopSpeed] Removed leftover grouped speed mod on appliance {applianceEntity.Index}");
+                    //    Mod.Logger.LogInfo($"[ChopSpeed] Removed leftover grouped speed mod on appliance {applianceEntity.Index}");
                     }
                 }
 
@@ -301,7 +301,7 @@ namespace KitchenPlateupAP
                     if (leftover.AffectsAllProcesses)
                     {
                         EntityManager.RemoveComponent<CApplianceSpeedModifier>(applianceEntity);
-                        Mod.Logger.LogInfo($"[KneadSpeed] Removed leftover grouped speed mod on appliance {applianceEntity.Index}");
+                   //     Mod.Logger.LogInfo($"[KneadSpeed] Removed leftover grouped speed mod on appliance {applianceEntity.Index}");
                     }
                 }
 
@@ -393,7 +393,7 @@ namespace KitchenPlateupAP
                     if (leftover.AffectsAllProcesses)
                     {
                         EntityManager.RemoveComponent<CApplianceSpeedModifier>(applianceEntity);
-                        Mod.Logger.LogInfo($"[CleanSpeed] Removed leftover grouped speed mod on appliance {applianceEntity.Index}");
+                    //    Mod.Logger.LogInfo($"[CleanSpeed] Removed leftover grouped speed mod on appliance {applianceEntity.Index}");
                     }
                 }
 
@@ -508,7 +508,7 @@ namespace KitchenPlateupAP
                     speedMod.Speed = newMultiplier;
                     entityManager.SetComponentData(applianceEntity, speedMod);
 
-                    Mod.Logger.LogInfo($"[UpdateSeparateApplianceSpeedModifiersSystem] Updated process={speedMod.Process} on entity {applianceEntity.Index} from {old} to {newMultiplier}");
+                //    Mod.Logger.LogInfo($"[UpdateSeparateApplianceSpeedModifiersSystem] Updated process={speedMod.Process} on entity {applianceEntity.Index} from {old} to {newMultiplier}");
                 }
             }
         }

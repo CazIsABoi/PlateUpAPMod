@@ -1,4 +1,4 @@
-using Kitchen;
+﻿using Kitchen;
 using KitchenMods;
 using Unity.Entities;
 using UnityEngine;
@@ -13,6 +13,10 @@ namespace KitchenPlateupAP
         {
             // Only clamp when the money cap mechanic is enabled and we're in a run
             if (!Mod.MoneyCapEnabled)
+                return;
+
+            // start_of_day mode: clamping is handled by UpdateDayCycle at the prep→day transition
+            if (Mod.MoneyCapActivation == 1)
                 return;
 
             if (!HasSingleton<SKitchenMarker>())

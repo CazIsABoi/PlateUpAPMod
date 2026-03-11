@@ -47,7 +47,7 @@ namespace KitchenPlateupAP
     {
         public const string MOD_GUID = "com.caz.plateupap";
         public const string MOD_NAME = "PlateupAP";
-        public const string MOD_VERSION = "0.2.5.7";    
+        public const string MOD_VERSION = "0.2.5.8";
         public const string MOD_AUTHOR = "Caz";
         public const string MOD_GAMEVERSION = ">=1.1.9";
         public static int TOTAL_SCENES_LOADED = 0;
@@ -104,6 +104,8 @@ namespace KitchenPlateupAP
         private static List<string> startingDishes = new List<string>(); // free baseline dishes
         public static bool MoneyCapEnabled = true;
         private static int moneyCapIncreaseAmount = 20;
+        private static int moneyCapActivation = 0; // 0 = instant, 1 = start_of_day
+        public static int MoneyCapActivation => moneyCapActivation;
         private static bool applianceUnlockGrantsAppliance = true;
         private static int lastSentRerollCost = 0;
 
@@ -388,7 +390,7 @@ namespace KitchenPlateupAP
             {
                 EnsureCustomAppliancesFileExists();
 
-                string path = GetConfigFilePath(); 
+                string path = GetConfigFilePath();
                 if (!File.Exists(path))
                 {
                     Logger.LogWarning($"[PlateupAP][ConfigWarmup] No config at: {path}");
@@ -646,6 +648,17 @@ namespace KitchenPlateupAP
                 else
                 {
                     moneyCapIncreaseAmount = 20;
+                }
+
+                if (slotData.TryGetValue("money_cap_activation", out object rawMoneyCapActivation))
+                {
+                    // AP sends "instant" = 0, "start_of_day" = 1
+                    moneyCapActivation = Convert.ToInt32(rawMoneyCapActivation);
+                    Logger.LogInfo($"[MoneyCap] money_cap_activation: {(moneyCapActivation == 1 ? "start_of_day" : "instant")}");
+                }
+                else
+                {
+                    moneyCapActivation = 0;
                 }
 
                 if (slotData.TryGetValue("appliance_unlocks", out object rawApplianceUnlocks))
@@ -1006,10 +1019,10 @@ namespace KitchenPlateupAP
             if (ArchipelagoConnectionManager.ConnectionSuccessful)
             {
                 EnsureItemsSubscription(); // subscribe early so lobby packets are handled
-                 upgradesRandomized = false;
-                 TryRandomizeUpgradesOnce();
-                 RetrieveSlotData(); // Fetch slot data
-                 EnsureDishLockingBaseline(); // <<< ensure we have a baseline to lock against
+                upgradesRandomized = false;
+                TryRandomizeUpgradesOnce();
+                RetrieveSlotData(); // Fetch slot data
+                EnsureDishLockingBaseline(); // <<< ensure we have a baseline to lock against
 
                 // Load persistence once per connection (before applying past items)
                 if (!persistenceLoaded)
@@ -1055,9 +1068,9 @@ namespace KitchenPlateupAP
                                     spawnQueue.Enqueue(CreateItemInfoForQueue(id));
                             }
                         }
-                     }
-                     persistenceLoaded = true;
-                 }
+                    }
+                    persistenceLoaded = true;
+                }
 
                 groupSizeReductionsReceived = 0;
 
@@ -1501,24 +1514,24 @@ namespace KitchenPlateupAP
         // Spawning Items
         private void CheckReceivedItems()
         {
-                        if (session == null || session.Items == null)
-                            {
-                               if (!sessionNotInitLogged)
-                                   {
+            if (session == null || session.Items == null)
+            {
+                if (!sessionNotInitLogged)
+                {
                     Logger.LogError("Session items not yet initialized.");
                     sessionNotInitLogged = true;
-                                    }
-                                return;
-                            }
-            
+                }
+                return;
+            }
+
             sessionNotInitLogged = false;
             EnsureItemsSubscription();
         }
 
         private void EnsureItemsSubscription()
-       {
-           if (itemsEventSubscribed)
-              return;
+        {
+            if (itemsEventSubscribed)
+                return;
 
             if (session == null || session.Items == null)
                 return;
@@ -2521,11 +2534,19 @@ namespace KitchenPlateupAP
                     SpawnExtraBlueprints();
                 }
 
-                if (!moneyClampedThisPrep)
+                // instant mode: clamp once at prep start (existing behaviour)
+                if (moneyCapActivation == 0 && !moneyClampedThisPrep)
                 {
                     ClampMoneyToCap();
                     moneyClampedThisPrep = true;
                 }
+            }
+
+            // start_of_day mode: clamp when the player transitions from prep → cooking
+            if (moneyCapActivation == 1 && MoneyCapEnabled && firstCycleCompleted && isDayStart && !isPrepTime)
+            {
+                ClampMoneyToCap();
+                Logger.LogInfo("[MoneyCap] start_of_day: clamped money at cooking phase start.");
             }
             else if (firstCycleCompleted && isPrepFirstUpdate && !dayTransitionProcessed)
             {
@@ -3269,9 +3290,9 @@ namespace KitchenPlateupAP
 
                 if (EntityManager.HasComponent<CDishUpgrade>(held))
                 {
-                     var upgrade = EntityManager.GetComponentData<CDishUpgrade>(held);
-                     if (upgrade.DishID != 0)
-                         return upgrade.DishID;
+                    var upgrade = EntityManager.GetComponentData<CDishUpgrade>(held);
+                    if (upgrade.DishID != 0)
+                        return upgrade.DishID;
                 }
             }
 

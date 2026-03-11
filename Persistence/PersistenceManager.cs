@@ -54,10 +54,17 @@ namespace KitchenPlateupAP
     {
         private static string RootPath => Path.Combine(Application.persistentDataPath, "PlateupAPState");
 
-        private static string SpeedFile(RunIdentity id) => Path.Combine(RootPath, $"speed_{id.Address}_{id.Port}_{id.Player}.json");
-        private static string PendingFile(RunIdentity id) => Path.Combine(RootPath, $"pending_{id.Address}_{id.Port}_{id.Player}.json");
-        private static string TrapCardFile(RunIdentity id) => Path.Combine(RootPath, $"trapcards_{id.Address}_{id.Port}_{id.Player}.json");
-        private static string DishDayFile(RunIdentity id) => Path.Combine(RootPath, $"dishdays_{id.Address}_{id.Port}_{id.Player}.json");
+        private static string Sanitize(string value) =>
+            string.Concat((value ?? "unknown").Split(Path.GetInvalidFileNameChars()));
+
+        private static string SpeedFile(RunIdentity id) =>
+            Path.Combine(RootPath, $"speed_{Sanitize(id.Address)}_{id.Port}_{Sanitize(id.Player)}.json");
+        private static string PendingFile(RunIdentity id) =>
+            Path.Combine(RootPath, $"pending_{Sanitize(id.Address)}_{id.Port}_{Sanitize(id.Player)}.json");
+        private static string TrapCardFile(RunIdentity id) =>
+            Path.Combine(RootPath, $"trapcards_{Sanitize(id.Address)}_{id.Port}_{Sanitize(id.Player)}.json");
+        private static string DishDayFile(RunIdentity id) =>
+            Path.Combine(RootPath, $"dishdays_{Sanitize(id.Address)}_{id.Port}_{Sanitize(id.Player)}.json");
         private static string IdentityFile => Path.Combine(RootPath, "last_identity.json");
 
         private static RunIdentity _loadedIdentity;

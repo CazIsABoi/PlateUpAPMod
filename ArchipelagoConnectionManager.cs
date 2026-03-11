@@ -38,8 +38,11 @@ namespace KitchenPlateupAP
             private set { lock (_stateLock) _session = value; }
         }
 
-        public static bool IsConnecting { get; private set; }
-        public static bool IsConnected { get; private set; }
+        private static volatile bool _isConnecting;
+        private static volatile bool _isConnected;
+
+        public static bool IsConnecting => _isConnecting;
+        public static bool IsConnected  => _isConnected;
 
 
         public static bool ConnectionSuccessful => IsConnected;
@@ -112,7 +115,7 @@ namespace KitchenPlateupAP
                     Fail("Already connected to Archipelago. Disconnect first.");
                     return false;
                 }
-                IsConnecting = true;
+                _isConnecting = true;
             }
 
             try
@@ -152,7 +155,7 @@ namespace KitchenPlateupAP
 
                     SlotIndex = success.Slot;
                     SlotData = success.SlotData;
-                    IsConnected = true;
+                    _isConnected = true;
 
                     Logger.LogInfo($"Connected. Slot {SlotIndex}, Player '{playerName}'.");
                     SafeInvokeConnected();
@@ -182,7 +185,7 @@ namespace KitchenPlateupAP
             }
             finally
             {
-                lock (_stateLock) IsConnecting = false;
+                lock (_stateLock) _isConnecting = false;
             }
         }
 
@@ -216,9 +219,9 @@ namespace KitchenPlateupAP
 
             Session = null;
 
-            if (IsConnected)
+            if (_isConnected)
             {
-                IsConnected = false;
+                _isConnected = false;
                 SafeInvokeDisconnected(reason ?? "Client disconnected");
             }
         }
@@ -254,9 +257,9 @@ namespace KitchenPlateupAP
         private static void OnSocketClosed(string reason)
         {
             Logger.LogInfo("Socket closed: " + reason);
-            if (IsConnected)
+            if (_isConnected)
             {
-                IsConnected = false;
+                _isConnected = false;
                 SafeInvokeDisconnected(reason);
             }
             ScheduleReconnect(reason);

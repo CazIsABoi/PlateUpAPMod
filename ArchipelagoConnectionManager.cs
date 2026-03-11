@@ -54,7 +54,7 @@ namespace KitchenPlateupAP
         public static event Action<string> ConnectionFailed;
         public static event Action<string> Disconnected;
 
-        private const string GameName = "plateup";
+        private const string GameName = "PlateUp";
 
         static ArchipelagoConnectionManager()
         {

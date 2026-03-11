@@ -168,6 +168,7 @@ namespace KitchenPlateupAP
         private static bool globalPatienceEnabled = false;
         private static int globalPatienceUpgradeCount = 5;
         private static int globalPatienceUpgradesReceived = 0;
+        private static int globalPatienceStartingDebuff = -50; // -100..0, default -50 (percentage)
 
         // Build tiers dynamically from slot data: start 0.5, + (1.0 / N) per upgrade, final 1.5 at N upgrades; if N==0 -> [1.0]
         private static float[] speedTiers = BuildPlayerSpeedTiers(playerSpeedUpgradeCount);
@@ -723,6 +724,16 @@ namespace KitchenPlateupAP
                 else
                 {
                     globalPatienceUpgradeCount = 5;
+                }
+
+                if (slotData.TryGetValue("global_patience_starting_debuff", out object rawGlobalPatienceDebuff))
+                {
+                    globalPatienceStartingDebuff = Mathf.Clamp(Convert.ToInt32(rawGlobalPatienceDebuff), -100, 0);
+                    Logger.LogInfo($"[PlateupAP] Global Patience Starting Debuff: {globalPatienceStartingDebuff}");
+                }
+                else
+                {
+                    globalPatienceStartingDebuff = -50;
                 }
             }
 
@@ -3021,14 +3032,17 @@ namespace KitchenPlateupAP
                 return;
 
             // Compute the net patience delta:
-            // Base = -0.2 if global patience is enabled (starts penalised), 0 otherwise.
-            // Each Global Patience Upgrade item adds (0.4 / count), up to +0.2 at full upgrades.
+            // Base = debuff/100 if global patience is enabled (starts penalised), 0 otherwise.
+            // Each Global Patience Upgrade item adds (abs(debuff/100) / count), recovering back toward 0.
             float globalPatienceOffset = 0f;
             if (globalPatienceEnabled)
             {
-                float perUpgrade = globalPatienceUpgradeCount > 0 ? 0.4f / globalPatienceUpgradeCount : 0f;
-                globalPatienceOffset = -0.2f + (globalPatienceUpgradesReceived * perUpgrade);
-                globalPatienceOffset = Mathf.Clamp(globalPatienceOffset, -0.2f, 0.2f);
+                float baseOffset = globalPatienceStartingDebuff / 100f; // e.g. -50 -> -0.5f
+                float recoveryPerUpgrade = globalPatienceUpgradeCount > 0
+                    ? Math.Abs(baseOffset) / globalPatienceUpgradeCount
+                    : 0f;
+                globalPatienceOffset = baseOffset + (globalPatienceUpgradesReceived * recoveryPerUpgrade);
+                globalPatienceOffset = Mathf.Clamp(globalPatienceOffset, baseOffset, 0f);
             }
 
             float netPatience = patienceMultiplierDelta + globalPatienceOffset;
@@ -3047,7 +3061,7 @@ namespace KitchenPlateupAP
                 mod.PatienceModifiers.WaitForFood = netPatience;
                 mod.OrderingModifiers.MessFactor = messFactorDelta;
                 EntityManager.SetComponentData(e, mod);
-                Logger.LogInfo($"[Patience] Created global CTableModifier: patience={netPatience:F3} (delta={patienceMultiplierDelta:F3}, global={globalPatienceOffset:F3}), mess={messFactorDelta:F3}");
+                Logger.LogInfo($"[Patience] Created global CTableModifier: patience={netPatience:F3} (delta={patienceMultiplierDelta:F3}, global={globalPatienceOffset:F3}, debuff={globalPatienceStartingDebuff})");
             }
             else
             {
@@ -3061,7 +3075,7 @@ namespace KitchenPlateupAP
                     mod.OrderingModifiers.MessFactor = messFactorDelta;
                     EntityManager.SetComponentData(entities[i], mod);
                 }
-                Logger.LogInfo($"[Patience] Updated global CTableModifier: patience={netPatience:F3} (delta={patienceMultiplierDelta:F3}, global={globalPatienceOffset:F3}), mess={messFactorDelta:F3}");
+                Logger.LogInfo($"[Patience] Updated global CTableModifier: patience={netPatience:F3} (delta={patienceMultiplierDelta:F3}, global={globalPatienceOffset:F3}, debuff={globalPatienceStartingDebuff})");
             }
         }
         private int ComputeDeterministicSeed()

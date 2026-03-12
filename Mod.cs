@@ -47,7 +47,7 @@ namespace KitchenPlateupAP
     {
         public const string MOD_GUID = "com.caz.plateupap";
         public const string MOD_NAME = "PlateupAP";
-        public const string MOD_VERSION = "0.2.5.8";
+        public const string MOD_VERSION = "0.2.5.9";
         public const string MOD_AUTHOR = "Caz";
         public const string MOD_GAMEVERSION = ">=1.1.9";
         public static int TOTAL_SCENES_LOADED = 0;
@@ -137,8 +137,12 @@ namespace KitchenPlateupAP
         private bool moneyClampPending = false;
         private static int pendingCoinAmount = 0;
         private static int _spawnedTrapCardCount = 0;
+        private static int _pendingCardSwapCount = 0;
+        private static int _appliedCardSwapCount = 0;
         private static int startingGroupSize = 0;   // 0 = disabled; 1-8 = starting cap
         private static int groupSizeReductionsReceived = 0;
+        private static bool rerollTokenPending = false;
+        private static bool extraLifePending = false;
 
         // Kitchen parameter modifiers (cumulative, applied via SKitchenParameters)
         private static float customersPerHourDelta = 0f;
@@ -451,6 +455,54 @@ namespace KitchenPlateupAP
                 // Use SlotIndex as a deterministic seed so removal order is stable across reconnects
                 StartingCardManager.Initialise(startingCardsMode, startingCardsAmount, ArchipelagoConnectionManager.SlotIndex);
 
+                // Parse extra_starting_cards from slot_data (always-on cards that persist between runs)
+                if (slotData.TryGetValue("extra_starting_cards", out object rawExtraCards))
+                {
+                    try
+                    {
+                        var cardKeys = JsonConvert.DeserializeObject<List<string>>(rawExtraCards.ToString()) ?? new List<string>();
+                        var resolvedIds = new List<int>();
+
+                        // Build a normalised (lowercase, underscore→space) reverse lookup once
+                        var normalisedCardLookup = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                        foreach (var kv in ProgressionMapping.allCustomerCards)
+                        {
+                            // Store both the original key and an underscore-normalised version
+                            normalisedCardLookup[kv.Key] = kv.Value;
+                            normalisedCardLookup[kv.Key.Replace(" ", "_")] = kv.Value;
+                        }
+
+                        foreach (string key in cardKeys)
+                        {
+                            // Try direct match first (handles spaces), then underscore variant
+                            string underscored = key.Replace(" ", "_");
+                            string spaced = key.Replace("_", " ");
+
+                            if (normalisedCardLookup.TryGetValue(key, out int gdoId) ||
+                                normalisedCardLookup.TryGetValue(spaced, out gdoId) ||
+                                normalisedCardLookup.TryGetValue(underscored, out gdoId))
+                            {
+                                resolvedIds.Add(gdoId);
+                                Logger.LogInfo($"[StartingCards] Extra card '{key}' resolved to GDO {gdoId}.");
+                            }
+                            else
+                            {
+                                Logger.LogWarning($"[StartingCards] Extra card '{key}' not found in allCustomerCards.");
+                            }
+                        }
+
+                        StartingCardManager.SetExtraStartingCards(resolvedIds);
+                    }
+                    catch (JsonReaderException ex)
+                    {
+                        Logger.LogWarning($"[StartingCards] Failed to parse extra_starting_cards: {ex.Message}");
+                    }
+                }
+                else
+                {
+                    StartingCardManager.SetExtraStartingCards(System.Array.Empty<int>());
+                }
+
                 // Parse free_starter_dishes and starting_dishes FIRST, before selected_dishes processing
                 if (slotData.TryGetValue("free_starter_dishes", out object rawFreeStarterDishes))
                 {
@@ -681,6 +733,48 @@ namespace KitchenPlateupAP
                 else
                 {
                     applianceUnlockGrantsAppliance = true;
+                }
+
+                // Parse unlocked_appliances_in_shop and unlocked_appliances from slot_data.
+                // When enabled, every appliance in the "unlocked_appliances" list (those not
+                // assigned an unlock item in the pool) is immediately available in the shop.
+                bool unlockedAppliancesInShop = false;
+                if (slotData.TryGetValue("unlocked_appliances_in_shop", out object rawUnlockedInShop))
+                {
+                    unlockedAppliancesInShop = Convert.ToInt32(rawUnlockedInShop) != 0;
+                    Logger.LogInfo($"[ApplianceUnlocks] unlocked_appliances_in_shop: {unlockedAppliancesInShop}");
+                }
+
+                if (ApplianceUnlocksEnabled && unlockedAppliancesInShop &&
+                    slotData.TryGetValue("unlocked_appliances", out object rawUnlockedAppliances))
+                {
+                    try
+                    {
+                        var applianceNames = JsonConvert.DeserializeObject<List<string>>(rawUnlockedAppliances.ToString())
+                                            ?? new List<string>();
+
+                        int resolvedCount = 0;
+                        foreach (string name in applianceNames)
+                        {
+                            // Try useful appliances first, then filler
+                            if (ProgressionMapping.usefulApplianceDictionary.TryGetValue(name, out int gdoId) ||
+                                ProgressionMapping.fillerApplianceDictionary.TryGetValue(name, out gdoId))
+                            {
+                                UnlockAppliance(gdoId);
+                                resolvedCount++;
+                            }
+                            else
+                            {
+                                Logger.LogWarning($"[ApplianceUnlocks] '{name}' not found in appliance dictionaries; skipping.");
+                            }
+                        }
+
+                        Logger.LogInfo($"[ApplianceUnlocks] Unlocked {resolvedCount}/{applianceNames.Count} appliance(s) from unlocked_appliances list.");
+                    }
+                    catch (JsonReaderException ex)
+                    {
+                        Logger.LogWarning($"[ApplianceUnlocks] Failed to parse unlocked_appliances: {ex.Message}");
+                    }
                 }
 
                 if (slotData.TryGetValue("decoration_unlocks", out object rawDecorationUnlocks))
@@ -1448,6 +1542,26 @@ namespace KitchenPlateupAP
                     _spawnedTrapCardCount++;
                 }
 
+                // Apply any pending Card Swap traps (deferred from off-thread OnItemReceived)
+                int pendingSwaps = _pendingCardSwapCount - _appliedCardSwapCount;
+                for (int i = 0; i < pendingSwaps; i++)
+                {
+                    Logger.LogInfo("[Trap] Applying deferred Card Swap from OnUpdate.");
+                    SwapAllCustomerCards();
+                    _appliedCardSwapCount++;
+                }
+
+                if (rerollTokenPending && HasSingleton<SIsNightTime>())
+                {
+                    if (Require(out SRerollCost rerollCost))
+                    {
+                        rerollCost.Cost = 0;
+                        Set(rerollCost);
+                        Logger.LogInfo("[Filler] Reroll Token applied: SRerollCost reset to 0.");
+                    }
+                    rerollTokenPending = false;
+                }
+
                 if (moneyClampPending)
                 {
                     ClampMoneyToCap();
@@ -1693,6 +1807,25 @@ namespace KitchenPlateupAP
                 messFactorDelta -= 0.05f;
                 patienceDirty = true;
                 Logger.LogInfo($"[Filler] Mess Reduction received. MessFactor delta now: {messFactorDelta}");
+                pendingSpawnState.PendingItemIDs.Remove(checkId);
+                return;
+            }
+
+            // Reroll Token (filler) — zero the reroll cost at next prep phase
+            if (checkId == 30)
+            {
+                rerollTokenPending = true;
+                Logger.LogInfo("[Filler] Reroll Token received. Will zero reroll cost at next prep phase.");
+                pendingSpawnState.PendingItemIDs.Remove(checkId);
+                return;
+            }
+
+            // Extra Life — spawn the Extra Life appliance blueprint
+            if (checkId == 31)
+            {
+                Logger.LogInfo("[Item] Extra Life received. Queuing for spawn.");
+                // Reuse the existing spawn queue so it lands in the kitchen at the right time
+                spawnQueue.Enqueue(CreateItemInfoForQueue(10164));
                 pendingSpawnState.PendingItemIDs.Remove(checkId);
                 return;
             }
@@ -2201,6 +2334,7 @@ namespace KitchenPlateupAP
                     id != 22 && id != 23 && id != 24 &&
                     id != 25 && id != 26 && id != 27 &&
                     id != 28 && id != 29 &&
+                    id != 30 && id != 31 &&
                     id != 100 &&
                     !dishUnlockIds.Contains(id)
                 )
@@ -2361,6 +2495,33 @@ namespace KitchenPlateupAP
                     kitchenParamsDirty = true;
                     break;
 
+                case 20007: // Random Dish Extra
+                    Logger.LogWarning("[Trap] Random Dish Extra triggered!");
+                    SpawnRandomDishExtra();
+                    break;
+
+                case 20008: // Random Side Dish
+                    Logger.LogWarning("[Trap] Random Side Dish triggered!");
+                    SpawnRandomSideDish();
+                    break;
+
+                case 20009: // Tip Jar Drain
+                    Logger.LogWarning("[Trap] Tip Jar Drain activated! Removing 30 coins...");
+                    pendingCoinAmount -= 30;
+                    moneyClampPending = true;
+                    break;
+
+                case 20010: // Good Advertisement
+                    Logger.LogWarning("[Trap] Good Advertisement activated! Doubling customers per hour for this run...");
+                    customersPerHourDelta = 1f + 2f * customersPerHourDelta;
+                    kitchenParamsDirty = true;
+                    break;
+
+                case 20011: // Card Swap
+                    Logger.LogWarning("[Trap] Card Swap activated! Queuing card swap for next kitchen OnUpdate tick...");
+                    _pendingCardSwapCount++;
+                    break;
+
                 default:
                     Logger.LogWarning($"[Trap] Unknown trap ID {trapId} received.");
                     break;
@@ -2503,6 +2664,259 @@ namespace KitchenPlateupAP
                     Logger.LogInfo($"[Trap->RandomCard] Persisted card GDO {unlockCardId} to trap card state.");
                 }
             }
+        }
+
+        private void SwapAllCustomerCards()
+        {
+            if (!HasSingleton<SKitchenMarker>())
+            {
+                Logger.LogWarning("[Trap] Card Swap: not in kitchen scene, skipping.");
+                return;
+            }
+
+            // Build the union of ALL known swappable GDO IDs from every card pool
+            var allSwappableGDOs = new HashSet<int>(ProgressionMapping.customerCardDictionary.Values);
+            foreach (var id in ProgressionMapping.allCustomerCards.Values) allSwappableGDOs.Add(id);
+            foreach (var id in ProgressionMapping.easydifficultCardDictionary.Values) allSwappableGDOs.Add(id);
+            foreach (var id in ProgressionMapping.difficultCardDictionary.Values) allSwappableGDOs.Add(id);
+
+            var dishExtraGDOs = new HashSet<int>(ProgressionMapping.allDishExtras.Values);
+            var sideGDOs = new HashSet<int>(ProgressionMapping.allDishSides.Values);
+
+            // --- Collect selected (pending) cards to remove ---
+            var selectedToRemove = new List<Entity>();
+            EntityQuery selectedQuery = GetEntityQuery(
+                ComponentType.ReadOnly<CProgressionOption>(),
+                ComponentType.ReadOnly<CProgressionOption.Selected>());
+
+            using (var entities = selectedQuery.ToEntityArray(Allocator.Temp))
+            {
+                for (int i = 0; i < entities.Length; i++)
+                {
+                    Entity entity = entities[i];
+                    if (!EntityManager.Exists(entity)) continue;
+
+                    int unlockId = EntityManager.GetComponentData<CProgressionOption>(entity).ID;
+
+                    if (KitchenData.GameData.Main.TryGet<Dish>(unlockId, out _)) continue;
+                    if (dishExtraGDOs.Contains(unlockId)) continue;
+                    if (sideGDOs.Contains(unlockId)) continue;
+                    if (!allSwappableGDOs.Contains(unlockId)) continue;
+
+                    selectedToRemove.Add(entity);
+                }
+            }
+
+            // --- Collect applied (unlocked) cards to remove ---
+            var unlockedToRemove = new List<Entity>();
+            EntityQuery unlockQuery = GetEntityQuery(ComponentType.ReadOnly<CProgressionUnlock>());
+
+            using (var entities = unlockQuery.ToEntityArray(Allocator.Temp))
+            {
+                for (int i = 0; i < entities.Length; i++)
+                {
+                    Entity entity = entities[i];
+                    if (!EntityManager.Exists(entity)) continue;
+
+                    int unlockId = EntityManager.GetComponentData<CProgressionUnlock>(entity).ID;
+
+                    if (KitchenData.GameData.Main.TryGet<Dish>(unlockId, out _)) continue;
+                    if (dishExtraGDOs.Contains(unlockId)) continue;
+                    if (sideGDOs.Contains(unlockId)) continue;
+                    if (!allSwappableGDOs.Contains(unlockId)) continue;
+
+                    unlockedToRemove.Add(entity);
+                }
+            }
+
+            int totalToSwap = selectedToRemove.Count + unlockedToRemove.Count;
+            if (totalToSwap == 0)
+            {
+                Logger.LogInfo("[Trap] Card Swap: no swappable customer cards found (checked both selected and applied).");
+                return;
+            }
+
+            // Collect GDOs that are being removed so replacements don't re-pick them
+            var removedGDOs = new HashSet<int>();
+            foreach (var e in selectedToRemove)
+                removedGDOs.Add(EntityManager.GetComponentData<CProgressionOption>(e).ID);
+            foreach (var e in unlockedToRemove)
+                removedGDOs.Add(EntityManager.GetComponentData<CProgressionUnlock>(e).ID);
+
+            // Collect GDOs permanently applied that are NOT being removed (can't replace with these)
+            var permanentlyApplied = new HashSet<int>();
+            using (var entities = unlockQuery.ToEntityArray(Allocator.Temp))
+            {
+                for (int i = 0; i < entities.Length; i++)
+                {
+                    if (!EntityManager.Exists(entities[i])) continue;
+                    int id = EntityManager.GetComponentData<CProgressionUnlock>(entities[i]).ID;
+                    if (!removedGDOs.Contains(id))
+                        permanentlyApplied.Add(id);
+                }
+            }
+
+            // Destroy selected cards
+            foreach (Entity entity in selectedToRemove)
+            {
+                if (EntityManager.Exists(entity))
+                    EntityManager.DestroyEntity(entity);
+            }
+
+            // Destroy applied unlock cards
+            foreach (Entity entity in unlockedToRemove)
+            {
+                if (EntityManager.Exists(entity))
+                    EntityManager.DestroyEntity(entity);
+            }
+
+            // Build replacement pool: any known customer card not permanently retained
+            var available = new List<int>();
+            foreach (int id in allSwappableGDOs)
+            {
+                if (!permanentlyApplied.Contains(id))
+                    available.Add(id);
+            }
+
+            Logger.LogInfo($"[Trap] Card Swap: removing {totalToSwap} card(s) ({selectedToRemove.Count} selected, {unlockedToRemove.Count} applied), {available.Count} replacement(s) available.");
+
+            for (int i = 0; i < totalToSwap; i++)
+            {
+                if (available.Count == 0)
+                {
+                    Logger.LogWarning("[Trap] Card Swap: ran out of replacement cards.");
+                    break;
+                }
+
+                int idx = UnityEngine.Random.Range(0, available.Count);
+                int chosenId = available[idx];
+                available.RemoveAt(idx);
+
+                Entity e = EntityManager.CreateEntity();
+                EntityManager.AddComponentData(e, new CProgressionOption { ID = chosenId, FromFranchise = false });
+                EntityManager.AddComponent<CProgressionOption.Selected>(e);
+
+                Logger.LogInfo($"[Trap] Card Swap: spawned replacement unlockID={chosenId}.");
+            }
+        }
+
+        private void SpawnRandomDishExtra()
+        {
+            if (!HasSingleton<SKitchenMarker>())
+            {
+                Logger.LogWarning("[Trap] Tried to spawn a random dish extra, but we're not in the kitchen scene!");
+                return;
+            }
+
+            // Resolve valid extra keys for the current dish
+            if (!ProgressionMapping.dishExtraKeysByDish.TryGetValue(DishId, out List<int> validKeys) || validKeys.Count == 0)
+            {
+                Logger.LogWarning($"[Trap] No dish extras defined for current dish GDO={DishId}. Skipping.");
+                return;
+            }
+
+            // Collect already-active unlock IDs
+            var activeIds = new HashSet<int>();
+
+            EntityQuery selectedQuery = GetEntityQuery(
+                ComponentType.ReadOnly<CProgressionOption>(),
+                ComponentType.ReadOnly<CProgressionOption.Selected>());
+            using (var entities = selectedQuery.ToEntityArray(Allocator.Temp))
+            {
+                for (int i = 0; i < entities.Length; i++)
+                {
+                    if (!EntityManager.Exists(entities[i])) continue;
+                    activeIds.Add(EntityManager.GetComponentData<CProgressionOption>(entities[i]).ID);
+                }
+            }
+
+            EntityQuery unlockQuery = GetEntityQuery(ComponentType.ReadOnly<CProgressionUnlock>());
+            using (var entities = unlockQuery.ToEntityArray(Allocator.Temp))
+            {
+                for (int i = 0; i < entities.Length; i++)
+                {
+                    if (!EntityManager.Exists(entities[i])) continue;
+                    activeIds.Add(EntityManager.GetComponentData<CProgressionUnlock>(entities[i]).ID);
+                }
+            }
+
+            // Filter to valid keys whose unlock ID is not already active
+            var available = new List<int>();
+            foreach (int key in validKeys)
+            {
+                if (ProgressionMapping.allDishExtras.TryGetValue(key, out int unlockId) && !activeIds.Contains(unlockId))
+                    available.Add(unlockId);
+            }
+
+            if (available.Count == 0)
+            {
+                Logger.LogWarning($"[Trap] All dish extras for current dish (GDO={DishId}) are already active. Skipping.");
+                return;
+            }
+
+            int chosen = available[UnityEngine.Random.Range(0, available.Count)];
+
+            Entity e = EntityManager.CreateEntity();
+            EntityManager.AddComponentData(e, new CProgressionOption { ID = chosen, FromFranchise = false });
+            EntityManager.AddComponent<CProgressionOption.Selected>(e);
+
+            Logger.LogInfo($"[Trap->DishExtra] Spawned dish extra unlockID={chosen} for dish GDO={DishId}.");
+        }
+
+        private void SpawnRandomSideDish()
+        {
+            if (!HasSingleton<SKitchenMarker>())
+            {
+                Logger.LogWarning("[Trap] Tried to spawn a random side dish, but we're not in the kitchen scene!");
+                return;
+            }
+
+            // Collect already-active unlock IDs
+            var activeIds = new HashSet<int>();
+
+            EntityQuery selectedQuery = GetEntityQuery(
+                ComponentType.ReadOnly<CProgressionOption>(),
+                ComponentType.ReadOnly<CProgressionOption.Selected>());
+            using (var entities = selectedQuery.ToEntityArray(Allocator.Temp))
+            {
+                for (int i = 0; i < entities.Length; i++)
+                {
+                    if (!EntityManager.Exists(entities[i])) continue;
+                    activeIds.Add(EntityManager.GetComponentData<CProgressionOption>(entities[i]).ID);
+                }
+            }
+
+            EntityQuery unlockQuery = GetEntityQuery(ComponentType.ReadOnly<CProgressionUnlock>());
+            using (var entities = unlockQuery.ToEntityArray(Allocator.Temp))
+            {
+                for (int i = 0; i < entities.Length; i++)
+                {
+                    if (!EntityManager.Exists(entities[i])) continue;
+                    activeIds.Add(EntityManager.GetComponentData<CProgressionUnlock>(entities[i]).ID);
+                }
+            }
+
+            // Filter sides not already active
+            var available = new List<int>();
+            foreach (var kv in ProgressionMapping.allDishSides)
+            {
+                if (!activeIds.Contains(kv.Value))
+                    available.Add(kv.Value);
+            }
+
+            if (available.Count == 0)
+            {
+                Logger.LogWarning("[Trap] All side dishes are already active. Skipping.");
+                return;
+            }
+
+            int chosen = available[UnityEngine.Random.Range(0, available.Count)];
+
+            Entity e = EntityManager.CreateEntity();
+            EntityManager.AddComponentData(e, new CProgressionOption { ID = chosen, FromFranchise = false });
+            EntityManager.AddComponent<CProgressionOption.Selected>(e);
+
+            Logger.LogInfo($"[Trap->SideDish] Spawned random side dish unlockID={chosen}.");
         }
         private void UpdateDayCycle()
         {
@@ -3265,10 +3679,14 @@ namespace KitchenPlateupAP
                 ResetDishDayCounter(DishId);
 
             if (persist)
+            {
                 PersistUnlockedDish(DishId);
-
-            LockedDishes.AddUnlockedDishes(new[] { DishId });
-            LockedDishes.EnableLocking();
+                // Only widen the unlock set when this is an explicit AP dish unlock
+                // (persist=true). Tracking-only calls (persist=false) must not broaden
+                // the allowed dish set or they will overwrite the AP baseline on reload.
+                LockedDishes.AddUnlockedDishes(new[] { DishId });
+                LockedDishes.EnableLocking();
+            }
 
             Logger.LogInfo($"[Dish] Current dish set to '{GetDishName(DishId)}' (GDO {DishId}).");
         }
@@ -3395,6 +3813,19 @@ namespace KitchenPlateupAP
 
             if (foundDish == 0)
                 return;
+
+            // Only adopt dishes that are in the AP selected dishes list to avoid
+            // the vanilla HQ grant (e.g. Pizza) overwriting the AP baseline dish.
+            if (selectedDishes.Count > 0)
+            {
+                string foundName = GetDishName(foundDish);
+                bool isApDish = selectedDishes.Any(d => string.Equals(d, foundName, StringComparison.OrdinalIgnoreCase));
+                if (!isApDish)
+                {
+                    lastCardSyncDishId = foundDish; // suppress repeat logs
+                    return;
+                }
+            }
 
             // Only log/adopt when the active card dish differs from current and from the last synced card dish.
             if (foundDish != DishId && foundDish != lastCardSyncDishId)

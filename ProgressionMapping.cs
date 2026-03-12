@@ -1,4 +1,5 @@
 using KitchenData;
+using KitchenData.Workshop;
 using KitchenLib.References;
 using Newtonsoft.Json;
 using System;
@@ -421,6 +422,100 @@ namespace KitchenPlateupAP
             { 8, UnlockCardReferences.HiddenPatience },
         };
 
+        public static readonly Dictionary<string, int> allCustomerCards = new Dictionary<string, int>()
+        {
+            { "Individual dining", UnlockCardReferences.IndividualDining },
+            { "Medium Groups", UnlockCardReferences.MediumGroups },
+            { "Large Groups", UnlockCardReferences.LargeGroups },
+            { "Flexible Dining", UnlockCardReferences.FlexibleDining },
+            { "Morning Rush", UnlockCardReferences.MorningRush },
+            { "Lunch Rush", UnlockCardReferences.LunchRush },
+            { "Dinner Rush", UnlockCardReferences.DinnerRush },
+            { "Herd Mentality", UnlockCardReferences.CustomerBursts },
+            { "Advertising", UnlockCardReferences.MoreCustomers },
+            { "Advertising 2", UnlockCardReferences.MoreCustomers2 },
+            { "All You Can Eat", UnlockCardReferences.AllYouCanEat },
+            { "Double Helpings", UnlockCardReferences.AllYouCanEatIncrease },
+            { "Blindfolded Chefs", UnlockCardReferences.HiddenProcesses },
+            { "Closing Time?", UnlockCardReferences.ClosingTime },
+            { "Discounts", UnlockCardReferences.LessMoney },
+            { "Empathy", UnlockCardReferences.HiddenPatience },
+            { "Health and Safety", UnlockCardReferences.MessesSlowCustomers },
+            { "High Expectations", UnlockCardReferences.PatienceDecrease },
+            { "High Quality", UnlockCardReferences.SlowProcesses },
+            { "High Standards", UnlockCardReferences.QuickerBurning },
+            { "Instant Service", UnlockCardReferences.InstantOrders },
+            { "Leisurely Eating", UnlockCardReferences.CustomersEatSlowly },
+            { "Personalized Waiting", UnlockCardReferences.ChangeOrdersAfterOrdering },
+            { "Picky eaters", UnlockCardReferences.HiddenOrders },
+            { "Relaxed Atmosphere", UnlockCardReferences.MessyCustomers },
+            { "Sedate Atmosphere", UnlockCardReferences.CustomersRequireWalking },
+            { "Simplicity", UnlockCardReferences.OneUpgradePerDay },
+            { "Splash Zone", UnlockCardReferences.MessRangeIncrease },
+            { "Victorian Standards", UnlockCardReferences.LosePatienceInView },
+        };
+
+
+        public static readonly Dictionary<int, int> allDishExtras = new Dictionary<int, int>()
+        {
+            { 1, DishReferences.SteakSauceMushroomSauce },
+            { 2, DishReferences.SteakSauceRedWineJus },
+            { 3, DishReferences.SteakToppingMushroom },
+            { 4, DishReferences.SteakToppingTomato },
+            { 5, DishReferences.TurkeyCranberrySauce },
+            { 6, DishReferences.TurkeyGravy },
+            { 7, DishReferences.TurkeyStuffing },
+            { 8, DishReferences.DumplingSoySauce },
+            { 9, DishReferences.DumplingsSeaweed },
+            { 10, DishReferences.SaladToppings },
+            { 11, DishReferences.PizzaMushroom },
+            { 12, DishReferences.PizzaOnion },
+            { 13, DishReferences.BurgerTomatoandOnion },
+            { 14, DishReferences.BurgerCheese },
+            { 15, DishReferences.BurgerFreshPatties },
+            { 16, DishReferences.FishExtraChoice },
+            { 17, DishReferences.FishExtraChoice2 },
+            { 18, DishReferences.HotdogCondimentMustard },
+            { 19, DishReferences.BreakfastBeans },
+            { 20, DishReferences.BreakfastExtras },
+            { 21, DishReferences.BreakfastVeganExtras },
+            { 22, DishReferences.StirFrySoySauce },
+            { 23, -1795285445 }, // Giant Sandwiches
+            { 24, -72176411 }, // Toast Sandwiches
+            { 25, -469304690 }, // Sandwich - Cheese
+            { 26, 525935646 }, // Sandwich - Eggs
+            { 27, -778719372 }, // Sandwich - Mayo
+            { 28, 368792675 }, // Sandwich - Toppers
+            { 29, 641008296 }, // Club Sandwiches
+            { 30, 1879652468 }, // Sundae Toppings
+            { 31, -690833761 }, // Giant Sundaes
+            {32, 431260200 }, // Sundae Syrups
+        };
+
+        public static readonly Dictionary<int, int> allDishSides = new Dictionary<int, int>()
+        {
+            { 1, DishReferences.BroccoliCheeseSoup },
+            { 2, DishReferences.CarrotSoup },
+            { 3, DishReferences.MeatSoup },
+            { 4, DishReferences.PumpkinSoup },
+            { 5, DishReferences.TomatoSoup },
+            { 6, DishReferences.BreadStarter },
+            { 7, DishReferences.Mandarin },
+            { 8, DishReferences.PumpkinSeed },
+            { 9, DishReferences.Bamboo },
+            { 10, DishReferences.Broccoli },
+            { 11, DishReferences.Chips },
+            { 12, DishReferences.CornOnCob },
+            { 13, DishReferences.MashedPotato },
+            { 14, DishReferences.OnionRings },
+            { 15, DishReferences.RoastPotato },
+            { 16, DishReferences.PieApple },
+            { 17, DishReferences.PiePumpkin },
+            { 18, DishReferences.CherryPie },
+            { 19, DishReferences.CheeseBoard },
+            { 20, DishReferences.IceCream },
+        };
+
         public static readonly Dictionary<int, string> trapDictionary = new Dictionary<int, string>()
         {
             { 20000, "EVERYTHING IS ON FIRE" },
@@ -429,7 +524,29 @@ namespace KitchenPlateupAP
             { 20003, "Patience Decrease" },
             { 20004, "More Customers" },
             { 20005, "Minimum Group Size Increase" },
-            { 20006, "Maximum Group Size Increase" }
+            { 20006, "Maximum Group Size Increase" },
+            { 20007, "Random Dish Extra" },
+            { 20008, "Random Side Dish" },
+            { 20009, "Tip Jar Drain" },
+            { 20010, "Good Advertisement" },
+            { 20011, "Card Swap" },
+        };
+
+        // Maps a dish GDO ID to the allDishExtras keys that are valid for that dish.
+        public static readonly Dictionary<int, List<int>> dishExtraKeysByDish = new Dictionary<int, List<int>>()
+        {
+            { DishReferences.SteakBase,         new List<int> { 1, 2, 3, 4 } },
+            { DishReferences.TurkeyBase,        new List<int> { 5, 6, 7 } },
+            { DishReferences.Dumplings,         new List<int> { 8, 9 } },
+            { DishReferences.SaladBase,         new List<int> { 10 } },
+            { DishReferences.PizzaBase,         new List<int> { 11, 12 } },
+            { DishReferences.BurgerBase,        new List<int> { 13, 14, 15 } },
+            { DishReferences.FishBase,          new List<int> { 16, 17 } },
+            { DishReferences.HotdogBase,        new List<int> { 18 } },
+            { DishReferences.BreakfastBase,     new List<int> { 19, 20, 21 } },
+            { DishReferences.StirFryBase,       new List<int> { 22 } },
+            { -1272159363,                      new List<int> { 23, 24, 25, 26, 27, 28, 29 } }, // Sandwiches
+            { 934171642,                        new List<int> { 30, 31, 32 } },                 // Sundaes
         };
 
         public static readonly Dictionary<int, string> dishDictionary = new Dictionary<int, string>()

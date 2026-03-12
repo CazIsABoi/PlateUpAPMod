@@ -16,6 +16,9 @@ namespace KitchenPlateupAP
         private static int _removeCardCount = 0;
         private static int _seed = 0;
 
+        // Extra always-on cards from slot_data extra_starting_cards
+        private static readonly List<int> _extraStartingCards = new List<int>();
+
         // Queue of card GDO IDs that were removed mid-run and need entity cleanup
         private static readonly Queue<int> _pendingRemovals = new Queue<int>();
 
@@ -31,6 +34,21 @@ namespace KitchenPlateupAP
             _pendingRemovals.Clear();
 
             Mod.Logger?.LogInfo($"[StartingCardManager] Initialised: mode={mode}, amount={amount}, seed={seed}");
+        }
+
+        /// <summary>
+        /// Sets the extra always-on cards sourced from slot_data extra_starting_cards.
+        /// Call after Initialise, once the slot_data list has been resolved to GDO IDs.
+        /// </summary>
+        public static void SetExtraStartingCards(IEnumerable<int> unlockCardGDOs)
+        {
+            _extraStartingCards.Clear();
+            foreach (int id in unlockCardGDOs)
+            {
+                if (id != 0 && !_extraStartingCards.Contains(id))
+                    _extraStartingCards.Add(id);
+            }
+            Mod.Logger?.LogInfo($"[StartingCardManager] Extra starting cards set: [{string.Join(", ", _extraStartingCards)}]");
         }
 
         /// <summary>
@@ -86,10 +104,20 @@ namespace KitchenPlateupAP
         /// <summary>
         /// Returns the GDO IDs of the cards that should be active this run.
         /// Fully deterministic — safe to call multiple times, across runs/reconnects.
+        /// Includes extra always-on cards from slot_data extra_starting_cards.
         /// </summary>
         public static List<int> GetActiveStartingCards()
         {
-            return ComputeActiveCards(_removeCardCount);
+            var cards = ComputeActiveCards(_removeCardCount);
+
+            // Append extra always-on cards (deduped), they are not subject to removal
+            foreach (int id in _extraStartingCards)
+            {
+                if (!cards.Contains(id))
+                    cards.Add(id);
+            }
+
+            return cards;
         }
 
         /// <summary>
@@ -100,10 +128,11 @@ namespace KitchenPlateupAP
         /// <summary>
         /// Whether the feature is active at all.
         /// </summary>
-        public static bool IsEnabled => _startingCardsMode != 0 && _startingCardsAmount > 0;
+        public static bool IsEnabled => (_startingCardsMode != 0 && _startingCardsAmount > 0) || _extraStartingCards.Count > 0;
 
         /// <summary>
         /// Computes the active card list for a given number of removals.
+        /// Does NOT include extra starting cards — call GetActiveStartingCards() for the full list.
         /// </summary>
         private static List<int> ComputeActiveCards(int removeCount)
         {
@@ -169,6 +198,8 @@ namespace KitchenPlateupAP
                 if (kv.Value == gdoId) return $"Easy#{kv.Key}";
             foreach (var kv in ProgressionMapping.difficultCardDictionary)
                 if (kv.Value == gdoId) return $"Hard#{kv.Key}";
+            foreach (var kv in ProgressionMapping.allCustomerCards)
+                if (kv.Value == gdoId) return $"Extra#{kv.Key}";
             return gdoId.ToString();
         }
     }

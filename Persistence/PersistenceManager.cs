@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using Newtonsoft.Json;
@@ -48,6 +48,13 @@ namespace KitchenPlateupAP
         public string Player;
 
         public override string ToString() => $"{Address}_{Port}_{Player}";
+    }
+
+    /// <summary>Persists blueprint-check progress so reconnects pick up where the player left off.</summary>
+    [Serializable]
+    public class BlueprintCheckState
+    {
+        public int NextCheckIndex;
     }
 
     internal static class PersistenceManager
@@ -243,14 +250,50 @@ namespace KitchenPlateupAP
                 var pending = PendingFile(id);
                 var trapCards = TrapCardFile(id);
                 var dishDays = DishDayFile(id);
+                var blueprintChecks = BlueprintCheckFile(id);
                 if (File.Exists(speed)) File.Delete(speed);
                 if (File.Exists(pending)) File.Delete(pending);
                 if (File.Exists(trapCards)) File.Delete(trapCards);
                 if (File.Exists(dishDays)) File.Delete(dishDays);
+                if (File.Exists(blueprintChecks)) File.Delete(blueprintChecks);
             }
             catch (Exception ex)
             {
                 Debug.LogError("[PlateupAP][Persistence] Reset failed: " + ex.Message);
+            }
+        }
+
+        // ── Blueprint Check State ────────────────────────────────────────────
+        private static string BlueprintCheckFile(RunIdentity id) =>
+            Path.Combine(RootPath, $"blueprintchecks_{Sanitize(id.Address)}_{id.Port}_{Sanitize(id.Player)}.json");
+
+        public static BlueprintCheckState LoadBlueprintCheckState(RunIdentity id)
+        {
+            EnsureDirectory();
+            var path = BlueprintCheckFile(id);
+            if (!File.Exists(path))
+                return null;
+            try
+            {
+                return JsonConvert.DeserializeObject<BlueprintCheckState>(File.ReadAllText(path));
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError("[PlateupAP][Persistence] Failed reading blueprint check state: " + ex.Message);
+                return null;
+            }
+        }
+
+        public static void SaveBlueprintCheckState(RunIdentity id, BlueprintCheckState state)
+        {
+            EnsureDirectory();
+            try
+            {
+                File.WriteAllText(BlueprintCheckFile(id), JsonConvert.SerializeObject(state, Formatting.Indented));
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError("[PlateupAP][Persistence] Failed saving blueprint check state: " + ex.Message);
             }
         }
     }

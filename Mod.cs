@@ -15,6 +15,7 @@ using KitchenMods;
 using KitchenPlateupAP.Spawning;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using PlateupAP.APPedestalChecks;
 using PreferenceSystem;
 using PreferenceSystem.Event;
 using PreferenceSystem.Menus;
@@ -47,7 +48,7 @@ namespace KitchenPlateupAP
     {
         public const string MOD_GUID = "com.caz.plateupap";
         public const string MOD_NAME = "PlateupAP";
-        public const string MOD_VERSION = "0.2.5.9";
+        public const string MOD_VERSION = "0.2.6.0";
         public const string MOD_AUTHOR = "Caz";
         public const string MOD_GAMEVERSION = ">=1.1.9";
         public static int TOTAL_SCENES_LOADED = 0;
@@ -63,6 +64,7 @@ namespace KitchenPlateupAP
         private EntityQuery progressionUnlockQuery;
         private EntityQuery settingQuery;
         private static RunIdentity currentIdentity;
+        public static RunIdentity CurrentIdentity => currentIdentity;
         private static PendingSpawnState pendingSpawnState = new PendingSpawnState();
         private static bool persistenceLoaded = false;
 
@@ -829,6 +831,21 @@ namespace KitchenPlateupAP
                 {
                     globalPatienceStartingDebuff = -50;
                 }
+
+                // ── Blueprint Check Pedestals ────────────────────────────────
+                int blueprintBasePrice = 10;
+                if (slotData.TryGetValue("blueprint_base_price", out object rawBlueprintBasePrice))
+                    int.TryParse(rawBlueprintBasePrice.ToString(), out blueprintBasePrice);
+
+                int blueprintPriceIncrease = 10;
+                if (slotData.TryGetValue("blueprint_price_increase", out object rawBlueprintPriceIncrease))
+                    int.TryParse(rawBlueprintPriceIncrease.ToString(), out blueprintPriceIncrease);
+
+                slotData.TryGetValue("blueprint_check_ids", out object rawBlueprintCheckIds);
+                BlueprintCheckManager.Configure(rawBlueprintCheckIds, blueprintBasePrice, blueprintPriceIncrease);
+                BlueprintCheckManager.LoadState(PersistenceManager.LoadBlueprintCheckState(currentIdentity));
+                BlueprintCheckManager.ScoutAllLocations();
+                Logger.LogInfo($"[BlueprintChecks] Enabled={BlueprintCheckManager.IsEnabled}, Count={BlueprintCheckManager.CheckIds.Count}");
             }
 
             if (selectedDishes.Count == 0)
@@ -852,8 +869,28 @@ namespace KitchenPlateupAP
 
         static PreferenceSystemManager PrefManager;
 
+        private static string _modDirectory = null;
+
         protected override void OnPostActivate(KitchenMods.Mod mod)
         {
+            // Load the asset bundle via KitchenLib's pack system.
+            try
+            {
+                Bundle = mod.GetPacks<AssetBundleModPack>()
+                            .SelectMany(e => e.AssetBundles)
+                            .FirstOrDefault();
+
+                if (Bundle == null)
+                    Logger.LogWarning("[PlateupAP] Asset bundle not found. Ensure mod.assets is included as an AssetBundleModPack.");
+                else
+                    Logger.LogInfo("[PlateupAP] Asset bundle loaded successfully.");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"[PlateupAP] Exception loading asset bundle: {ex.Message}");
+            }
+
+            AddGameDataObject<ArchipelagoBlueprint>();
             try
             {
                 if (World == null)
@@ -1092,7 +1129,6 @@ namespace KitchenPlateupAP
             ChatManager.AddSystemMessage("PlateUp Archipelago loaded.");
         }
 
-        // Call EnsureCustomAppliancesFileExists in startup paths
         protected override void OnInitialise()
         {
             Logger = InitLogger();
@@ -1118,6 +1154,7 @@ namespace KitchenPlateupAP
                 TryWarmupConfig();
             }
         }
+
 
         public void OnSuccessfulConnect()
         {
@@ -1661,16 +1698,34 @@ namespace KitchenPlateupAP
             if (session == null || session.Items == null)
                 return;
 
+            // Record how many items have already been received so OnItemReceived
+            // can skip replayed history items (prevents double-applying coins, etc.)
+            _processedItemCount = session.Items.AllItemsReceived.Count;
+
             session.Items.ItemReceived += OnItemReceived;
             itemsEventSubscribed = true;
-            Logger.LogInfo("Subscribed to session.Items.ItemReceived (early).");
+            Logger.LogInfo($"Subscribed to session.Items.ItemReceived (early). Skipping first {_processedItemCount} replayed items.");
         }
 
         private static List<int> receivedItemPool = new List<int>();
+        private static int _processedItemCount = 0;
+        private static int _receivedItemCounter = 0;
 
         private void OnItemReceived(IReceivedItemsHelper helper)
         {
             ItemInfo info = helper.DequeueItem();
+
+            // The AP client replays the entire item history on connect.
+            // Skip items that were already in AllItemsReceived at subscription time
+            // to avoid re-applying one-shot effects (coins, traps, etc.).
+            _receivedItemCounter++;
+            if (_receivedItemCounter <= _processedItemCount)
+            {
+                long skippedId = info.ItemId;
+                Logger.LogInfo($"[OnItemReceived] Skipping replayed item #{_receivedItemCounter} (ID {skippedId}).");
+                return;
+            }
+
             long itemIdLong = info.ItemId;
             int checkId = (int)itemIdLong;
             long locationId = info.LocationId;
@@ -2937,33 +2992,41 @@ namespace KitchenPlateupAP
                 Logger.LogInfo("First day cycle completed; day cycle updates are now armed.");
             }
 
-            // During prep: spawn queued items, then clamp only AFTER the first prep update has passed
-            if (firstCycleCompleted && isPrepTime && !isPrepFirstUpdate)
+            // During prep: spawn queued items and pedestal.
+            // Blueprint pedestal spawns on the FIRST prep of the run (no firstCycleCompleted guard).
+            // All other spawns remain gated behind firstCycleCompleted as before.
+            if (isPrepTime && !isPrepFirstUpdate)
             {
-                while (spawnQueue.Count > 0)
+                // Spawn the next blueprint-check pedestal (one visible at a time, any prep)
+                if (BlueprintCheckManager.IsEnabled
+                    && !BlueprintCheckManager.AllChecksComplete
+                    && !BlueprintCheckManager.PedestalsSpawnedThisPrep)
                 {
-                    ItemInfo queued = spawnQueue.Dequeue();
-                    Logger.LogInfo($"[Prep Phase] Spawning queued item ID: {queued.ItemId}");
-                    ProcessSpawn(queued);
+                    SpawnBlueprintCheckPedestal();
+                    // PedestalsSpawnedThisPrep is now set inside SpawnBlueprintCheckPedestal
+                    // only on a successful spawn, so deferred retries work correctly.
                 }
-
-                // Spawn extra blueprints from Shop Size Increase items
-                if (ExtraBlueprintCount > 0 && !itemsSpawnedThisRun)
+                if (firstCycleCompleted)
                 {
-                    SpawnExtraBlueprints();
-                }
+                    while (spawnQueue.Count > 0)
+                    {
+                        ItemInfo queued = spawnQueue.Dequeue();
+                        Logger.LogInfo($"[Prep Phase] Spawning queued item ID: {queued.ItemId}");
+                        ProcessSpawn(queued);
+                    }
 
-                // Spawn extra blueprints from Shop Size Increase items
-                if (ExtraBlueprintCount > 0 && !itemsSpawnedThisRun)
-                {
-                    SpawnExtraBlueprints();
-                }
+                    // Spawn extra blueprints from Shop Size Increase items
+                    if (ExtraBlueprintCount > 0 && !itemsSpawnedThisRun)
+                    {
+                        SpawnExtraBlueprints();
+                    }
 
-                // instant mode: clamp once at prep start (existing behaviour)
-                if (moneyCapActivation == 0 && !moneyClampedThisPrep)
-                {
-                    ClampMoneyToCap();
-                    moneyClampedThisPrep = true;
+                    // instant mode: clamp once at prep start (existing behaviour)
+                    if (moneyCapActivation == 0 && !moneyClampedThisPrep)
+                    {
+                        ClampMoneyToCap();
+                        moneyClampedThisPrep = true;
+                    }
                 }
             }
 
@@ -3215,6 +3278,23 @@ namespace KitchenPlateupAP
                 Logger.LogInfo($"[SettingCheck] Sent setting check: '{displayName} - Day {lastDay}' (locId={locId})");
             }
         }
+        private void SpawnBlueprintCheckPedestal()
+        {
+            if (!DoorPositionSystem.HasDoor)
+            {
+                Logger.LogWarning("[BlueprintChecks] Door position not yet available; deferring pedestal spawn.");
+                return;
+            }
+
+            var pedestalSystem = World.GetExistingSystem<APCheckPedestalSystem>();
+            if (pedestalSystem == null)
+            {
+                Logger.LogWarning("[BlueprintChecks] APCheckPedestalSystem not found.");
+                return;
+            }
+
+            pedestalSystem.SpawnAllPedestals();
+        }
 
         public void IncreaseApplianceSpeedTier()
         {
@@ -3355,6 +3435,7 @@ namespace KitchenPlateupAP
             dayTransitionProcessed = false;
             itemsSpawnedThisRun = false;
             moneyClampedThisPrep = false;
+            BlueprintCheckManager.PedestalsSpawnedThisPrep = false;
             dayID = ComputeRunBaseOffset(timesFranchised);
             startingNameApplied = false;
             _sentAchievementChecks.Clear();
@@ -3694,6 +3775,8 @@ namespace KitchenPlateupAP
         private static void ResetItemsSubscription()
         {
             itemsEventSubscribed = false;
+            _processedItemCount = 0;
+            _receivedItemCounter = 0;
         }
         private int FindHeldDishId()
         {

@@ -104,6 +104,7 @@ namespace KitchenPlateupAP
         private static bool dayLeasesEnabled = true;   // day_leases_enabled (default: on)
         private static int dayLeaseMode = 0;            // 0 = global, 1 = dish_specific
         private static int dishLeaseScope = 0;          // 0 = all_dishes, 1 = goal_count_only (only when goal == 2)
+        private static int overtimeDays = 0;            // overtime_days: days > 15 that overtime leases cover (0 = none)
         private static int freeStarterDishCount = 1;   // free_starter_dishes (default: 1)
         private static List<string> startingDishes = new List<string>(); // free baseline dishes
         public static bool MoneyCapEnabled = true;
@@ -617,6 +618,16 @@ namespace KitchenPlateupAP
                 else
                 {
                     dishLeaseScope = 0;
+                }
+
+                if (slotData.TryGetValue("overtime_days", out object rawOvertimeDays))
+                {
+                    overtimeDays = Mathf.Max(0, Convert.ToInt32(rawOvertimeDays));
+                    Logger.LogInfo($"[PlateupAP] Overtime Days: {overtimeDays}");
+                }
+                else
+                {
+                    overtimeDays = 0;
                 }
 
                 if (slotData.TryGetValue("goal", out object rawGoal))
@@ -1755,6 +1766,23 @@ namespace KitchenPlateupAP
             if (checkId == 15)
             {
                 Logger.LogInfo("[OnItemReceived] Received Day Lease");
+                KitchenPlateupAP.LeaseRequirementSystem.TriggerRefresh();
+                pendingSpawnState.PendingItemIDs.Remove(checkId);
+                return;
+            }
+
+            if (checkId == 32000)
+            {
+                Logger.LogInfo("[OnItemReceived] Received Overtime Day Lease");
+                KitchenPlateupAP.LeaseRequirementSystem.TriggerRefresh();
+                pendingSpawnState.PendingItemIDs.Remove(checkId);
+                return;
+            }
+
+            // Dish-specific Day Lease: "<DishName> Day Lease"
+            if (dayLeaseMode == 1 && !string.IsNullOrWhiteSpace(itemName) && itemName.EndsWith(" Day Lease", System.StringComparison.OrdinalIgnoreCase))
+            {
+                Logger.LogInfo($"[OnItemReceived] Received dish-specific Day Lease: '{itemName}'");
                 KitchenPlateupAP.LeaseRequirementSystem.TriggerRefresh();
                 pendingSpawnState.PendingItemIDs.Remove(checkId);
                 return;
@@ -3792,6 +3820,7 @@ namespace KitchenPlateupAP
         internal static bool DayLeasesEnabled => dayLeasesEnabled;
         internal static int DayLeaseMode => dayLeaseMode;
         internal static int DishLeaseScope => dishLeaseScope;
+        internal static int OvertimeDays => overtimeDays;
         internal static IReadOnlyList<string> SelectedDishes => selectedDishes;
         internal static int DishGoalCount => dishGoalCount;
 

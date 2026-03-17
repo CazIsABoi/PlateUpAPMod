@@ -40,27 +40,10 @@ namespace KitchenPlateupAP
             if (!HasSingleton<SKitchenMarker>() || !HasSingleton<SIsNightTime>())
                 return;
 
-            // Day leases feature is disabled: ensure gate is never active and clear status
+            // Feature disabled — clear gate and return
             if (!Mod.DayLeasesEnabled)
             {
-                if (HasSingleton<SStartDayWarnings>())
-                {
-                    var warnings = GetSingleton<SStartDayWarnings>();
-                    warnings.SellingRequiredAppliance = WarningLevel.Safe;
-                    SetSingleton(warnings);
-                }
-
-                LastStatus = new CachedLeaseInfo
-                {
-                    IsValid = true,
-                    IsPrepPhase = true,
-                    CurrentDay = HasSingleton<SDay>() ? GetSingleton<SDay>().Day : 0,
-                    Owned = 0,
-                    Required = 0,
-                    IsGateActive = false,
-                    DaysUntilNext = 0
-                };
-
+                ClearGate(HasSingleton<SDay>() ? GetSingleton<SDay>().Day : 0);
                 forceRefresh = false;
                 return;
             }
@@ -72,11 +55,7 @@ namespace KitchenPlateupAP
             int goal = Mod.Goal;
             int interval = Math.Max(1, Math.Min(30, Mod.DayLeaseInterval));
             int leaseMode = Mod.DayLeaseMode;    // 0 = global, 1 = dish_specific
-            int leaseScope = Mod.DishLeaseScope;  // 0 = all_dishes, 1 = goal_count_only
-
-            // For goals 1 & 2 use the high-water mark (highest SDay ever completed).
-            // This means losing runs early never inflate the lease requirement, and
-            // replaying an early day after a loss never gates the player unnecessarily.
+            int overtimeDays = Mod.OvertimeDays;    // days > 15 covered by overtime leases (0 = none)
             int highestDay = (goal == 1 || goal == 2) ? Mod.HighestOverallDayReached : 0;
             int timesFranchised = Mod.Instance?.TimesFranchised ?? 1;
 
@@ -86,48 +65,56 @@ namespace KitchenPlateupAP
             int leaseCount;
             int requiredLeases;
 
-            if (leaseMode == 0)
+            // ── Branch: goal 2 + dish_specific — never gated ─────────────────
+            if (leaseMode == 1 && goal == 2)
             {
-                // ── Global mode: single "Day Lease" item (ID 15) ──────────────────────
+                gateActive = false;
+                leaseCount = 0;
+                requiredLeases = 0;
+            }
+            // ── Branch: global mode — "Day Lease" (ID 15) gates all days ─────
+            else if (leaseMode == 0)
+            {
                 leaseCount = allItems.Count(item => (int)item.ItemId == 15);
                 requiredLeases = ComputeRequiredLeases(goal, currentDay, highestDay, timesFranchised, interval);
                 gateActive = requiredLeases > 0 && leaseCount < requiredLeases;
             }
+            // ── Branch: dish_specific, goals 0/1 ─────────────────────────────
             else
             {
-                // ── Dish-specific mode: "<DishName> Day Lease" per dish ───────────────
-                IReadOnlyList<string> allSelected = Mod.SelectedDishes;
-                IEnumerable<string> gatedDishes = (goal == 2 && leaseScope == 1)
-                    ? allSelected.Take(Mod.DishGoalCount)
-                    : (IEnumerable<string>)allSelected;
-
-                string currentDishName = Mod.Instance?.GetDishName(Mod.Instance.ActiveDishId);
-
-                if (string.IsNullOrWhiteSpace(currentDishName) || currentDishName == "Unknown")
+                if (currentDay <= 15)
                 {
-                    // Can't identify the active dish — don't gate
+                    // Per-dish lease IDs from ProgressionMapping.dishLeaseItemIds
                     gateActive = false;
                     leaseCount = 0;
                     requiredLeases = 0;
-                }
-                else if (!gatedDishes.Contains(currentDishName, StringComparer.OrdinalIgnoreCase))
-                {
-                    // Dish has no lease items of its own — always accessible
-                    gateActive = false;
-                    leaseCount = 0;
-                    requiredLeases = 0;
+
+                    string currentDishName = Mod.Instance?.GetDishName(Mod.Instance.ActiveDishId);
+
+                    if (!string.IsNullOrWhiteSpace(currentDishName) && currentDishName != "Unknown"
+                        && Mod.SelectedDishes.Contains(currentDishName, StringComparer.OrdinalIgnoreCase)
+                        && ProgressionMapping.dishLeaseItemIds.TryGetValue(currentDishName, out int leaseItemId))
+                    {
+                        leaseCount = allItems.Count(item => (int)item.ItemId == leaseItemId);
+                        requiredLeases = ComputeRequiredLeases(goal, currentDay, highestDay, timesFranchised, interval);
+                        gateActive = requiredLeases > 0 && leaseCount < requiredLeases;
+                    }
                 }
                 else
                 {
-                    string expectedItemName = currentDishName + " Day Lease";
-                    leaseCount = allItems.Count(item =>
-                        string.Equals(
-                            ArchipelagoConnectionManager.Session.Items.GetItemName(item.ItemId),
-                            expectedItemName,
-                            StringComparison.OrdinalIgnoreCase));
-
-                    requiredLeases = ComputeRequiredLeases(goal, currentDay, highestDay, timesFranchised, interval);
-                    gateActive = requiredLeases > 0 && leaseCount < requiredLeases;
+                    // Days > 15: "Overtime Day Lease" (ID 32000) when overtime_days > 0
+                    if (overtimeDays <= 0)
+                    {
+                        gateActive = false;
+                        leaseCount = 0;
+                        requiredLeases = 0;
+                    }
+                    else
+                    {
+                        leaseCount = allItems.Count(item => (int)item.ItemId == 32000);
+                        requiredLeases = ComputeRequiredOvertimeLeases(currentDay, highestDay, goal, interval);
+                        gateActive = requiredLeases > 0 && leaseCount < requiredLeases;
+                    }
                 }
             }
 
@@ -135,14 +122,19 @@ namespace KitchenPlateupAP
             int daysUntilNext = 0;
             if (leaseCount >= requiredLeases)
             {
-                if (goal == 0)
+                if (leaseMode == 1 && currentDay > 15 && overtimeDays > 0)
+                {
+                    int overtimeHighest = Math.Max(0, highestDay - 15);
+                    int nextThreshold = (requiredLeases + 1) * interval;
+                    daysUntilNext = Math.Max(0, nextThreshold - overtimeHighest);
+                }
+                else if (goal == 0)
                 {
                     int nextRequiredDay = (requiredLeases + 1) * interval;
                     daysUntilNext = Math.Max(0, nextRequiredDay - currentDay);
                 }
                 else
                 {
-                    // Next threshold is when highestDay reaches the next interval boundary
                     int nextThreshold = (requiredLeases + 1) * interval;
                     daysUntilNext = Math.Max(0, nextThreshold - highestDay);
                 }
@@ -169,20 +161,32 @@ namespace KitchenPlateupAP
             forceRefresh = false;
         }
 
+        private void ClearGate(int currentDay)
+        {
+            if (HasSingleton<SStartDayWarnings>())
+            {
+                var warnings = GetSingleton<SStartDayWarnings>();
+                warnings.SellingRequiredAppliance = WarningLevel.Safe;
+                SetSingleton(warnings);
+            }
+
+            LastStatus = new CachedLeaseInfo
+            {
+                IsValid = true,
+                IsPrepPhase = true,
+                CurrentDay = currentDay,
+                Owned = 0,
+                Required = 0,
+                IsGateActive = false,
+                DaysUntilNext = 0
+            };
+        }
+
         /// <summary>
-        /// Returns how many lease items the player must own before they are allowed
-        /// to start the current day.
-        ///
-        /// Goal 0 (franchise): uses <paramref name="currentDay"/> within the current
-        /// 15-day run, offset by completed franchise cycles.
-        ///
-        /// Goals 1 &amp; 2 (day/dish): uses <paramref name="highestDayReached"/>,
-        /// the high-water mark of the highest SDay ever completed.  This means:
-        ///   • The first <paramref name="interval"/> days always cost 0 leases.
-        ///   • Losing several runs while only reaching day 1–4 (interval=5) keeps
-        ///     the requirement at 0, so fresh starts are never punished.
-        ///   • The requirement only grows when the player genuinely progresses past
-        ///     each interval boundary for the first time.
+        /// Required leases for global mode or dish-specific days 1–15.
+        /// Goal 0: segment-based within the 15-day franchise cycle.
+        /// Goals 1/2: floor(highestDayReached / interval) high-water mark —
+        /// first <paramref name="interval"/> days always free.
         /// </summary>
         private static int ComputeRequiredLeases(
             int goal,
@@ -207,12 +211,26 @@ namespace KitchenPlateupAP
             }
             else
             {
-                // floor(highestDayReached / interval)
-                // At highestDay=0..interval-1  → 0 leases required (full grace period)
-                // At highestDay=interval        → 1 lease required
-                // At highestDay=2*interval      → 2 leases required  …etc.
                 return highestDayReached / interval;
             }
+        }
+
+        /// <summary>
+        /// Required "Overtime Day Lease" (ID 32000) items for dish_specific mode
+        /// on days above 15 (goals 0/1 only).
+        /// floor(overtimeProgress / interval) where overtimeProgress is days past 15.
+        /// </summary>
+        private static int ComputeRequiredOvertimeLeases(
+            int currentDay,
+            int highestDayReached,
+            int goal,
+            int interval)
+        {
+            int overtimeProgress = goal == 0
+                ? Math.Max(0, currentDay - 15)
+                : Math.Max(0, highestDayReached - 15);
+
+            return overtimeProgress / interval;
         }
     }
 }

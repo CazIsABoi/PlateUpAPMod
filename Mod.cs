@@ -102,6 +102,8 @@ namespace KitchenPlateupAP
         int startingCardsAmount = 0;
         int removeCardCount = 0;
         private static bool dayLeasesEnabled = true;   // day_leases_enabled (default: on)
+        private static int dayLeaseMode = 0;            // 0 = global, 1 = dish_specific
+        private static int dishLeaseScope = 0;          // 0 = all_dishes, 1 = goal_count_only (only when goal == 2)
         private static int freeStarterDishCount = 1;   // free_starter_dishes (default: 1)
         private static List<string> startingDishes = new List<string>(); // free baseline dishes
         public static bool MoneyCapEnabled = true;
@@ -129,6 +131,7 @@ namespace KitchenPlateupAP
         bool franchised = false;
         private bool dayTransitionProcessed = false;
         private static int overallDaysCompleted = 0;
+        private static int highestOverallDayReached = 0; // high-water mark: highest SDay ever completed (for leases)
         private static int overallStarsEarned = 0;
         public static int TotalLeaseItemsReceived = 0;
         private static bool itemsEventSubscribed = false;
@@ -594,6 +597,26 @@ namespace KitchenPlateupAP
                 else
                 {
                     dayLeasesEnabled = true;
+                }
+
+                if (slotData.TryGetValue("day_lease_mode", out object rawDayLeaseMode))
+                {
+                    dayLeaseMode = Convert.ToInt32(rawDayLeaseMode);
+                    Logger.LogInfo($"[PlateupAP] Day Lease Mode: {dayLeaseMode} (0=global, 1=dish_specific)");
+                }
+                else
+                {
+                    dayLeaseMode = 0;
+                }
+
+                if (slotData.TryGetValue("dish_lease_scope", out object rawDishLeaseScope))
+                {
+                    dishLeaseScope = Convert.ToInt32(rawDishLeaseScope);
+                    Logger.LogInfo($"[PlateupAP] Dish Lease Scope: {dishLeaseScope} (0=all_dishes, 1=goal_count_only)");
+                }
+                else
+                {
+                    dishLeaseScope = 0;
                 }
 
                 if (slotData.TryGetValue("goal", out object rawGoal))
@@ -1327,45 +1350,28 @@ namespace KitchenPlateupAP
             }
             else if (goal == 1 || goal == 2)
             {
-                // Day goal / Dish goal: Count all valid day and star completions, and find lastDay for dish checks
                 overallDaysCompleted = 0;
                 overallStarsEarned = 0;
-                int lastFranchiseIdx = -1;
-                int idx = 0;
+                highestOverallDayReached = 0;
 
-                // Find the last franchise index (based on lose run not applicable here)
-                foreach (var loc in checkedLocations)
-                {
-                    // Optional: could mark runs by base offsets too if needed
-                    if (loc == 100000)
-                        lastFranchiseIdx = idx; // 100000 is Lose Run, just keep order marker
-                    idx++;
-                }
-
-                // Find lastDay after last franchise, and count days/stars overall
-                int tempIdx = 0;
-                int tempLastDay = 0;
                 foreach (var loc in checkedLocations)
                 {
                     if (loc >= 110000 && loc < 120000)
                     {
                         overallDaysCompleted++;
-                        if (tempIdx > lastFranchiseIdx)
-                        {
-                            int dayNum = (int)(loc - 110000);
-                            if (dayNum > tempLastDay)
-                                tempLastDay = dayNum;
-                        }
+                        int dayNum = (int)(loc - 110000);
+                        if (dayNum > highestOverallDayReached)
+                            highestOverallDayReached = dayNum;
                     }
                     if (loc >= 120000 && loc < 130000)
-                    {
                         overallStarsEarned++;
-                    }
-                    tempIdx++;
                 }
-                lastDay = tempLastDay;
 
-                Logger.LogInfo($"[Reconstruct] overallDaysCompleted: {overallDaysCompleted}, overallStarsEarned: {overallStarsEarned}, lastDay (for dish checks): {lastDay}");
+                // lastDay drives dish-check resume; use the highest known day in the current run.
+                // We find it by walking checked locations — same as before but simplified.
+                lastDay = highestOverallDayReached;
+
+                Logger.LogInfo($"[Reconstruct] overallDaysCompleted={overallDaysCompleted}, highestOverallDayReached={highestOverallDayReached}, overallStarsEarned={overallStarsEarned}");
             }
 
             foreach (var item in session.Items.AllItemsReceived)
@@ -1749,6 +1755,15 @@ namespace KitchenPlateupAP
             if (checkId == 15)
             {
                 Logger.LogInfo("[OnItemReceived] Received Day Lease");
+                KitchenPlateupAP.LeaseRequirementSystem.TriggerRefresh();
+                pendingSpawnState.PendingItemIDs.Remove(checkId);
+                return;
+            }
+
+            // Dish-specific Day Lease: "<DishName> Day Lease"
+            if (dayLeaseMode == 1 && !string.IsNullOrWhiteSpace(itemName) && itemName.EndsWith(" Day Lease", System.StringComparison.OrdinalIgnoreCase))
+            {
+                Logger.LogInfo($"[OnItemReceived] Received dish-specific Day Lease: '{itemName}'");
                 KitchenPlateupAP.LeaseRequirementSystem.TriggerRefresh();
                 pendingSpawnState.PendingItemIDs.Remove(checkId);
                 return;
@@ -3084,72 +3099,104 @@ namespace KitchenPlateupAP
                 }
                 else if (goal == 1)
                 {
-                    overallDaysCompleted++;
-                    Logger.LogInfo($"[Day Goal] Overall day {overallDaysCompleted} completed (SDay={gameDay}).");
-                    if (overallDaysCompleted <= 100)
+                    // Only advance if this SDay hasn't been completed before
+                    int dayLocID = 110000 + gameDay;
+                    bool alreadySent = session.Locations.AllLocationsChecked.Contains(dayLocID);
+
+                    if (!alreadySent)
                     {
-                        int dayLocID = 110000 + overallDaysCompleted;
-                        session.Locations.CompleteLocationChecks(dayLocID);
-                        Logger.LogInfo($"[Day Goal] Completed location => ID={dayLocID}");
+                        overallDaysCompleted++;
+                        Logger.LogInfo($"[Day Goal] New overall day {overallDaysCompleted} completed (SDay={gameDay}).");
+
+                        if (overallDaysCompleted <= 100)
+                        {
+                            session.Locations.CompleteLocationChecks(dayLocID);
+                            Logger.LogInfo($"[Day Goal] Completed location => ID={dayLocID}");
+                        }
+
+                        if (overallDaysCompleted % 3 == 0 && overallStarsEarned < 33)
+                        {
+                            overallStarsEarned++;
+                            int starLocID = 120000 + overallStarsEarned;
+                            session.Locations.CompleteLocationChecks(starLocID);
+                            Logger.LogInfo($"[Day Goal] Earned star #{overallStarsEarned}, location => ID={starLocID}");
+                        }
+
+                        if (overallDaysCompleted >= dayCount)
+                        {
+                            Logger.LogInfo($"[Day Goal] Reached {overallDaysCompleted} >= {dayCount}, sending goal complete.");
+                            SendGoalComplete();
+                        }
                     }
+                    else
+                    {
+                        Logger.LogInfo($"[Day Goal] SDay={gameDay} already checked (loc={dayLocID}), skipping increment.");
+                    }
+
+                    // Always update the high-water mark
+                    if (gameDay > highestOverallDayReached)
+                        highestOverallDayReached = gameDay;
+
                     if (lastDay <= 15)
                     {
                         DoDishChecks(lastDay);
                         DoSettingChecks(lastDay);
                     }
-                    if (overallDaysCompleted % 3 == 0 && overallStarsEarned < 33)
-                    {
-                        overallStarsEarned++;
-                        int starLocID = 120000 + overallStarsEarned;
-                        session.Locations.CompleteLocationChecks(starLocID);
-                        Logger.LogInfo($"[Day Goal] Earned star #{overallStarsEarned}, location => ID={starLocID}");
-                    }
-                    if (overallDaysCompleted >= dayCount)
-                    {
-                        Logger.LogInfo($"[Day Goal] Reached {overallDaysCompleted} >= {dayCount}, sending goal complete.");
-                        SendGoalComplete();
-                    }
                 }
                 else if (goal == 2)
                 {
-                    overallDaysCompleted++;
-                    Logger.LogInfo($"[Dish Day Goal] Overall day {overallDaysCompleted} completed (SDay={gameDay}).");
+                    // Only advance if this SDay hasn't been completed before
+                    int dayLocID = 110000 + gameDay;
+                    bool alreadySent = session.Locations.AllLocationsChecked.Contains(dayLocID);
 
-                    if (overallDaysCompleted <= dayTarget)
+                    if (!alreadySent)
                     {
-                        int dayLocID = 110000 + overallDaysCompleted;
-                        session.Locations.CompleteLocationChecks(dayLocID);
-                        Logger.LogInfo($"[Dish Day Goal] Completed day location => ID={dayLocID}");
+                        overallDaysCompleted++;
+                        Logger.LogInfo($"[Dish Day Goal] New overall day {overallDaysCompleted} completed (SDay={gameDay}).");
+
+                        if (overallDaysCompleted <= dayTarget)
+                        {
+                            session.Locations.CompleteLocationChecks(dayLocID);
+                            Logger.LogInfo($"[Dish Day Goal] Completed day location => ID={dayLocID}");
+                        }
+
+                        int maxStars = dayTarget / 3;
+                        if (overallDaysCompleted % 3 == 0 && overallStarsEarned < maxStars)
+                        {
+                            overallStarsEarned++;
+                            int starLocID = 120000 + overallStarsEarned;
+                            session.Locations.CompleteLocationChecks(starLocID);
+                            Logger.LogInfo($"[Dish Day Goal] Earned star #{overallStarsEarned}, location => ID={starLocID}");
+                        }
+
+                        if (overallDaysCompleted >= dayTarget)
+                        {
+                            int dishesAtTarget = CountDishesCompletedAtDayTarget();
+                            Logger.LogInfo($"[Dish Day Goal] Reached day_target={dayTarget}. Dishes at day {dayTarget}: {dishesAtTarget}, required: {dishGoalCount}");
+                            if (dishesAtTarget >= dishGoalCount)
+                            {
+                                Logger.LogInfo($"[Dish Day Goal] Win condition met! {dishesAtTarget}/{dishGoalCount}. Sending goal complete.");
+                                SendGoalComplete();
+                            }
+                            else
+                            {
+                                Logger.LogWarning($"[Dish Day Goal] Day target reached but only {dishesAtTarget}/{dishGoalCount} dishes done. Goal NOT complete.");
+                            }
+                        }
                     }
+                    else
+                    {
+                        Logger.LogInfo($"[Dish Day Goal] SDay={gameDay} already checked (loc={dayLocID}), skipping increment.");
+                    }
+
+                    // Always update the high-water mark
+                    if (gameDay > highestOverallDayReached)
+                        highestOverallDayReached = gameDay;
 
                     if (lastDay <= dayTarget)
                     {
                         DoDishChecks(lastDay);
                         DoSettingChecks(lastDay);
-                    }
-
-                    int maxStars = dayTarget / 3;
-                    if (overallDaysCompleted % 3 == 0 && overallStarsEarned < maxStars)
-                    {
-                        overallStarsEarned++;
-                        int starLocID = 120000 + overallStarsEarned;
-                        session.Locations.CompleteLocationChecks(starLocID);
-                        Logger.LogInfo($"[Dish Day Goal] Earned star #{overallStarsEarned}, location => ID={starLocID}");
-                    }
-
-                    if (overallDaysCompleted >= dayTarget)
-                    {
-                        int dishesAtTarget = CountDishesCompletedAtDayTarget();
-                        Logger.LogInfo($"[Dish Day Goal] Reached day_target={dayTarget}. Dishes completed at day {dayTarget}: {dishesAtTarget}, required: {dishGoalCount}");
-                        if (dishesAtTarget >= dishGoalCount)
-                        {
-                            Logger.LogInfo($"[Dish Day Goal] Win condition met! {dishesAtTarget}/{dishGoalCount} dishes completed at day {dayTarget}. Sending goal complete.");
-                            SendGoalComplete();
-                        }
-                        else
-                        {
-                            Logger.LogWarning($"[Dish Day Goal] Day target reached but only {dishesAtTarget}/{dishGoalCount} dishes completed at day {dayTarget}. Goal NOT complete.");
-                        }
                     }
                 }
             }
@@ -3737,12 +3784,16 @@ namespace KitchenPlateupAP
     // Properties and methods extracted from Mod class for clarity
     partial class Mod
     {
-        // Expose for LeaseRequirementSystem and Chat HUD (eliminates reflection)
         internal static int Goal => goal;
         internal static int OverallDaysCompleted => overallDaysCompleted;
+        internal static int HighestOverallDayReached => highestOverallDayReached;
         internal static int DayLeaseInterval => dayLeaseInterval;
         internal int TimesFranchised => timesFranchised;
         internal static bool DayLeasesEnabled => dayLeasesEnabled;
+        internal static int DayLeaseMode => dayLeaseMode;
+        internal static int DishLeaseScope => dishLeaseScope;
+        internal static IReadOnlyList<string> SelectedDishes => selectedDishes;
+        internal static int DishGoalCount => dishGoalCount;
 
         internal int ActiveDishId => DishId;
 

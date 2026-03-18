@@ -682,11 +682,10 @@ namespace KitchenPlateupAP
         // Display-name -> block index (for location IDs)
         public static readonly Dictionary<string, int> settingBlockIndex = new Dictionary<string, int>
         {
-            { "Base Setting", 0 },
-            { "Autumn", 1 },
-            { "Banquet", 2 },
-            { "Turbo", 3 },
-            { "Witch Hut", 4 }
+            { "Autumn", 0 },
+            { "Banquet", 1 },
+            { "Turbo", 2 },
+            { "Witch Hut", 3 }
         };
 
         public static readonly Dictionary<int, string> settingIdToDisplay = new Dictionary<int, string>
@@ -714,10 +713,18 @@ namespace KitchenPlateupAP
             if (!settingIdToDisplay.TryGetValue(settingId, out string display))
                 return false;
 
+            // Base Setting uses a flat range: 160000 + day
+            if (display == "Base Setting")
+            {
+                locId = 160000 + day;
+                return true;
+            }
+
+            // Optional settings use: 161000 + (index * 1000) + day
             if (!settingBlockIndex.TryGetValue(display, out int block))
                 return false;
 
-            locId = 130000 + (block * 100) + day;
+            locId = 161000 + (block * 1000) + day;
             return true;
         }
 

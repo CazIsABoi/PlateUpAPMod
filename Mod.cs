@@ -1392,9 +1392,15 @@ namespace KitchenPlateupAP
             }
             StartingCardManager.SetRemoveCount(removeCardCount);
 
-            // Count total lease items (item ID 15) in inventory (regardless of goal)
-            Mod.TotalLeaseItemsReceived = session.Items.AllItemsReceived.Count(item => (int)item.ItemId == 15);
-            Logger.LogInfo($"[Reconstruct] Total lease items received: {Mod.TotalLeaseItemsReceived}");
+            // Count lease items by type for the log — the LeaseRequirementSystem reads
+            // AllItemsReceived directly each frame, so these are informational only.
+            int globalLeases = session.Items.AllItemsReceived.Count(item => (int)item.ItemId == 15);
+            int overtimeLeases = session.Items.AllItemsReceived.Count(item => (int)item.ItemId == 32000);
+            var dishLeaseIdSet = new HashSet<int>(ProgressionMapping.dishLeaseItemIds.Values);
+            int dishLeaseCount = session.Items.AllItemsReceived.Count(item => dishLeaseIdSet.Contains((int)item.ItemId));
+
+            Mod.TotalLeaseItemsReceived = globalLeases + overtimeLeases + dishLeaseCount;
+            Logger.LogInfo($"[Reconstruct] Total lease items received: {Mod.TotalLeaseItemsReceived} (global={globalLeases}, dish={dishLeaseCount}, overtime={overtimeLeases})");
         }
 
         private void EnableDeathLink()

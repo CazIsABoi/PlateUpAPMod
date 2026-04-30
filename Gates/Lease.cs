@@ -41,7 +41,7 @@ namespace KitchenPlateupAP
                 return;
 
             // Feature disabled — clear gate and return
-            if (!Mod.DayLeasesEnabled)
+            if (!Mod.DayLeasesEnabled || Mod.DebugLeaseGateDisabled)
             {
                 ClearGate(HasSingleton<SDay>() ? GetSingleton<SDay>().Day : 0);
                 forceRefresh = false;
@@ -92,12 +92,18 @@ namespace KitchenPlateupAP
                     string currentDishName = Mod.Instance?.GetDishName(Mod.Instance.ActiveDishId);
 
                     if (!string.IsNullOrWhiteSpace(currentDishName) && currentDishName != "Unknown"
-                        && Mod.SelectedDishes.Contains(currentDishName, StringComparer.OrdinalIgnoreCase)
                         && ProgressionMapping.dishLeaseItemIds.TryGetValue(currentDishName, out int leaseItemId))
                     {
-                        leaseCount = allItems.Count(item => (int)item.ItemId == leaseItemId);
-                        requiredLeases = ComputeRequiredLeases(goal, currentDay, highestDay, timesFranchised, interval);
-                        gateActive = requiredLeases > 0 && leaseCount < requiredLeases;
+                        // dish_lease_scope: 0=all_dishes (gate any known dish), 1=goal_count_only (gate only selected dishes)
+                        bool dishIsInScope = Mod.DishLeaseScope == 0
+                            || Mod.SelectedDishes.Contains(currentDishName, StringComparer.OrdinalIgnoreCase);
+
+                        if (dishIsInScope)
+                        {
+                            leaseCount = allItems.Count(item => (int)item.ItemId == leaseItemId);
+                            requiredLeases = ComputeRequiredLeases(goal, currentDay, highestDay, timesFranchised, interval, true);
+                            gateActive = requiredLeases > 0 && leaseCount < requiredLeases;
+                        }
                     }
                 }
                 else
@@ -184,21 +190,29 @@ namespace KitchenPlateupAP
 
         /// <summary>
         /// Required leases for global mode or dish-specific days 1–15.
-        /// Goal 0: segment-based within the 15-day franchise cycle.
+        /// Goal 0 / global: segment-based within the 15-day franchise cycle
+        ///   (multiple leases possible since item ID 15 can appear multiple times).
+        /// Goal 0 / dish-specific: binary — 0 for the free first interval, then 1
+        ///   for the remainder of the run (each dish has exactly one lease item).
         /// Goals 1/2: floor(highestDayReached / interval) high-water mark —
-        /// first <paramref name="interval"/> days always free.
+        ///   first <paramref name="interval"/> days always free.
         /// </summary>
         private static int ComputeRequiredLeases(
             int goal,
             int currentDay,
             int highestDayReached,
             int timesFranchised,
-            int interval)
+            int interval,
+            bool isDishSpecific = false)
         {
+            int raw;
             if (goal == 0)
             {
                 if (currentDay > 15)
                     return 0;
+
+                if (isDishSpecific)
+                    return currentDay <= interval ? 0 : 1;
 
                 int segmentsPerFranchise = (int)Math.Ceiling(15.0 / interval);
                 int baseOffset = segmentsPerFranchise * Math.Max(0, timesFranchised - 1);
@@ -207,12 +221,15 @@ namespace KitchenPlateupAP
                 if (timesFranchised == 1 && currentDay <= interval)
                     return 0;
 
-                return baseOffset + withinRun;
+                raw = baseOffset + withinRun;
             }
             else
             {
-                return highestDayReached / interval;
+                raw = highestDayReached / interval;
             }
+
+            // Never require more leases than exist in the AP pool
+            return Math.Min(raw, Mod.MaxDayLeases);
         }
 
         /// <summary>

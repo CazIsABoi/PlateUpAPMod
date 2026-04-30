@@ -4,18 +4,16 @@ using Unity.Entities;
 
 namespace KitchenPlateupAP
 {
-    /// <summary>
-    /// Forces SKitchenParameters.MaximumGroupSize (and MinimumGroupSize) to the AP
-    /// group size cap every prep frame, overriding vanilla AutoGrowGroupSizes.
-    /// 0 = disabled (no override — vanilla group sizes apply).
-    /// </summary>
     public class GroupSizeOverrideSystem : RestaurantSystem, IModSystem
     {
         public static int MaxGroupSizeOverride = 0;
 
         protected override void OnUpdate()
         {
-            // Only active during prep (night) phase
+            // Only active when connected to an Archipelago session
+            if (!ArchipelagoConnectionManager.ConnectionSuccessful)
+                return;
+
             if (!HasSingleton<SIsNightTime>())
                 return;
 

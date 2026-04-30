@@ -5,13 +5,15 @@ using UnityEngine;
 
 namespace KitchenPlateupAP
 {
-    // Runs during simulation; clamps money to a configurable cap
     [UpdateInGroup(typeof(SimulationSystemGroup))]
     public class MoneyCapSystem : GenericSystemBase, IModSystem
     {
         protected override void OnUpdate()
         {
-            // Only clamp when the money cap mechanic is enabled and we're in a run
+            // Only active when connected to an Archipelago session
+            if (!ArchipelagoConnectionManager.ConnectionSuccessful)
+                return;
+
             if (!Mod.MoneyCapEnabled)
                 return;
 
@@ -22,7 +24,6 @@ namespace KitchenPlateupAP
             if (!HasSingleton<SKitchenMarker>())
                 return;
 
-            // Clamp SMoney singleton
             if (Require(out SMoney money))
             {
                 int cap = Mathf.Max(0, Mod.MoneyCap);

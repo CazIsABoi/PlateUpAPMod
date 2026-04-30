@@ -1,4 +1,4 @@
-using KitchenData;
+﻿using KitchenData;
 using KitchenData.Workshop;
 using KitchenLib.References;
 using Newtonsoft.Json;
@@ -110,96 +110,98 @@ namespace KitchenPlateupAP
 
         public static readonly Dictionary<int, int> applianceUnlockToGDO = new Dictionary<int, int>
         {
-            { 2001, ApplianceReferences.Hob },
-            { 2002, ApplianceReferences.HobSafe },
-            { 2003, ApplianceReferences.HobDanger },
-            // 2004 unused (Hob Starting � not an unlock item in the new table)
-            { 2005, ApplianceReferences.Oven },
-            { 2006, ApplianceReferences.Microwave },
-            { 2007, ApplianceReferences.GasLimiter },
-            { 2008, ApplianceReferences.GasSafetyOverride },
-            { 2009, ApplianceReferences.SinkNormal },
-            { 2010, ApplianceReferences.SinkPower },
-            { 2011, ApplianceReferences.SinkSoak },
-            { 2013, ApplianceReferences.DishWasher },
-            { 2014, ApplianceReferences.SinkLarge },
-            { 2015, ApplianceReferences.Countertop },
-            { 2016, ApplianceReferences.Workstation },
-            { 2017, ApplianceReferences.Freezer },
-            { 2018, ApplianceReferences.PrepStation },
-            { 2019, ApplianceReferences.FrozenPrepStation },
-            { 2020, ApplianceReferences.TableLarge },
-            { 2021, ApplianceReferences.TableBar },
-            { 2022, ApplianceReferences.TableBasicCloth },
-            { 2023, ApplianceReferences.TableCheapMetal },
-            { 2024, ApplianceReferences.TableFancyCloth },
-            { 2025, ApplianceReferences.CoffeeTable },
-            { 2027, ApplianceReferences.BinStarting },
-            { 2028, ApplianceReferences.BinCompactor },
-            { 2029, ApplianceReferences.BinComposter },
-            { 2030, ApplianceReferences.BinExpanded },
-            { 2031, ApplianceReferences.FloorProtector },
-            { 2032, ApplianceReferences.RollingPinProvider },
-            { 2033, ApplianceReferences.SharpKnifeProvider },
-            { 2034, ApplianceReferences.ScrubbingBrushProvider },
-            { 2035, ApplianceReferences.BreadstickBox },
-            { 2036, ApplianceReferences.CandleBox },
-            { 2037, ApplianceReferences.NapkinBox },
-            { 2038, ApplianceReferences.SharpCutlery },
-            { 2039, ApplianceReferences.SpecialsMenuBox },
-            { 2040, ApplianceReferences.LeftoversBagStation },
-            { 2041, ApplianceReferences.SupplyCabinet },
-            { 2042, ApplianceReferences.HostStand },
-            { 2043, ApplianceReferences.FlowerPot },
-            { 2044, ApplianceReferences.MopBucket },
-            { 2045, ApplianceReferences.MopBucketLasting },
-            { 2046, ApplianceReferences.MopBucketFast },
-            { 2047, ApplianceReferences.RobotMop },
-            { 2048, ApplianceReferences.FloorBufferStation },
-            { 2049, ApplianceReferences.RobotBuffer },
-            { 2050, ApplianceReferences.DirtyPlateStack },
-            { 2051, ApplianceReferences.Belt },
-            { 2052, ApplianceReferences.Grabber },
-            { 2053, ApplianceReferences.GrabberSmart },
-            { 2054, ApplianceReferences.GrabberRotatable },
-            { 2055, ApplianceReferences.Combiner },
-            { 2056, ApplianceReferences.Portioner },
-            { 2057, ApplianceReferences.Mixer },
-            { 2058, ApplianceReferences.MixerPusher },
-            { 2059, ApplianceReferences.MixerHeated },
-            { 2060, ApplianceReferences.MixerRapid },
-            { 2061, ApplianceReferences.BlueprintCabinet },
-            { 2062, ApplianceReferences.BlueprintUpgradeDesk },
-            { 2063, ApplianceReferences.BlueprintOrderingDesk },
-            { 2064, ApplianceReferences.BlueprintDiscountDesk },
-            { 2065, ApplianceReferences.ClipboardStand },
-            { 2066, ApplianceReferences.BlueprintCopyDesk },
-            { 2067, ApplianceReferences.ShoeRackTrainers },
-            { 2068, ApplianceReferences.ShoeRackWellies },
-            { 2069, ApplianceReferences.ShoeRackWorkBoots },
-            { 2070, ApplianceReferences.BookingDesk },
-            { 2071, ApplianceReferences.FoodDisplayStand },
-            { 2072, ApplianceReferences.Dumbwaiter },
-            { 2073, ApplianceReferences.Teleporter },
-            { 2074, ApplianceReferences.FireExtinguisherHolder },
-            { 2075, ApplianceReferences.OrderingTerminal },
-            { 2076, ApplianceReferences.OrderingTerminalSpecialOffers },
-            { 2078, ApplianceReferences.PlateStack },
-            { 2079, ApplianceReferences.AutoPlater },
-            { 2080, ApplianceReferences.PotStack },
-            { 2081, ApplianceReferences.ServingBoardStack },
-            { 2082, ApplianceReferences.CoffeeMachine },
-            { 2083, ApplianceReferences.IceDispenser },
-            { 2084, ApplianceReferences.MilkDispenser },
-            { 2085, ApplianceReferences.WokStack },
-            { 2086, ApplianceReferences.SourceLasagneTray },
-            { 2087, ApplianceReferences.ProviderTacoTray },
-            { 2088, ApplianceReferences.ProviderMixingBowls },
-            { 2089, ApplianceReferences.SourceBigCakeTin },
-            { 2090, ApplianceReferences.SourceBrownieTray },
-            { 2091, ApplianceReferences.SourceCookieTray },
-            { 2092, ApplianceReferences.SourceCupcakeTray },
-            { 2093, ApplianceReferences.SourceDoughnutTray },
+            // ── Priority ──────────────────────────────────────────────────────────
+            { 60001, ApplianceReferences.Hob },
+            { 60002, ApplianceReferences.Countertop },
+            { 60003, ApplianceReferences.SinkNormal },
+            { 60004, ApplianceReferences.PlateStackStarting },
+            { 60005, ApplianceReferences.BlueprintUpgradeDesk },   // Research Desk
+            { 60006, ApplianceReferences.Belt },
+            { 60007, ApplianceReferences.Grabber },
+            // ── Useful appliances ─────────────────────────────────────────────────
+            { 60008, ApplianceReferences.HobSafe },
+            { 60009, ApplianceReferences.HobDanger },
+            { 60010, ApplianceReferences.Oven },
+            { 60011, ApplianceReferences.Microwave },
+            { 60012, ApplianceReferences.GasLimiter },
+            { 60013, ApplianceReferences.GasSafetyOverride },
+            { 60014, ApplianceReferences.SinkPower },
+            { 60015, ApplianceReferences.SinkSoak },
+            { 60016, ApplianceReferences.DishWasher },
+            { 60017, ApplianceReferences.SinkLarge },
+            { 60018, ApplianceReferences.Workstation },
+            { 60019, ApplianceReferences.Freezer },
+            { 60020, ApplianceReferences.PrepStation },
+            { 60021, ApplianceReferences.FrozenPrepStation },
+            { 60022, ApplianceReferences.TableLarge },
+            { 60023, ApplianceReferences.TableBar },
+            { 60024, ApplianceReferences.TableBasicCloth },
+            { 60025, ApplianceReferences.TableCheapMetal },
+            { 60026, ApplianceReferences.TableFancyCloth },
+            { 60027, ApplianceReferences.RollingPinProvider },
+            { 60028, ApplianceReferences.SharpKnifeProvider },
+            { 60029, ApplianceReferences.ScrubbingBrushProvider },
+            { 60030, ApplianceReferences.ShoeRackTrainers },
+            { 60031, ApplianceReferences.BlueprintCopyDesk },
+            { 60032, ApplianceReferences.BlueprintDiscountDesk },
+            { 60033, ApplianceReferences.BlueprintOrderingDesk },
+            { 60034, ApplianceReferences.BookingDesk },
+            { 60035, ApplianceReferences.Dumbwaiter },
+            { 60036, ApplianceReferences.Teleporter },
+            { 60037, ApplianceReferences.OrderingTerminal },
+            { 60038, ApplianceReferences.OrderingTerminalSpecialOffers },
+            { 60039, ApplianceReferences.GrabberSmart },
+            { 60040, ApplianceReferences.GrabberRotatable },
+            { 60041, ApplianceReferences.Combiner },
+            { 60042, ApplianceReferences.Portioner },
+            { 60043, ApplianceReferences.Mixer },
+            { 60044, ApplianceReferences.MixerPusher },
+            { 60045, ApplianceReferences.MixerHeated },
+            { 60046, ApplianceReferences.MixerRapid },
+            { 60047, ApplianceReferences.AutoPlater },
+            { 60048, ApplianceReferences.DirtyPlateStack },
+            { 60049, ApplianceReferences.PotStack },
+            { 60050, ApplianceReferences.ServingBoardStack },
+            { 60051, ApplianceReferences.WokStack },
+            { 60052, ApplianceReferences.SourceLasagneTray },
+            { 60053, ApplianceReferences.ProviderTacoTray },
+            { 60054, ApplianceReferences.ProviderMixingBowls },
+            { 60055, ApplianceReferences.SourceBigCakeTin },
+            { 60056, ApplianceReferences.SourceBrownieTray },
+            { 60057, ApplianceReferences.SourceCookieTray },
+            { 60058, ApplianceReferences.SourceCupcakeTray },
+            { 60059, ApplianceReferences.SourceDoughnutTray },
+            // ── Filler appliances ─────────────────────────────────────────────────
+            { 60060, ApplianceReferences.Bin },
+            { 60061, ApplianceReferences.BinCompactor },
+            { 60062, ApplianceReferences.BinComposter },
+            { 60063, ApplianceReferences.BinExpanded },
+            { 60064, ApplianceReferences.FloorProtector },
+            { 60065, ApplianceReferences.ShoeRackWellies },
+            { 60066, ApplianceReferences.ShoeRackWorkBoots },
+            { 60067, ApplianceReferences.ClipboardStand },
+            { 60068, ApplianceReferences.IceDispenser },
+            { 60069, ApplianceReferences.MilkDispenser },
+            { 60070, ApplianceReferences.CoffeeMachine },
+            { 60071, ApplianceReferences.MopBucket },
+            { 60072, ApplianceReferences.MopBucketLasting },
+            { 60073, ApplianceReferences.MopBucketFast },
+            { 60074, ApplianceReferences.RobotMop },
+            { 60075, ApplianceReferences.FloorBufferStation },
+            { 60076, ApplianceReferences.RobotBuffer },
+            { 60077, ApplianceReferences.BreadstickBox },
+            { 60078, ApplianceReferences.CandleBox },
+            { 60079, ApplianceReferences.NapkinBox },
+            { 60080, ApplianceReferences.SharpCutlery },
+            { 60081, ApplianceReferences.SpecialsMenuBox },
+            { 60082, ApplianceReferences.LeftoversBagStation },
+            { 60083, ApplianceReferences.SupplyCabinet },
+            { 60084, ApplianceReferences.BlueprintCabinet },
+            { 60085, ApplianceReferences.HostStand },
+            { 60086, ApplianceReferences.FlowerPot },
+            { 60087, ApplianceReferences.CoffeeTable },
+            { 60088, ApplianceReferences.FoodDisplayStand },
+            { 60089, ApplianceReferences.FireExtinguisherHolder },
         };
 
         public static readonly List<int> usefulApplianceGDOs = new List<int>
@@ -778,6 +780,53 @@ namespace KitchenPlateupAP
             { "Sandwiches", 31116 },
             { "Sundaes",    31117 },
         };
+
+        /// <summary>
+        /// Maps utility/filler item IDs (as sent by the apworld) to a string key.
+        /// All item-ID-specific logic should look up from here rather than hardcoding numbers.
+        /// </summary>
+        public static readonly Dictionary<int, string> utilityItemMapping = new Dictionary<int, string>()
+        {
+            // ── Lease items ────────────────────────────────────────────────────────
+            { 15,    "DayLease" },
+            { 32000, "OvertimeDayLease" },
+
+            // ── Economy ────────────────────────────────────────────────────────────
+            { 16,    "MoneyCapIncrease" },
+            { 40006, "Coin" },          // apworld v0.3+
+
+            // ── Starting-deck management ───────────────────────────────────────────
+            { 50002, "RemoveCard" },    // apworld v0.3+
+            { 22,    "ShopSizeIncrease" },
+
+            // ── Kitchen parameter fillers (cumulative deltas) ──────────────────────
+            { 40001, "PatienceIncrease" },          // apworld v0.3+
+            { 40002, "LessCustomers" },             // apworld v0.3+
+            { 40003, "MinGroupSizeDecrease" },      // apworld v0.3+
+            { 40004, "MaxGroupSizeDecrease" },      // apworld v0.3+
+            { 40005, "MessReduction" },             // apworld v0.3+
+            // Legacy IDs kept for backwards compatibility with older apworld seeds
+            { 24,    "PatienceIncrease" },
+            { 25,    "LessCustomers" },
+            { 26,    "MinGroupSizeDecrease" },
+            { 27,    "MaxGroupSizeDecrease" },
+            { 28,    "GlobalPatienceUpgrade" },
+            { 29,    "MessReduction" },
+            { 23,    "ReduceGroupSize" },
+
+            // ── Misc one-shot items ────────────────────────────────────────────────
+            { 30,    "RerollToken" },
+            { 31,    "ExtraLife" },
+            { 100,   "DecorationUnlock" },
+        };
+
+        // Convenience look-ups so callers can match by effect name without knowing the ID
+        public static int GetUtilityItemId(string key)
+        {
+            foreach (var kv in utilityItemMapping)
+                if (kv.Value == key) return kv.Key;
+            return -1;
+        }
 
         static ProgressionMapping()
         {

@@ -219,6 +219,23 @@ namespace KitchenPlateupAP.Systems
                 return;
             }
 
+            // Always re-sync the remove count from the reliable session history immediately
+            // before computing the active card list. This guards against the timing window
+            // where AllItemsReceived is empty when OnSuccessfulConnect runs but is fully
+            // populated by the time the first run starts.
+            var apSession = ArchipelagoConnectionManager.Session;
+            if (apSession?.Items?.AllItemsReceived != null)
+            {
+                int removeCount = 0;
+                foreach (var item in apSession.Items.AllItemsReceived)
+                {
+                    if (ProgressionMapping.utilityItemMapping.TryGetValue((int)item.ItemId, out string key) && key == "RemoveCard")
+                        removeCount++;
+                }
+                StartingCardManager.SetRemoveCount(removeCount);
+                Mod.Logger.LogInfo($"[CardSystem] Synced remove count from history: {removeCount}");
+            }
+
             List<int> activeCards = StartingCardManager.GetActiveStartingCards();
             if (activeCards.Count == 0)
             {

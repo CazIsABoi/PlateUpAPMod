@@ -17,9 +17,10 @@ namespace KitchenPlateupAP
         private Entity _lastAffordWarningEntity = Entity.Null;
         private int _lastAffordWarningCost = -1;
 
-        // After a purchase, skip this many frames to prevent instant re-buy.
-        private int _cooldownFrames = 0;
-        private const int CooldownDuration = 2;
+        // Timestamp of the last successful purchase; prevents re-buying while
+        // the player holds interact across frames.
+        private float _lastPurchaseTime = -1f;
+        private const float PurchaseCooldown = 0.5f;
 
         /// <summary>How far in front of the door (negative Z) the first pedestal spawns.</summary>
         private const float ForwardOffset = 2f;
@@ -48,11 +49,11 @@ namespace KitchenPlateupAP
             if (!Require(out SMoney money))
                 return;
 
-            if (_cooldownFrames > 0)
-            {
-                _cooldownFrames--;
+            // Time-based cooldown: ignore interactions for PurchaseCooldown seconds
+            // after each successful purchase so a held interact button can't buy
+            // multiple checks in rapid succession.
+            if (UnityEngine.Time.realtimeSinceStartup - _lastPurchaseTime < PurchaseCooldown)
                 return;
-            }
 
             using var interacted = _interactedQuery.ToEntityArray(Allocator.Temp);
 
@@ -98,6 +99,10 @@ namespace KitchenPlateupAP
 
                 Mod.Logger.LogInfo($"[BlueprintChecks] Check {data.CheckIndex} purchased for {data.Cost} coins (slot {data.SlotIndex}).");
 
+                // Arm the cooldown before any further work so even if UpdatePedestalInPlace
+                // somehow loops back here, the guard at the top of OnUpdate blocks it.
+                _lastPurchaseTime = UnityEngine.Time.realtimeSinceStartup;
+
                 // Update the pedestal entity in-place so the player can keep
                 // holding interact for the next purchase.
                 if (!UpdatePedestalInPlace(pedestal, data.SlotIndex))
@@ -110,7 +115,6 @@ namespace KitchenPlateupAP
                     }
                 }
 
-                _cooldownFrames = CooldownDuration;
                 break;
             }
         }

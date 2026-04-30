@@ -13,6 +13,7 @@ using Archipelago.MultiClient.Net.Enums;
 
 namespace KitchenPlateupAP
 {
+
     [HarmonyPatch(typeof(Archipelago.MultiClient.Net.Converters.PermissionsEnumConverter), "ReadJson")]
     internal static class Patch_PermissionsEnumConverter_ReadJson
     {
@@ -23,6 +24,7 @@ namespace KitchenPlateupAP
             Type objectType,
             object existingValue,
             JsonSerializer serializer)
+
         {
             try
             {
@@ -125,30 +127,33 @@ namespace KitchenPlateupAP
     {
         static void Postfix(DeterminePlayerSpeed __instance)
         {
-            // Skip entirely in the lobby or if the mod instance isn't ready
             if (Mod.Instance == null)
                 return;
 
-            // Only apply speed modifications during active kitchen play (day time)
+            if (!Mod.IsSessionActive)
+                return;
+
             if (!__instance.HasSingleton<SKitchenMarker>())
                 return;
 
             if (!__instance.HasSingleton<SIsDayTime>())
                 return;
 
-            var query = __instance.EntityManager.CreateEntityQuery(ComponentType.ReadWrite<CPlayer>());
-            using var playerEntities = query.ToEntityArray(Allocator.Temp);
             var em = __instance.EntityManager;
+            using var query = em.CreateEntityQuery(ComponentType.ReadWrite<CPlayer>());
+            using var playerEntities = query.ToEntityArray(Allocator.Temp);
 
             for (int i = 0; i < playerEntities.Length; i++)
             {
                 var playerEntity = playerEntities[i];
-                var player = em.GetComponentData<CPlayer>(playerEntity);
 
+                if (!em.Exists(playerEntity) || !em.HasComponent<CPlayer>(playerEntity))
+                    continue;
+
+                var player = em.GetComponentData<CPlayer>(playerEntity);
                 float slowMultiplier = Mod.Instance.GetPlayerSpeedMultiplier(playerEntity);
                 player.Speed *= Mod.movementSpeedMod * slowMultiplier;
-
-                em.SetComponentData(playerEntity, player);
+                em.SetComponentData(playerEntity, player);  // write the modified struct back
             }
         }
     }

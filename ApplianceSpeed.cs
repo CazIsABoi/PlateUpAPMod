@@ -24,11 +24,13 @@ namespace KitchenPlateupAP
 
         protected override void OnUpdate()
         {
+            // Only active when connected to an Archipelago session
+            if (!ArchipelagoConnectionManager.ConnectionSuccessful)
+                return;
+
             // Only run if it's daytime and applianceSpeedMode == 0 (grouped)
             if (!HasSingleton<SIsDayTime>() || Mod.applianceSpeedMode != 0)
-            {
                 return;
-            }
 
             float speedMultiplier = Mod.applianceSpeedMod;
 
@@ -93,6 +95,10 @@ namespace KitchenPlateupAP
 
         protected override void OnUpdate()
         {
+            // Only active when connected to an Archipelago session
+            if (!ArchipelagoConnectionManager.ConnectionSuccessful)
+                return;
+
             // Only run if it's daytime and separate mode
             if (!HasSingleton<SIsDayTime>() || Mod.applianceSpeedMode != 1)
             {
@@ -185,6 +191,10 @@ namespace KitchenPlateupAP
 
         protected override void OnUpdate()
         {
+            // Only active when connected to an Archipelago session
+            if (!ArchipelagoConnectionManager.ConnectionSuccessful)
+                return;
+
             if (!HasSingleton<SIsDayTime>() || Mod.applianceSpeedMode != 1)
             {
                 return;
@@ -277,6 +287,10 @@ namespace KitchenPlateupAP
 
         protected override void OnUpdate()
         {
+            // Only active when connected to an Archipelago session
+            if (!ArchipelagoConnectionManager.ConnectionSuccessful)
+                return;
+
             if (!HasSingleton<SIsDayTime>() || Mod.applianceSpeedMode != 1)
             {
                 return;
@@ -369,6 +383,10 @@ namespace KitchenPlateupAP
 
         protected override void OnUpdate()
         {
+            // Only active when connected to an Archipelago session
+            if (!ArchipelagoConnectionManager.ConnectionSuccessful)
+                return;
+
             if (!HasSingleton<SIsDayTime>() || Mod.applianceSpeedMode != 1)
             {
                 return;

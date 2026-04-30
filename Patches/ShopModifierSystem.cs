@@ -7,6 +7,11 @@ using Unity.Entities;
 
 namespace KitchenPlateupAP
 {
+    // Runs after CreateShopOptions (which has OrderFirst in ShopOptionGroup) and removes
+    // CShopBuilderOption entries for appliances/decorations the player hasn't unlocked yet.
+    // ShopPreFilterSystem was removed because its [UpdateBefore(CreateShopOptions)] was
+    // silently ignored (CreateShopOptions uses OrderFirst/OrderLast precedence), making it
+    // run at an undefined position with no effect.
     [UpdateInGroup(typeof(ShopOptionGroup))]
     [UpdateAfter(typeof(CreateShopOptions))]
     public class ShopModifierSystem : GenericSystemBase, IModSystem
@@ -21,50 +26,30 @@ namespace KitchenPlateupAP
 
         protected override void OnUpdate()
         {
-            // Only filter when the feature is enabled via slot data
-            if (!Mod.ApplianceUnlocksEnabled)
+            if (!Mod.ApplianceUnlocksEnabled && !Mod.DecorationUnlocksEnabled)
                 return;
 
-            using (var entities = _shopOptions.ToEntityArray(Allocator.Temp))
-            using (var options = _shopOptions.ToComponentDataArray<CShopBuilderOption>(Allocator.Temp))
+            using var entities = _shopOptions.ToEntityArray(Allocator.Temp);
+            using var options = _shopOptions.ToComponentDataArray<CShopBuilderOption>(Allocator.Temp);
+
+            for (int i = 0; i < options.Length; i++)
             {
-                for (int i = 0; i < options.Length; i++)
+                var option = options[i];
+                if (option.IsRemoved)
+                    continue;
+
+                bool isDecoration = false;
+                if (GameData.Main.TryGet<Appliance>(option.Appliance, out var appliance))
+                    isDecoration = appliance.ShoppingTags.HasFlag(ShoppingTags.Decoration);
+
+                bool shouldRemove = isDecoration
+                    ? (Mod.DecorationUnlocksEnabled && !Mod.IsDecorationUnlocked(option.Appliance))
+                    : (Mod.ApplianceUnlocksEnabled && !Mod.IsApplianceUnlocked(option.Appliance));
+
+                if (shouldRemove)
                 {
-                    var option = options[i];
-
-                    // Skip already-removed options
-                    if (option.IsRemoved)
-                        continue;
-
-                    // Check if this is a decoration appliance
-                    bool isDecoration = false;
-                    if (GameData.Main.TryGet<Appliance>(option.Appliance, out var appliance))
-                    {
-                        isDecoration = appliance.ShoppingTags.HasFlag(ShoppingTags.Decoration);
-                    }
-
-                    if (isDecoration)
-                    {
-                        // Decoration unlocks disabled = let all decorations through
-                        if (!Mod.DecorationUnlocksEnabled)
-                            continue;
-
-                        // Decoration unlocks enabled = filter by unlock list
-                        if (!Mod.IsDecorationUnlocked(option.Appliance))
-                        {
-                            option.IsRemoved = true;
-                            EntityManager.SetComponentData(entities[i], option);
-                        }
-                    }
-                    else
-                    {
-                        // Non-decoration: filter by appliance unlock list
-                        if (!Mod.IsApplianceUnlocked(option.Appliance))
-                        {
-                            option.IsRemoved = true;
-                            EntityManager.SetComponentData(entities[i], option);
-                        }
-                    }
+                    option.IsRemoved = true;
+                    EntityManager.SetComponentData(entities[i], option);
                 }
             }
         }

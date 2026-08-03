@@ -3617,7 +3617,12 @@ namespace KitchenPlateupAP
                 return;
             }
 
-            int dishCheckID = (DishId * 10000) + currentDishDayCount;
+            if (!ProgressionMapping.dish_id_lookup.TryGetValue(dishName, out int dishID))
+            {
+                Logger.LogWarning($"[Dish Check] No AP dish ID found for '{dishName}'.");
+                return;
+            }
+            int dishCheckID = (dishID * 10000) + currentDishDayCount;
 
             // Skip if already checked (idempotent)
             if (session.Locations.AllLocationsChecked.Contains(dishCheckID))

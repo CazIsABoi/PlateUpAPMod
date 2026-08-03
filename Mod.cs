@@ -108,6 +108,8 @@ namespace KitchenPlateupAP
         private static int dayLeaseMode = 0;            // 0 = global, 1 = dish_specific
         private static int dishLeaseScope = 0;          // 0 = all_dishes, 1 = goal_count_only (only when goal == 2)                                                      // near the other lease fields (~line 106)
         private static int maxDayLeases = int.MaxValue;  // total Day Lease items in the AP pool
+        private static int maxDishDayLeases = int.MaxValue; // copies of each dish-specific Day Lease in the AP pool
+        private static bool dayLeasesProgressive = false;
         private static bool debugLeaseGateDisabled = false;
         public static bool DebugLeaseGateDisabled => debugLeaseGateDisabled;
         private static int overtimeDays = 0;            // overtime_days: days > 15 that overtime leases cover (0 = none)
@@ -537,9 +539,22 @@ namespace KitchenPlateupAP
                 return; // Not connected
 
             var slotData = ArchipelagoConnectionManager.SlotData;
+            SlotDataLoaded = false;
 
             if (slotData != null)
             {
+                // A client can reconnect to a different slot without restarting the
+                // game. Reset lease-derived values before parsing so omitted fields
+                // cannot retain requirements or caps from the previous seed.
+                dayLeasesEnabled = true;
+                dayLeaseMode = 0;
+                dishLeaseScope = 0;
+                maxDayLeases = int.MaxValue;
+                maxDishDayLeases = int.MaxValue;
+                dayLeasesProgressive = false;
+                overtimeDays = 0;
+                dayLeaseInterval = 5;
+
                 Logger.LogInfo($"[PlateupAP] Full Slot Data: {JsonConvert.SerializeObject(slotData, Formatting.Indented)}");
 
                 if (ArchipelagoConnectionManager.SlotData.TryGetValue("starting_cards", out object rawStartingCards))
@@ -715,6 +730,30 @@ namespace KitchenPlateupAP
                     maxDayLeases = Mathf.Max(0, Convert.ToInt32(rawLeaseCount));
                     Logger.LogInfo($"[PlateupAP] Max Day Leases in pool: {maxDayLeases}");
                 }
+                else
+                {
+                    maxDayLeases = int.MaxValue;
+                }
+
+                if (slotData.TryGetValue("dish_lease_count", out object rawDishLeaseCount))
+                {
+                    maxDishDayLeases = Mathf.Max(0, Convert.ToInt32(rawDishLeaseCount));
+                    Logger.LogInfo($"[PlateupAP] Max Dish Day Leases per dish: {maxDishDayLeases}");
+                }
+                else
+                {
+                    maxDishDayLeases = int.MaxValue;
+                }
+
+                if (slotData.TryGetValue("day_leases_progressive", out object rawProgressiveLeases))
+                {
+                    dayLeasesProgressive = Convert.ToBoolean(rawProgressiveLeases);
+                    Logger.LogInfo($"[PlateupAP] Progressive Day Leases: {dayLeasesProgressive}");
+                }
+                else
+                {
+                    dayLeasesProgressive = false;
+                }
 
                 if (slotData.TryGetValue("overtime_days", out object rawOvertimeDays))
                 {
@@ -787,8 +826,9 @@ namespace KitchenPlateupAP
                 {
                     dayLeaseInterval = Mathf.Clamp(Convert.ToInt32(rawLeaseInterval), 1, 30);
                     Logger.LogInfo($"[PlateupAP] Day Lease Interval set to: {dayLeaseInterval}");
-                    KitchenPlateupAP.LeaseRequirementSystem.TriggerRefresh();
                 }
+
+                KitchenPlateupAP.LeaseRequirementSystem.TriggerRefresh();
 
                 if (slotData.TryGetValue("player_speed_upgrade_count", out object rawPlayerSpeedCount))
                 {
@@ -796,7 +836,6 @@ namespace KitchenPlateupAP
                     playerSpeedUpgradeCount = value;
                     Logger.LogInfo($"[PlateupAP] Player Speed Upgrade Count: {playerSpeedUpgradeCount}");
                     ApplyPlayerSpeedConfig();
-                    SlotDataLoaded = true;
                 }
                 else
                 {
@@ -1001,6 +1040,7 @@ namespace KitchenPlateupAP
                 BlueprintCheckManager.LoadState(PersistenceManager.LoadBlueprintCheckState(currentIdentity));
                 BlueprintCheckManager.ScoutAllLocations();
                 Logger.LogInfo($"[BlueprintChecks] Enabled={BlueprintCheckManager.IsEnabled}, Count={BlueprintCheckManager.CheckIds.Count}");
+                SlotDataLoaded = true;
             }
 
             if (selectedDishes.Count == 0)
@@ -4180,6 +4220,8 @@ namespace KitchenPlateupAP
         internal static int HighestOverallDayReached => highestOverallDayReached;
         internal static int DayLeaseInterval => dayLeaseInterval;
         public static int MaxDayLeases => maxDayLeases;
+        public static int MaxDishDayLeases => maxDishDayLeases;
+        internal static bool DayLeasesProgressive => dayLeasesProgressive;
         internal int TimesFranchised => timesFranchised;
         internal static bool DayLeasesEnabled => dayLeasesEnabled;
         internal static int DayLeaseMode => dayLeaseMode;

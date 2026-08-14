@@ -68,6 +68,22 @@ namespace KitchenPlateupAP
         }
 
         /// <summary>
+        /// Replaces any current session with the supplied connection details. This is
+        /// used by the in-game configuration menu when a player changes servers.
+        /// </summary>
+        public static void ConnectOrReconnect(string host, int port, string playerName, string password)
+        {
+            _ = ConnectOrReconnectAsync(host, port, playerName, password);
+        }
+
+        private static async Task ConnectOrReconnectAsync(string host, int port, string playerName, string password)
+        {
+            await DisconnectAsync(suppressReconnect: true).ConfigureAwait(false);
+            await ConnectAsync(host, port, playerName, password, ItemsHandlingFlags.AllItems, requestSlotData: true)
+                .ConfigureAwait(false);
+        }
+
+        /// <summary>
         /// Ensures JsonConvert.DefaultSettings won't interfere with Archipelago's
         /// internal JSON serialization (e.g. ItemsHandlingFlags in the ConnectPacket).
         /// </summary>

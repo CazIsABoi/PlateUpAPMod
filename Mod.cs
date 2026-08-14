@@ -187,9 +187,11 @@ namespace KitchenPlateupAP
         private static int goal = 0;             // 0 = franchise_x_times, 1 = complete_x_days, 2 = reach_day_x_with_dishes
         private static int franchiseCount = 0;   // how many times to franchise
         private static int dayCount = 1;        // how many days to complete
-        private static int dayTarget = 15;       // goal 2: global day the player must survive to (15–30)
+        private static int dayTarget = 15;       // goal 2: game day the player must survive to (including overtime)
         private static int dishGoalCount = 3;    // goal 2: number of dishes that must be active on that day
         private static List<string> selectedDishes = new List<string>();
+        private static readonly HashSet<string> completedGoalDishes =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private static bool dishesMessageSent = false;
         private bool itemsQueuedThisLobby = false;
         int itemsKeptPerRun = 5;
@@ -934,7 +936,7 @@ namespace KitchenPlateupAP
 
                 if (slotData.TryGetValue("day_target", out object rawDayTarget))
                 {
-                    dayTarget = Mathf.Clamp(Convert.ToInt32(rawDayTarget), 15, 30);
+                    dayTarget = Mathf.Clamp(Convert.ToInt32(rawDayTarget), 15, 100);
                     Logger.LogInfo($"[PlateupAP] Day target (goal 2): {dayTarget}");
                 }
 
@@ -1640,6 +1642,7 @@ namespace KitchenPlateupAP
                 ReapplyMoneyCapFromHistory();
                 Logger.LogInfo("[Archipelago] Re-processing all previously received location checks");
                 ReconstructProgressFromLocationChecks();
+                LoadDishGoalProgress();
                 EnsureDishLockingBaseline();
                 ApplyGroupSizeOverride();
 
@@ -3703,7 +3706,9 @@ namespace KitchenPlateupAP
                 {
                     // Always run dish/setting checks first so their locations are
                     // in AllLocationsChecked before the goal condition is evaluated.
-                    if (lastDay <= dayTarget)
+                    // AP dish and setting locations intentionally stop at Day 15.
+                    // Overtime goal completion is tracked separately below.
+                    if (lastDay <= Mathf.Min(dayTarget, 15))
                     {
                         DoDishChecks(lastDay);
                         DoSettingChecks(lastDay);
@@ -3746,6 +3751,7 @@ namespace KitchenPlateupAP
                     // whether the day-counter location was new this frame.
                     if (gameDay >= dayTarget)
                     {
+                        RecordDishGoalCompletion(DishId, gameDay);
                         int dishesAtTarget = CountDishesCompletedAtDayTarget();
                         Logger.LogInfo($"[Dish Day Goal] Reached day_target={dayTarget}. Dishes at day {dayTarget}: {dishesAtTarget}, required: {dishGoalCount}");
                         if (dishesAtTarget >= dishGoalCount)
@@ -4659,29 +4665,93 @@ namespace KitchenPlateupAP
             Logger.LogInfo($"[ShopExpansion] Spawned {toSpawn} extra blueprint(s) this prep.");
         }
 
+        internal static bool IsDishCompletedForGoal2(string dishName)
+        {
+            if (goal != 2 || string.IsNullOrWhiteSpace(dishName))
+                return false;
+
+            return completedGoalDishes.Contains(dishName);
+        }
+
+        private void LoadDishGoalProgress()
+        {
+            completedGoalDishes.Clear();
+            if (goal != 2 || currentIdentity == null)
+                return;
+
+            var selectedSet = new HashSet<string>(selectedDishes, StringComparer.OrdinalIgnoreCase);
+            var state = PersistenceManager.LoadDishGoalProgress(currentIdentity);
+            bool compatibleState = state != null
+                && state.DayTarget == dayTarget
+                && new HashSet<string>(state.SelectedDishes ?? new List<string>(), StringComparer.OrdinalIgnoreCase)
+                    .SetEquals(selectedSet);
+
+            if (compatibleState)
+            {
+                foreach (string dishName in state.CompletedDishes ?? new List<string>())
+                {
+                    if (selectedSet.Contains(dishName))
+                        completedGoalDishes.Add(dishName);
+                }
+            }
+            else if (state != null)
+            {
+                Logger.LogInfo("[Dish Day Goal] Ignoring persisted dish progress because the target or selected dishes changed.");
+            }
+
+            Logger.LogInfo($"[Dish Day Goal] Restored {completedGoalDishes.Count} completed target-day dish(es) for Day {dayTarget}: {string.Join(", ", completedGoalDishes)}");
+        }
+
+        private static void SaveDishGoalProgress()
+        {
+            if (currentIdentity == null)
+                return;
+
+            var state = new DishGoalProgressState
+            {
+                DayTarget = dayTarget,
+                SelectedDishes = selectedDishes.ToList(),
+                CompletedDishes = selectedDishes
+                    .Where(completedGoalDishes.Contains)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList()
+            };
+            PersistenceManager.SaveDishGoalProgress(currentIdentity, state);
+        }
+
+        private void RecordDishGoalCompletion(int dishGdoId, int gameDay)
+        {
+            if (goal != 2 || gameDay < dayTarget)
+                return;
+            if (!ProgressionMapping.dishDictionary.TryGetValue(dishGdoId, out string dishName))
+            {
+                Logger.LogWarning($"[Dish Day Goal] Reached Day {gameDay}, but active DishId {dishGdoId} could not be resolved.");
+                return;
+            }
+            if (!selectedDishes.Contains(dishName, StringComparer.OrdinalIgnoreCase))
+            {
+                Logger.LogWarning($"[Dish Day Goal] Reached Day {gameDay} with '{dishName}', but it is not one of this slot's selected dishes.");
+                return;
+            }
+
+            if (completedGoalDishes.Add(dishName))
+            {
+                SaveDishGoalProgress();
+                Logger.LogInfo($"[Dish Day Goal] Recorded '{dishName}' as reaching target Day {dayTarget}. Progress: {completedGoalDishes.Count}/{dishGoalCount}.");
+                CheckPopupManager.AddGoalDayCompleted(dishName, dayTarget);
+            }
+        }
+
         /// <summary>
-        /// Goal 2: Counts how many dishes from selected_dishes have a completed day check
-        /// at exactly day_target in AllLocationsChecked.
+        /// Goal 2: Counts selected dishes that have reached day_target. Day 16+
+        /// progress comes from persisted runtime detection because AP dish checks
+        /// intentionally stop at Day 15.
         /// </summary>
         private int CountDishesCompletedAtDayTarget()
         {
-            if (session?.Locations?.AllLocationsChecked == null)
-                return 0;
-
-            var checkedLocations = session.Locations.AllLocationsChecked;
-            int count = 0;
-
-            foreach (var dishName in selectedDishes)
-            {
-                if (!ProgressionMapping.dish_id_lookup.TryGetValue(dishName, out int dishId))
-                    continue;
-
-                int targetLocId = (dishId * 10000) + dayTarget;
-                if (checkedLocations.Contains(targetLocId))
-                    count++;
-            }
-
-            return count;
+            return selectedDishes
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count(IsDishCompletedForGoal2);
         }
     }
 }

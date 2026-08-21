@@ -628,12 +628,76 @@ namespace KitchenPlateupAP
                 PersistenceManager.SaveIdentity(currentIdentity);
             }
 
-            ArchipelagoConnectionManager.TryConnect(config.address, config.port, config.playername, config.password);
+            ArchipelagoConnectionManager.ConnectOrReconnect(config.address, config.port, config.playername, config.password);
         }
 
-        private static string GetConfigFilePath()
+        internal static string GetConfigFilePath()
         {
             return Path.Combine(GetConfigFolderPath(), "archipelago_config.json");
+        }
+
+        internal static PlateupAPConfig LoadArchipelagoConfig()
+        {
+            var config = new PlateupAPConfig
+            {
+                address = "archipelago.gg",
+                port = 38281,
+                playername = "",
+                password = ""
+            };
+
+            try
+            {
+                string path = GetConfigFilePath();
+                if (!File.Exists(path))
+                    return config;
+
+                var saved = JsonConvert.DeserializeObject<PlateupAPConfig>(File.ReadAllText(path));
+                if (saved == null)
+                    return config;
+
+                config.address = string.IsNullOrWhiteSpace(saved.address) ? config.address : saved.address;
+                config.port = saved.port > 0 ? saved.port : config.port;
+                config.playername = saved.playername ?? "";
+                config.password = saved.password ?? "";
+            }
+            catch (Exception ex)
+            {
+                Logger?.LogWarning("[PlateupAP][Config] Could not load saved configuration: " + ex.Message);
+            }
+
+            return config;
+        }
+
+        internal static bool SaveArchipelagoConfig(PlateupAPConfig config, out string error)
+        {
+            error = null;
+            if (config == null || string.IsNullOrWhiteSpace(config.address))
+            {
+                error = "Server address is required.";
+                return false;
+            }
+
+            if (config.port < 1 || config.port > 65535)
+            {
+                error = "Port must be between 1 and 65535.";
+                return false;
+            }
+
+            try
+            {
+                string folder = GetConfigFolderPath();
+                Directory.CreateDirectory(folder);
+                File.WriteAllText(GetConfigFilePath(), JsonConvert.SerializeObject(config, Formatting.Indented));
+                CachedConfig = config;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = "Could not save configuration: " + ex.Message;
+                Logger?.LogError("[PlateupAP][Config] " + error);
+                return false;
+            }
         }
 
         private void TryWarmupConfig()
@@ -1259,99 +1323,14 @@ namespace KitchenPlateupAP
             PrefManager = new PreferenceSystemManager(MOD_GUID, MOD_NAME);
             PrefManager
                 .AddLabel("Archipelago Configuration")
-                .AddInfo("Create or load configuration for the Archipelago connection")
-                .AddInfo(@"Config is found in \AppData\LocalLow\It's Happening\PlateUp")
-                .AddButton("Create Config", (int _) =>
+                .AddInfo("Set your Archipelago server details without editing a config file.")
+                .AddButton("Configure Server", (int _) =>
                 {
-                    string folder = GetConfigFolderPath();
-
-                    if (!Directory.Exists(folder))
-                        Directory.CreateDirectory(folder);
-
-                    string path = GetConfigFilePath();
-                    PlateupAPConfig defaultConfig = new PlateupAPConfig
-                    {
-                        address = "archipelago.gg",
-                        port = 0,
-                        playername = "",
-                        password = ""
-                    };
-                    string json = JsonConvert.SerializeObject(defaultConfig, Formatting.Indented);
-                    File.WriteAllText(path, json);
-                    Logger.LogInfo("Created config file at: " + path);
-
-                    try
-                    {
-                        if (Application.platform == RuntimePlatform.WindowsPlayer || Application.platform == RuntimePlatform.WindowsEditor)
-                        {
-                            var psi = new ProcessStartInfo
-                            {
-                                FileName = "explorer.exe",
-                                Arguments = $"/select,\"{path}\"",
-                                UseShellExecute = true
-                            };
-                            System.Diagnostics.Process.Start(psi);
-                        }
-                        else if (Application.platform == RuntimePlatform.OSXPlayer || Application.platform == RuntimePlatform.OSXEditor)
-                        {
-                            var psi = new ProcessStartInfo
-                            {
-                                FileName = "open",
-                                Arguments = $"-R \"{path}\"",
-                                UseShellExecute = true
-                            };
-                            System.Diagnostics.Process.Start(psi);
-                        }
-                        else
-                        {
-                            var psi = new ProcessStartInfo
-                            {
-                                FileName = folder,
-                                UseShellExecute = true
-                            };
-                            System.Diagnostics.Process.Start(psi);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.LogWarning($"Could not open file explorer for path '{path}': {ex.Message}");
-                    }
+                    ArchipelagoConfigMenu.Show();
                 })
                 .AddButton("Connect", (int _) =>
                 {
-                    string path = GetConfigFilePath();
-                    if (!File.Exists(path))
-                    {
-                        Logger.LogError("Config file not found at: " + path);
-                        return;
-                    }
-
-                    PlateupAPConfig config;
-                    string json = File.ReadAllText(path);
-                    try
-                    {
-                        var jo = Newtonsoft.Json.Linq.JObject.Parse(json);
-                        config = new PlateupAPConfig
-                        {
-                            address = (string)jo["address"],
-                            port = (int?)jo["port"] ?? 0,
-                            playername = (string)jo["playername"],
-                            password = (string)jo["password"]
-                        };
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.LogError("[PlateupAP][Config] Manual parse failed: " + ex);
-                        Logger.LogError("JSON: " + json);
-                        return;
-                    }
-
-                    if (string.IsNullOrWhiteSpace(config.address))
-                    {
-                        Logger.LogError("[PlateupAP][Config] Invalid address.");
-                        return;
-                    }
-
+                    PlateupAPConfig config = LoadArchipelagoConfig();
                     Logger.LogInfo($"[PlateupAP][Config] Using server={config.address}:{config.port} player={config.playername}");
                     UpdateArchipelagoConfig(config);
                 })

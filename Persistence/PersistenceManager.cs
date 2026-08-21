@@ -39,6 +39,17 @@ namespace KitchenPlateupAP
         public Dictionary<int, int> DishDayCounts = new Dictionary<int, int>();
     }
 
+    // Tracks which selected dishes have reached the configured goal day.
+    // Dish checks only exist through Day 15, so overtime goal progress needs
+    // its own persisted state instead of relying on AllLocationsChecked.
+    [Serializable]
+    public class DishGoalProgressState
+    {
+        public int DayTarget;
+        public List<string> SelectedDishes = new List<string>();
+        public List<string> CompletedDishes = new List<string>();
+    }
+
     // Represents identity of a run / server connection used to decide reset.
     [Serializable]
     public class RunIdentity
@@ -114,6 +125,8 @@ namespace KitchenPlateupAP
             Path.Combine(RootPath, $"trapcards_{Sanitize(id.Address)}_{id.Port}_{Sanitize(id.Player)}.json");
         private static string DishDayFile(RunIdentity id) =>
             Path.Combine(RootPath, $"dishdays_{Sanitize(id.Address)}_{id.Port}_{Sanitize(id.Player)}.json");
+        private static string DishGoalProgressFile(RunIdentity id) =>
+            Path.Combine(RootPath, $"dishgoal_{Sanitize(id.Address)}_{id.Port}_{Sanitize(id.Player)}.json");
         private static string IdentityFile => Path.Combine(RootPath, "last_identity.json");
         private static string GarageFile(RunIdentity id) =>
             Path.Combine(RootPath, $"garage_{Sanitize(id.Address)}_{id.Port}_{Sanitize(id.Player)}.json");
@@ -257,6 +270,36 @@ namespace KitchenPlateupAP
             }
         }
 
+        public static DishGoalProgressState LoadDishGoalProgress(RunIdentity id)
+        {
+            EnsureDirectory();
+            var path = DishGoalProgressFile(id);
+            if (!File.Exists(path))
+                return null;
+            try
+            {
+                return JsonConvert.DeserializeObject<DishGoalProgressState>(File.ReadAllText(path));
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError("[PlateupAP][Persistence] Failed reading dish goal progress: " + ex.Message);
+                return null;
+            }
+        }
+
+        public static void SaveDishGoalProgress(RunIdentity id, DishGoalProgressState state)
+        {
+            EnsureDirectory();
+            try
+            {
+                File.WriteAllText(DishGoalProgressFile(id), JsonConvert.SerializeObject(state, Formatting.Indented));
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError("[PlateupAP][Persistence] Failed saving dish goal progress: " + ex.Message);
+            }
+        }
+
         public static FranchiseProgressState LoadFranchiseProgress(RunIdentity id)
         {
             EnsureDirectory();
@@ -289,18 +332,20 @@ namespace KitchenPlateupAP
 
         public static void ResetForNewRun(RunIdentity id)
         {
-            // Delete speed + pending + trap card + dish day files for new identity
+            // Delete run-scoped state files for the new identity.
             try
             {
                 var speed = SpeedFile(id);
                 var pending = PendingFile(id);
                 var trapCards = TrapCardFile(id);
                 var dishDays = DishDayFile(id);
+                var dishGoalProgress = DishGoalProgressFile(id);
                 var blueprintChecks = BlueprintCheckFile(id);
                 if (File.Exists(speed)) File.Delete(speed);
                 if (File.Exists(pending)) File.Delete(pending);
                 if (File.Exists(trapCards)) File.Delete(trapCards);
                 if (File.Exists(dishDays)) File.Delete(dishDays);
+                if (File.Exists(dishGoalProgress)) File.Delete(dishGoalProgress);
                 if (File.Exists(blueprintChecks)) File.Delete(blueprintChecks);
             }
             catch (Exception ex)

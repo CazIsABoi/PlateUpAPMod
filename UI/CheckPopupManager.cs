@@ -24,6 +24,7 @@ namespace KitchenPlateupAP
             public TransferDirection Direction;
             public string ItemName;
             public string PlayerName;
+            public string DisplayText;
         }
 
         private class ActivePopup
@@ -67,6 +68,18 @@ namespace KitchenPlateupAP
                     TransferDirection.Received,
                     GetItemName(transfer.Item),
                     GetPlayerName(transfer.Sender));
+            }
+        }
+
+        public static void AddGoalDayCompleted(string dishName, int dayTarget)
+        {
+            lock (PendingLock)
+            {
+                PendingPopups.Enqueue(new PendingPopup
+                {
+                    Direction = TransferDirection.Sent,
+                    DisplayText = $"Completed <b>{EscapeRichText(dishName)}</b> — Day <b>{dayTarget}</b> goal reached"
+                });
             }
         }
 
@@ -159,9 +172,13 @@ namespace KitchenPlateupAP
                         true);
                 }
 
-                string verb = popup.Data.Direction == TransferDirection.Sent ? "Sent" : "Received";
-                string preposition = popup.Data.Direction == TransferDirection.Sent ? "to" : "from";
-                string text = $"{verb} <b>{EscapeRichText(popup.Data.ItemName)}</b> {preposition} <b>{EscapeRichText(popup.Data.PlayerName)}</b>";
+                string text = popup.Data.DisplayText;
+                if (string.IsNullOrEmpty(text))
+                {
+                    string verb = popup.Data.Direction == TransferDirection.Sent ? "Sent" : "Received";
+                    string preposition = popup.Data.Direction == TransferDirection.Sent ? "to" : "from";
+                    text = $"{verb} <b>{EscapeRichText(popup.Data.ItemName)}</b> {preposition} <b>{EscapeRichText(popup.Data.PlayerName)}</b>";
+                }
 
                 messageStyle.normal.textColor = new UnityColor(1f, 1f, 1f, fade);
                 float textX = archipelagoIcon != null ? popupRect.x + 63f : popupRect.x + 17f;

@@ -642,17 +642,12 @@ namespace KitchenPlateupAP
         }
 
         /// <summary>
-        /// Returns true when goal == 2 and the dish has a checked location at dayTarget,
-        /// meaning the player survived to the target day while this dish was active.
+        /// Returns true when goal == 2 and the dish has reached dayTarget.
+        /// Completion is restored from the mod's persisted goal state.
         /// </summary>
         private static bool IsDishCompletedForGoal2(string dishName)
         {
-            if (Mod.Goal != 2) return false;
-            var session = ArchipelagoConnectionManager.Session;
-            if (session?.Locations?.AllLocationsChecked == null) return false;
-            if (!ProgressionMapping.dish_id_lookup.TryGetValue(dishName, out int dishId)) return false;
-            int targetLocId = (dishId * 10000) + Mod.DayTarget;
-            return session.Locations.AllLocationsChecked.Contains(targetLocId);
+            return Mod.IsDishCompletedForGoal2(dishName);
         }
 
         private void DrawGlobalFooterHUD(float opacity, Rect footerRect)

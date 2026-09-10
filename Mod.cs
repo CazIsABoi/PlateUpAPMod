@@ -580,7 +580,7 @@ namespace KitchenPlateupAP
             }
         }
 
-        private static RunIdentity BuildIdentity()
+        private static RunIdentity BuildIdentity(string seed)
         {
             if (CachedConfig == null)
                 return null;
@@ -588,48 +588,13 @@ namespace KitchenPlateupAP
             {
                 Address = CachedConfig.address ?? "",
                 Port = CachedConfig.port,
-                Player = CachedConfig.playername ?? ""
+                Player = CachedConfig.playername ?? "",
+                Seed = seed ?? ""
             };
         }
         public void UpdateArchipelagoConfig(PlateupAPConfig config)
         {
-            // Read the saved identity BEFORE overwriting CachedConfig so BuildIdentity
-            // still reflects the old connection when we call ShouldResetForIdentity.
-            var oldIdentity = PersistenceManager.LoadLastIdentity();
-
             CachedConfig = config;
-            var newIdentity = BuildIdentity();
-
-            if (newIdentity != null)
-            {
-                // Compare new identity against the persisted old one directly,
-                // not via ShouldResetForIdentity (which re-reads the file).
-                bool reset = oldIdentity != null && (
-                    oldIdentity.Port != newIdentity.Port ||
-                    !string.Equals(oldIdentity.Address, newIdentity.Address, StringComparison.OrdinalIgnoreCase) ||
-                    !string.Equals(oldIdentity.Player, newIdentity.Player, StringComparison.OrdinalIgnoreCase));
-
-                if (reset)
-                {
-                    Logger.LogInfo($"[Persistence] Identity changed from ({oldIdentity}) to ({newIdentity}). Resetting stored state.");
-                    PersistenceManager.ResetForNewRun(newIdentity);
-
-                    // Clear the OLD identity's garage file.
-                    PersistenceManager.ClearGarage(oldIdentity);
-                    Logger.LogInfo($"[Persistence] Garage cleared for old identity ({oldIdentity}).");
-
-                    // Also clear new identity's garage in case a stale file exists.
-                    PersistenceManager.ClearGarage(newIdentity);
-                    Logger.LogInfo($"[Persistence] Garage cleared for new identity ({newIdentity}).");
-
-                    ClearGarageSessionCache();
-                    ResetGarageRandomApplianceCount();
-                }
-
-                currentIdentity = newIdentity;
-                PersistenceManager.SaveIdentity(currentIdentity);
-            }
-
             ArchipelagoConnectionManager.ConnectOrReconnect(config.address, config.port, config.playername, config.password);
         }
 
@@ -1252,7 +1217,10 @@ namespace KitchenPlateupAP
 
                 slotData.TryGetValue("blueprint_check_ids", out object rawBlueprintCheckIds);
                 BlueprintCheckManager.Configure(rawBlueprintCheckIds, blueprintBasePrice, blueprintPriceIncrease);
-                BlueprintCheckManager.LoadState(PersistenceManager.LoadBlueprintCheckState(currentIdentity));
+                if (currentIdentity != null)
+                    BlueprintCheckManager.LoadState(PersistenceManager.LoadBlueprintCheckState(currentIdentity));
+                else
+                    Logger.LogWarning("[BlueprintChecks] Seed unavailable; skipping persisted blueprint state.");
                 BlueprintCheckManager.ScoutAllLocations();
                 Logger.LogInfo($"[BlueprintChecks] Enabled={BlueprintCheckManager.IsEnabled}, Count={BlueprintCheckManager.CheckIds.Count}");
                 SlotDataLoaded = true;
@@ -1555,10 +1523,67 @@ namespace KitchenPlateupAP
         }
 
 
+        private void InitializeSeedAwarePersistenceIdentity()
+        {
+            string seed = ArchipelagoConnectionManager.Session?.RoomState?.Seed;
+            if (string.IsNullOrWhiteSpace(seed))
+            {
+                currentIdentity = null;
+                persistenceLoaded = false;
+                Logger.LogWarning("[Persistence] Archipelago RoomState.Seed was unavailable; seed-scoped persistence is disabled for this connection.");
+                return;
+            }
+
+            RunIdentity previousIdentity = currentIdentity;
+            RunIdentity newIdentity = BuildIdentity(seed);
+            bool namespaceChanged = previousIdentity == null
+                || !string.Equals(previousIdentity.PersistenceKey, newIdentity.PersistenceKey, StringComparison.Ordinal);
+
+            if (namespaceChanged)
+            {
+                persistenceLoaded = false;
+                ResetSeedScopedRuntimeState();
+            }
+
+            currentIdentity = newIdentity;
+            PersistenceManager.SaveIdentity(currentIdentity);
+            Logger.LogInfo($"[Persistence] Seed resolved: '{seed}'. Persistence key: '{currentIdentity.PersistenceKey}'.");
+        }
+
+        private void ResetSeedScopedRuntimeState()
+        {
+            movementSpeedTier = 0;
+            applianceSpeedTier = 0;
+            cookSpeedTier = 0;
+            chopSpeedTier = 0;
+            cleanSpeedTier = 0;
+            movementSpeedMod = playerSpeedUpgradeCount <= 0 ? 1f : speedTiers[0];
+            applianceSpeedMod = applianceSpeedTiers[0];
+            cookSpeedMod = cookSpeedTiers[0];
+            chopSpeedMod = chopSpeedTiers[0];
+            cleanSpeedMod = cleanSpeedTiers[0];
+
+            pendingSpawnState = new PendingSpawnState();
+            spawnQueue.Clear();
+            timesFranchised = 0;
+            dayID = 100000;
+            stars = 0;
+            overallDaysCompleted = 0;
+            highestOverallDayReached = 0;
+            overallStarsEarned = 0;
+            franchisePending = false;
+            completedGoalDishes.Clear();
+            currentDishDayCount = 0;
+            dishIdTrackedForDayCount = 0;
+            ApplyPlayerSpeedConfig();
+            Logger.LogInfo("[Persistence] Seed/player namespace changed; cleared seed-scoped runtime state before loading.");
+        }
+
         public void OnSuccessfulConnect()
         {
             if (ArchipelagoConnectionManager.ConnectionSuccessful)
             {
+                InitializeSeedAwarePersistenceIdentity();
                 EnsureItemsSubscription(); // subscribe early so lobby packets are handled
                 upgradesRandomized = false;
                 TryRandomizeUpgradesOnce();
@@ -1566,48 +1591,44 @@ namespace KitchenPlateupAP
                 EnsureDishLockingBaseline(); // <<< ensure we have a baseline to lock against
 
                 // Load persistence once per connection (before applying past items)
-                if (!persistenceLoaded)
+                if (!persistenceLoaded && currentIdentity != null)
                 {
-                    currentIdentity = BuildIdentity();
-                    if (currentIdentity != null)
+                    var speedState = PersistenceManager.LoadSpeedState(currentIdentity);
+                    if (speedState != null)
                     {
-                        var speedState = PersistenceManager.LoadSpeedState(currentIdentity);
-                        if (speedState != null)
-                        {
-                            movementSpeedTier = Mathf.Clamp(speedState.MovementTier, 0, speedTiers.Length - 1);
-                            applianceSpeedTier = Mathf.Clamp(speedState.ApplianceTier, 0, applianceSpeedTiers.Length - 1);
-                            cookSpeedTier = Mathf.Clamp(speedState.CookTier, 0, cookSpeedTiers.Length - 1);
-                            chopSpeedTier = Mathf.Clamp(speedState.ChopTier, 0, chopSpeedTiers.Length - 1);
-                            cleanSpeedTier = Mathf.Clamp(speedState.CleanTier, 0, cleanSpeedTiers.Length - 1);
+                        movementSpeedTier = Mathf.Clamp(speedState.MovementTier, 0, speedTiers.Length - 1);
+                        applianceSpeedTier = Mathf.Clamp(speedState.ApplianceTier, 0, applianceSpeedTiers.Length - 1);
+                        cookSpeedTier = Mathf.Clamp(speedState.CookTier, 0, cookSpeedTiers.Length - 1);
+                        chopSpeedTier = Mathf.Clamp(speedState.ChopTier, 0, chopSpeedTiers.Length - 1);
+                        cleanSpeedTier = Mathf.Clamp(speedState.CleanTier, 0, cleanSpeedTiers.Length - 1);
 
-                            movementSpeedMod = speedTiers[movementSpeedTier];
-                            applianceSpeedMod = applianceSpeedTiers[applianceSpeedTier];
-                            cookSpeedMod = cookSpeedTiers[cookSpeedTier];
-                            chopSpeedMod = chopSpeedTiers[chopSpeedTier];
-                            cleanSpeedMod = cleanSpeedTiers[cleanSpeedTier];
+                        movementSpeedMod = speedTiers[movementSpeedTier];
+                        applianceSpeedMod = applianceSpeedTiers[applianceSpeedTier];
+                        cookSpeedMod = cookSpeedTiers[cookSpeedTier];
+                        chopSpeedMod = chopSpeedTiers[chopSpeedTier];
+                        cleanSpeedMod = cleanSpeedTiers[cleanSpeedTier];
 
-                            Logger.LogInfo($"[Persistence] Loaded speed tiers: M={movementSpeedTier} A={applianceSpeedTier} Cook={cookSpeedTier} Chop={chopSpeedTier} Clean={cleanSpeedTier}");
-                        }
-                        else
-                        {
-                            Logger.LogInfo("[Persistence] No prior speed state file found for this identity.");
-                        }
+                        Logger.LogInfo($"[Persistence] Loaded speed tiers: M={movementSpeedTier} A={applianceSpeedTier} Cook={cookSpeedTier} Chop={chopSpeedTier} Clean={cleanSpeedTier}");
+                    }
+                    else
+                    {
+                        Logger.LogInfo("[Persistence] No prior speed state file found for this identity.");
+                    }
 
-                        pendingSpawnState = PersistenceManager.LoadPendingSpawn(currentIdentity) ?? new PendingSpawnState();
-                        if (pendingSpawnState.PendingItemIDs.Count > 0)
+                    pendingSpawnState = PersistenceManager.LoadPendingSpawn(currentIdentity) ?? new PendingSpawnState();
+                    if (pendingSpawnState.PendingItemIDs.Count > 0)
+                    {
+                        Logger.LogInfo($"[Persistence] Restored {pendingSpawnState.PendingItemIDs.Count} pending items to spawn queue.");
+                        var dishUnlockIds = new HashSet<int>(ProgressionMapping.dishUnlockIDs.Values);
+                        foreach (int id in pendingSpawnState.PendingItemIDs.ToList())
                         {
-                            Logger.LogInfo($"[Persistence] Restored {pendingSpawnState.PendingItemIDs.Count} pending items to spawn queue.");
-                            var dishUnlockIds = new HashSet<int>(ProgressionMapping.dishUnlockIDs.Values);
-                            foreach (int id in pendingSpawnState.PendingItemIDs.ToList())
+                            if (id == 15 || id == 16 || id == 22 || id == 100 || dishUnlockIds.Contains(id))
                             {
-                                if (id == 15 || id == 16 || id == 22 || id == 100 || dishUnlockIds.Contains(id))
-                                {
-                                    pendingSpawnState.PendingItemIDs.Remove(id);
-                                    continue;
-                                }
-                                if (!spawnQueue.Any(x => (int)x.ItemId == id))
-                                    spawnQueue.Enqueue(CreateItemInfoForQueue(id));
+                                pendingSpawnState.PendingItemIDs.Remove(id);
+                                continue;
                             }
+                            if (!spawnQueue.Any(x => (int)x.ItemId == id))
+                                spawnQueue.Enqueue(CreateItemInfoForQueue(id));
                         }
                     }
                     persistenceLoaded = true;
@@ -1625,7 +1646,9 @@ namespace KitchenPlateupAP
                 EnsureDishLockingBaseline();
                 ApplyGroupSizeOverride();
 
-                var franchiseProgress = PersistenceManager.LoadFranchiseProgress(currentIdentity);
+                var franchiseProgress = currentIdentity == null
+                    ? null
+                    : PersistenceManager.LoadFranchiseProgress(currentIdentity);
                 if (franchiseProgress != null)
                 {
                     timesFranchised = franchiseProgress.TimesFranchised;

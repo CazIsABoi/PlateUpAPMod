@@ -50,17 +50,6 @@ namespace KitchenPlateupAP
         public List<string> CompletedDishes = new List<string>();
     }
 
-    // Represents identity of a run / server connection used to decide reset.
-    [Serializable]
-    public class RunIdentity
-    {
-        public string Address;
-        public int Port;
-        public string Player;
-
-        public override string ToString() => $"{Address}_{Port}_{Player}";
-    }
-
     /// <summary>Persists blueprint-check progress so reconnects pick up where the player left off.</summary>
     [Serializable]
     public class BlueprintCheckState
@@ -117,21 +106,24 @@ namespace KitchenPlateupAP
         private static string Sanitize(string value) =>
             string.Concat((value ?? "unknown").Split(Path.GetInvalidFileNameChars()));
 
+        private static string StorageKey(RunIdentity id) =>
+            Sanitize(id?.PersistenceKey);
+
         private static string SpeedFile(RunIdentity id) =>
-            Path.Combine(RootPath, $"speed_{Sanitize(id.Address)}_{id.Port}_{Sanitize(id.Player)}.json");
+            Path.Combine(RootPath, $"speed_{StorageKey(id)}.json");
         private static string PendingFile(RunIdentity id) =>
-            Path.Combine(RootPath, $"pending_{Sanitize(id.Address)}_{id.Port}_{Sanitize(id.Player)}.json");
+            Path.Combine(RootPath, $"pending_{StorageKey(id)}.json");
         private static string TrapCardFile(RunIdentity id) =>
-            Path.Combine(RootPath, $"trapcards_{Sanitize(id.Address)}_{id.Port}_{Sanitize(id.Player)}.json");
+            Path.Combine(RootPath, $"trapcards_{StorageKey(id)}.json");
         private static string DishDayFile(RunIdentity id) =>
-            Path.Combine(RootPath, $"dishdays_{Sanitize(id.Address)}_{id.Port}_{Sanitize(id.Player)}.json");
+            Path.Combine(RootPath, $"dishdays_{StorageKey(id)}.json");
         private static string DishGoalProgressFile(RunIdentity id) =>
-            Path.Combine(RootPath, $"dishgoal_{Sanitize(id.Address)}_{id.Port}_{Sanitize(id.Player)}.json");
+            Path.Combine(RootPath, $"dishgoal_{StorageKey(id)}.json");
         private static string IdentityFile => Path.Combine(RootPath, "last_identity.json");
         private static string GarageFile(RunIdentity id) =>
-            Path.Combine(RootPath, $"garage_{Sanitize(id.Address)}_{id.Port}_{Sanitize(id.Player)}.json");
+            Path.Combine(RootPath, $"garage_{StorageKey(id)}.json");
         private static string FranchiseProgressFile(RunIdentity id) =>
-            Path.Combine(RootPath, $"{id}_franchise_progress.json");
+            Path.Combine(RootPath, $"{StorageKey(id)}_franchise_progress.json");
 
         private static RunIdentity _loadedIdentity;
 
@@ -356,7 +348,7 @@ namespace KitchenPlateupAP
 
         // ── Blueprint Check State ────────────────────────────────────────────
         private static string BlueprintCheckFile(RunIdentity id) =>
-            Path.Combine(RootPath, $"blueprintchecks_{Sanitize(id.Address)}_{id.Port}_{Sanitize(id.Player)}.json");
+            Path.Combine(RootPath, $"blueprintchecks_{StorageKey(id)}.json");
 
         public static BlueprintCheckState LoadBlueprintCheckState(RunIdentity id)
         {

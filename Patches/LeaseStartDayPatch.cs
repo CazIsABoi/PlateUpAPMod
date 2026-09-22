@@ -24,25 +24,26 @@ namespace KitchenPlateupAP.Patches
             if (!__instance.HasSingleton<SDay>())
                 return true;
 
-            int currentDay = __instance.GetSingleton<SDay>().Day;
-            bool isBlocking = LeaseRequirementSystem.ShouldBlockStartDay(currentDay);
+            int completedDay = __instance.GetSingleton<SDay>().Day;
+            bool isBlocking = LeaseRequirementSystem.ShouldBlockStartDay(completedDay);
             var status = LeaseRequirementSystem.LastStatus;
+            int nextDay = status.CurrentDay;
 
             if (isBlocking
-                && (!wasBlocking || currentDay != lastDay
+                && (!wasBlocking || nextDay != lastDay
                     || status.Owned != lastOwned || status.Required != lastRequired))
             {
                 Mod.Logger.LogWarning(
-                    $"[LeaseGate] Blocking day {currentDay}: owned={status.Owned}, required={status.Required}, goal={Mod.Goal}, mode={Mod.DayLeaseMode}, progressive={Mod.DayLeasesProgressive}.");
+                    $"[LeaseGate] Blocking day {nextDay}: owned={status.Owned}, required={status.Required}, goal={Mod.Goal}, mode={Mod.DayLeaseMode}, progressive={Mod.DayLeasesProgressive}.");
             }
             else if (!isBlocking && wasBlocking)
             {
                 Mod.Logger.LogInfo(
-                    $"[LeaseGate] Cleared for day {currentDay}: owned={status.Owned}, required={status.Required}, goal={Mod.Goal}, mode={Mod.DayLeaseMode}, progressive={Mod.DayLeasesProgressive}; start-day transition restored.");
+                    $"[LeaseGate] Cleared for day {nextDay}: owned={status.Owned}, required={status.Required}, goal={Mod.Goal}, mode={Mod.DayLeaseMode}, progressive={Mod.DayLeasesProgressive}; start-day transition restored.");
             }
 
             wasBlocking = isBlocking;
-            lastDay = currentDay;
+            lastDay = nextDay;
             lastOwned = status.Owned;
             lastRequired = status.Required;
 

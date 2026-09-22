@@ -55,11 +55,12 @@ namespace KitchenPlateupAP
                 return;
             }
 
-            int currentDay = HasSingleton<SDay>() ? GetSingleton<SDay>().Day : 0;
-            if (currentDay < 1)
-                return;
+            // During prep SDay is the day that has just completed. Lease rules
+            // apply to the day the player is about to start, including Day 1
+            // when a fresh restaurant still reports SDay 0.
+            int nextDay = (HasSingleton<SDay>() ? GetSingleton<SDay>().Day : 0) + 1;
 
-            LastStatus = BuildStatus(currentDay);
+            LastStatus = BuildStatus(nextDay);
             SetStartDayWarning(LastStatus.IsGateActive);
             forceRefresh = false;
         }
@@ -69,7 +70,7 @@ namespace KitchenPlateupAP
         /// AP receipt pool so a received lease clears an already-displayed gate
         /// before the next SimulationSystemGroup update.
         /// </summary>
-        public static bool ShouldBlockStartDay(int currentDay)
+        public static bool ShouldBlockStartDay(int completedDay)
         {
             if (!Mod.SlotDataLoaded || !Mod.DayLeasesEnabled || Mod.DebugLeaseGateDisabled)
                 return false;
@@ -79,10 +80,7 @@ namespace KitchenPlateupAP
                 || ArchipelagoConnectionManager.Session.Items == null)
                 return false;
 
-            if (currentDay < 1)
-                return false;
-
-            LastStatus = BuildStatus(currentDay);
+            LastStatus = BuildStatus(completedDay + 1);
             forceRefresh = false;
             return LastStatus.IsGateActive;
         }
